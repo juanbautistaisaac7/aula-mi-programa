@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.0.0";
+const APP_VERSION = "2.1.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -29,6 +29,7 @@ function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
 function byId(id) { return document.getElementById(id); }
 function weekStartOf(dateStr, ws) { const d = dToDate(dateStr); const diff = (d.getDay() - ws + 7) % 7; d.setDate(d.getDate() - diff); return iso(d); }
 function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+function hmToMin(s) { const m = /^(\d{1,2}):(\d{2})$/.exec(s || ""); return m ? parseInt(m[1]) * 60 + parseInt(m[2]) : null; }
 
 /* ============================ ESTADO ============================ */
 let state = null;
@@ -47,7 +48,7 @@ function baseState() {
   return {
     v: 2, settings: defaultSettings(),
     subjects: [], projects: [], evals: [], tasks: [], notes: [], habits: [], sessions: [],
-    dayLog: {},
+    dayLog: {}, dayPlan: {},
     timer: { phase: "focus", left: 25 * 60, total: 25 * 60, run: false, ends: null, taskId: null, subjectId: null, projectId: null, cycle: 0 },
     meta: { created: todayISO(), migratedV1: false, notified: {}, lastBackup: null }
   };
@@ -172,7 +173,7 @@ function normalizeState(s) {
   s.settings = Object.assign(defaultSettings(), s.settings || {});
   s.settings.pomo = Object.assign({ f: 25, s: 5, l: 15, c: 4 }, s.settings.pomo || {});
   for (const k of ["subjects", "projects", "evals", "tasks", "notes", "habits", "sessions"]) if (!Array.isArray(s[k])) s[k] = [];
-  s.dayLog = s.dayLog || {}; s.meta = Object.assign(b.meta, s.meta || {});
+  s.dayLog = s.dayLog || {}; s.dayPlan = s.dayPlan || {}; s.meta = Object.assign(b.meta, s.meta || {});
   s.timer = Object.assign(b.timer, s.timer || {});
   s.v = 2;
   return s;
@@ -425,6 +426,12 @@ function postponeTask(id) {
   t.status = t.status === "done" ? t.status : "post";
   change(); render(); toast("Pospuesta para " + fmtD(t.date || t.due));
 }
+function assignToday(id) {
+  const t = taskById(id); if (!t || t.recur) return;
+  t.date = todayISO();
+  if (t.status === "post") t.status = "pend";
+  change(); render(); toast("Asignada a hoy");
+}
 function duplicateTask(id) {
   const t = taskById(id); if (!t) return;
   const c = JSON.parse(JSON.stringify(t));
@@ -460,6 +467,88 @@ function toggleSubtask(taskId, stId) {
   st.done = !st.done; change();
   const box = byId("modalbox"); if (box && byId("te_title")) renderTaskEditorSubtasks(t);
   render();
+}
+
+/* ================= ESTUDIO DE HOY (bloques horarios) ================= */
+function pruneDayPlan() {
+  const lim = addDays(todayISO(), -14);
+  for (const k of Object.keys(state.dayPlan || {})) if (k < lim) delete state.dayPlan[k];
+}
+function blockMinutes(b) { const a = hmToMin(b.from), c = hmToMin(b.to); return a != null && c != null ? Math.max(0, c - a) : 0; }
+function pomosInBlock(b) {
+  if (!b.pomo) return 0;
+  const P = state.settings.pomo;
+  return Math.max(0, Math.floor((blockMinutes(b) + P.s) / (P.f + P.s)));
+}
+function addStudyBlock() {
+  const from = byId("sb_from").value, to = byId("sb_to").value;
+  const f = hmToMin(from), t = hmToMin(to);
+  if (f == null || t == null) { toast("Cargá hora de inicio y de fin"); return; }
+  if (t <= f) { toast("La hora de fin debe ser posterior a la de inicio"); return; }
+  const dp = state.dayPlan[todayISO()] = state.dayPlan[todayISO()] || { blocks: [] };
+  dp.blocks.push({ id: uid(), from, to, pomo: byId("sb_pomo").checked });
+  dp.blocks.sort((a, b) => hmToMin(a.from) - hmToMin(b.from));
+  change(); render(); toast("Bloque agregado");
+}
+function delStudyBlock(id) {
+  const dp = state.dayPlan[todayISO()]; if (!dp) return;
+  dp.blocks = dp.blocks.filter(b => b.id !== id);
+  change(); render();
+}
+function updateDistLeft(total) {
+  let sum = 0;
+  document.querySelectorAll(".dist-inp").forEach(i => { sum += parseInt(i.value) || 0; });
+  const el = byId("distLeft"); if (!el) return;
+  if (sum > total) { el.textContent = "te pasás por " + (sum - total); el.style.color = "var(--warn)"; }
+  else { el.textContent = "quedan " + (total - sum); el.style.color = ""; }
+}
+function createDistTasks() {
+  const today = todayISO(), P = state.settings.pomo;
+  let created = 0;
+  document.querySelectorAll(".dist-inp").forEach(inp => {
+    const n = parseInt(inp.value) || 0;
+    if (n > 0) {
+      quickAddTask({ title: "Sesión de estudio (" + n + " pomodoro" + (n > 1 ? "s" : "") + ")", subjectId: inp.dataset.sid, date: today, estMin: n * P.f, type: "estudio" });
+      created++;
+    }
+  });
+  if (!created) { toast("Asigná al menos un pomodoro a una materia"); return; }
+  render(); toast(created + " tarea" + (created > 1 ? "s" : "") + " creada" + (created > 1 ? "s" : "") + " para hoy");
+}
+function studyTodayCard() {
+  const today = todayISO();
+  pruneDayPlan();
+  const dp = state.dayPlan[today] = state.dayPlan[today] || { blocks: [] };
+  const P = state.settings.pomo;
+  const rows = dp.blocks.map(b => {
+    const min = blockMinutes(b), n = pomosInBlock(b);
+    return `<div class="task" style="cursor:default">
+      <span class="pill acc" style="min-width:104px;text-align:center">${esc(b.from)} – ${esc(b.to)}</span>
+      <div class="tinfo"><div class="tt">${fmtMin(min)}${b.pomo ? ` · con pomodoro: entran <b>${n}</b>` : " · sin pomodoro"}</div></div>
+      <button class="btn sm ghost" title="Quitar bloque" onclick="delStudyBlock('${b.id}')">×</button></div>`;
+  }).join("");
+  const totMin = dp.blocks.reduce((a, b) => a + blockMinutes(b), 0);
+  const totPom = dp.blocks.reduce((a, b) => a + pomosInBlock(b), 0);
+  let dist = "";
+  if (totPom > 0) {
+    dist = `<div class="hr"></div>
+    <p class="tiny" style="margin-bottom:6px">Distribuí los <b>${totPom}</b> pomodoros por materia y creá las tareas de hoy — <span id="distLeft">quedan ${totPom}</span></p>` +
+    activeSubjects().map(s => `<div style="display:flex;align-items:center;gap:8px;margin:4px 0">
+      <span class="tag" style="background:${s.color}1c;color:${s.color};min-width:52px;text-align:center">${esc(s.short)}</span>
+      <span style="flex:1;font-size:.78rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.name)}</span>
+      <input type="number" class="dist-inp" data-sid="${s.id}" value="0" min="0" max="${totPom}" oninput="updateDistLeft(${totPom})" aria-label="Pomodoros para ${escA(s.name)}" style="width:64px;background:var(--card2);border:1px solid var(--line);border-radius:7px;padding:5px 7px"></div>`).join("") +
+    `<div style="display:flex;justify-content:flex-end;margin-top:8px"><button class="btn sm primary" onclick="createDistTasks()">Crear tareas para hoy</button></div>`;
+  }
+  return `<div class="card"><h3>Estudio de hoy<div class="grow"></div>
+    <span class="tiny">${totMin ? fmtMin(totMin) + " disponibles" + (totPom ? " · " + totPom + " pomodoros posibles" : "") : ""}</span></h3>
+    ${rows || '<p class="tiny" style="margin-bottom:6px">Cargá tus horarios de estudio de hoy. Podés agregar varios bloques (por ejemplo 14:00–17:00 y 20:00–22:00) y elegir en cuáles usás pomodoro.</p>'}
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
+      <input type="time" id="sb_from" value="14:00" aria-label="Hora de inicio" style="background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:6px">
+      <span class="tiny">a</span>
+      <input type="time" id="sb_to" value="17:00" aria-label="Hora de fin" style="background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:6px">
+      <label style="display:flex;gap:5px;align-items:center;font-size:.76rem;color:var(--tx2);cursor:pointer"><input type="checkbox" id="sb_pomo" checked style="width:auto">con pomodoro (${P.f}/${P.s})</label>
+      <button class="btn sm" onclick="addStudyBlock()">Agregar bloque</button>
+    </div>${dist}</div>`;
 }
 
 /* ======================== ACCIONES: MATERIAS ======================== */
@@ -582,7 +671,7 @@ function delTopic(evId, tpId) {
 }
 function evalPlanTasks(evId) { return state.tasks.filter(t => t.planId === evId && !t.archived); }
 function evalPrep(e) {
-  // nivel de preparación: temas + tareas del plan + simulacros
+  // nivel de preparación: temas + tareas del plan
   const topics = e.topics || [];
   const tW = topics.length ? topics.reduce((a, t) => a + (t.state === "dom" ? 1 : t.state === "ent" ? .75 : t.state === "emp" ? .35 : 0), 0) / topics.length : null;
   const plan = evalPlanTasks(e.id);
@@ -594,8 +683,6 @@ function evalPrep(e) {
 
 /* ===================== GENERADOR DE PLANES ===================== */
 function generatePlan(evId, opts) {
-  /* opts: {start, intensity:'l'|'n'|'i', blockedWeekdays:[0..6], preferredWeekdays:[], allowExamDay:bool,
-            genTheory:bool, genPractice:bool, genSummary:bool, replaceExisting:bool} */
   const e = evalById(evId); if (!e) return { ok: false, msg: "Evaluación inexistente" };
   const topics = (e.topics || []).filter(t => t.state !== "dom");
   if (!topics.length && !e.reviewDays) return { ok: false, msg: "Cargá temas o días de repaso antes de generar el plan" };
@@ -603,7 +690,6 @@ function generatePlan(evId, opts) {
   const lastDay = opts.allowExamDay ? e.date : addDays(e.date, -1);
   if (start > lastDay) return { ok: false, msg: "No hay días disponibles entre el inicio y el examen" };
 
-  // días disponibles
   let days = [];
   for (let d = start; d <= lastDay; d = addDays(d, 1)) {
     const wd = dToDate(d).getDay();
@@ -616,12 +702,10 @@ function generatePlan(evId, opts) {
   const reviewDays = days.slice(days.length - revDays);
   const guide = opts.intensity === "l" ? 150 : opts.intensity === "i" ? 360 : 240; // minutos orientativos por día (no es un límite)
 
-  // limpiar plan anterior (solo tareas no completadas; el progreso hecho nunca se borra)
   if (opts.replaceExisting) {
     state.tasks = state.tasks.filter(t => !(t.planId === evId && t.status !== "done"));
   }
 
-  // tareas por tema, más difíciles primero
   const sorted = [...topics].sort((a, b) => (b.diff || 2) - (a.diff || 2));
   const jobs = [];
   for (const tp of sorted) {
@@ -635,18 +719,16 @@ function generatePlan(evId, opts) {
     for (const p of parts) jobs.push({ type: p.type, title: p.label, min: Math.max(20, Math.round(total * p.frac / fsum)), diff: tp.diff || 2, topicId: tp.id });
   }
 
-  // distribución: llenar días secuencialmente hasta la guía; desborde en round-robin (sin límite rígido)
   const load = {}; studyDays.forEach(d => load[d] = 0);
   const isPref = d => (opts.preferredWeekdays || []).length ? opts.preferredWeekdays.includes(dToDate(d).getDay()) : true;
   let created = 0;
   if (studyDays.length) {
     let di = 0;
     for (const job of jobs) {
-      // buscar el próximo día con espacio, priorizando preferidos
       let placed = false, tries = 0;
       while (!placed && tries < studyDays.length * 2) {
         const d = studyDays[di % studyDays.length];
-        const bonus = isPref(d) ? 0 : guide * .3; // los no preferidos se consideran "más llenos"
+        const bonus = isPref(d) ? 0 : guide * .3;
         if (load[d] + bonus < guide || tries >= studyDays.length) {
           quickAddTask({ title: job.title, subjectId: e.subjectId, projectId: e.projectId, evalId: evId, planId: evId, date: d, estMin: job.min, type: job.type, prio: job.diff >= 3 ? 2 : 1 });
           load[d] += job.min; created++; placed = true;
@@ -656,7 +738,6 @@ function generatePlan(evId, opts) {
       if (!placed) { const d = studyDays[0]; quickAddTask({ title: job.title, subjectId: e.subjectId, projectId: e.projectId, evalId: evId, planId: evId, date: d, estMin: job.min, type: job.type }); created++; }
     }
   }
-  // días de repaso: repaso general + simulacro
   for (let i = 0; i < reviewDays.length; i++) {
     const d = reviewDays[i];
     quickAddTask({ title: "Repaso general — temas más difíciles", subjectId: e.subjectId, projectId: e.projectId, evalId: evId, planId: evId, date: d, estMin: Math.round(guide * .45), type: "repaso" });
@@ -708,7 +789,7 @@ function toggleHabit(id, date) {
 }
 function habitStreak(h) {
   let n = 0; let d = todayISO();
-  if (!h.checks || (!h.checks[d] && habitDueOn(h, d))) d = addDays(d, -1); // hoy todavía puede completarse
+  if (!h.checks || (!h.checks[d] && habitDueOn(h, d))) d = addDays(d, -1);
   for (let i = 0; i < 3700; i++) {
     if (!habitDueOn(h, d)) { d = addDays(d, -1); continue; }
     if (h.checks && h.checks[d]) { n++; d = addDays(d, -1); } else break;
@@ -873,7 +954,6 @@ function updatePomoTime() {
   document.title = T.run ? s + " · " + (T.phase === "focus" ? "Foco" : "Descanso") + " — Aula" : "Aula · Organizador académico";
 }
 function renderPomoUI() {
-  // barra flotante (visible fuera de la vista Pomodoro cuando hay sesión activa o pausada a medias)
   const T = state.timer, mp = byId("minipomo");
   if (mp) {
     const active = T.run || T.left !== T.total || T.phase !== "focus";
@@ -986,6 +1066,7 @@ function taskRow(t, opts = {}) {
   const dateBit = opts.showDate ? (t.recur ? '<span class="tiny">recurrente</span>' : t.date ? `<span class="mins">${fmtD(t.date)}</span>` : t.due ? `<span class="mins">vence ${fmtD(t.due)}</span>` : "") :
     (t.due && !t.date ? `<span class="mins">vence ${fmtD(t.due)}</span>` : "");
   const late = !t.recur && t.status !== "done" && ((t.date && t.date < todayISO()) || (!t.date && t.due && t.due < todayISO()));
+  const canToday = !t.recur && !done && t.date !== todayISO();
   return `<div class="task ${done ? "done" : ""}" onclick="openTaskEditor('${t.id}')">
     <div class="cb ${done ? "on" : ""}" role="checkbox" aria-checked="${done}" tabindex="0" title="${done ? "Desmarcar" : "Completar"}"
       onclick="event.stopPropagation();toggleTask('${t.id}','${date}')"
@@ -1003,6 +1084,7 @@ function taskRow(t, opts = {}) {
     </div>
     <div class="tactions" onclick="event.stopPropagation()">
       <button title="Empezar pomodoro" onclick="startFromTask('${t.id}')">▸</button>
+      ${canToday ? `<button title="Asignar a hoy" onclick="assignToday('${t.id}')">Hoy</button>` : ""}
       ${!t.recur ? `<button title="Posponer para mañana" onclick="postponeTask('${t.id}')">+1d</button>` : ""}
       <button title="Editar" onclick="openTaskEditor('${t.id}')">Editar</button>
     </div>
@@ -1027,7 +1109,6 @@ function viewHome() {
     <button class="btn" onclick="go('pomodoro')">Empezar a estudiar</button>
     <button class="btn primary" onclick="openQuick()">Agregar</button></div>`;
 
-  // métricas del día
   h += `<div class="grid3" style="margin-bottom:12px">
     <div class="card" style="margin:0"><div class="statnum">${fmtMin(est)}</div><div class="statlab">restante estimado para hoy${est > 420 ? ' · <span style="color:var(--warn)">día muy cargado</span>' : ""}</div></div>
     <div class="card" style="margin:0"><div class="statnum">${done.length}/${dayTasks.length}</div><div class="statlab">tareas de hoy (${donePct}%)</div>
@@ -1035,7 +1116,9 @@ function viewHome() {
     <div class="card" style="margin:0"><div class="statnum">${fmtMin(focusToday)}</div><div class="statlab">estudiado hoy</div></div>
   </div>`;
 
-  // evaluaciones cercanas
+  // planificador de bloques horarios del día
+  h += studyTodayCard();
+
   if (evs.length) {
     h += `<div class="card"><h3>Próximas evaluaciones<div class="grow"></div><button class="btn sm ghost" onclick="go('evals')">Ver todas</button></h3>`;
     h += evs.slice(0, 4).map(e => {
@@ -1050,11 +1133,9 @@ function viewHome() {
     }).join("") + "</div>";
   }
 
-  // sugerencia
   const sug = suggestNow(dayTasks, od, flex, evs);
   if (sug) h += `<div class="card" style="border-left:3px solid var(--acc)"><h3>Qué conviene hacer ahora</h3>${sug}</div>`;
 
-  // atrasadas
   if (od.length) {
     h += `<div class="card" style="border-left:3px solid var(--bad)"><h3>Atrasadas (${od.length})
       <div class="grow"></div><button class="btn sm" onclick="postponeAllOverdue()">Mover todas a hoy</button></h3>`;
@@ -1063,12 +1144,10 @@ function viewHome() {
     h += "</div>";
   }
 
-  // hoy
   h += `<div class="card"><h3>Para hoy<div class="grow"></div><span class="tiny">${dayTasks.length ? fmtMin(dayTasks.reduce((a, t) => a + (t.estMin || 0), 0)) + " en total" : ""}</span></h3>`;
   h += dayTasks.length ? dayTasks.map(t => taskRow(t)).join("") : `<div class="empty">Nada programado para hoy. Agregá una tarea o revisá las flexibles.</div>`;
   h += "</div>";
 
-  // hábitos de hoy
   if (habitsToday.length) {
     h += `<div class="card"><h3>Hábitos de hoy<div class="grow"></div><button class="btn sm ghost" onclick="go('habits')">Administrar</button></h3>`;
     h += habitsToday.map(hb => `<div class="task" onclick="go('habits')">
@@ -1078,12 +1157,10 @@ function viewHome() {
     h += "</div>";
   }
 
-  // flexibles
   if (flex.length) {
-    h += `<div class="card"><h3>Flexibles próximas a vencer</h3>` + flex.slice(0, 6).map(t => taskRow(t, { showDate: true })).join("") + "</div>";
+    h += `<div class="card"><h3>Flexibles próximas a vencer<div class="grow"></div><span class="tiny">botón “Hoy” para asignarlas</span></h3>` + flex.slice(0, 6).map(t => taskRow(t, { showDate: true })).join("") + "</div>";
   }
 
-  // resumen por materia
   const subs = activeSubjects().map(s => {
     const pend = state.tasks.filter(t => t.subjectId === s.id && !t.archived && !t.recur && t.status !== "done" && t.status !== "canc");
     return { s, pend };
@@ -1136,7 +1213,7 @@ function viewToday() {
   if (flex.length) h += `<div class="card"><h3>Flexibles (vencen pronto)</h3>${flex.map(t => taskRow(t, { showDate: true })).join("")}</div>`;
   const tom = addDays(today, 1);
   const tomTasks = tasksOn(tom);
-  if (tomTasks.length) h += `<div class="card"><h3>Mañana</h3>${tomTasks.map(t => taskRow(t, { date: tom })).join("")}</div>`;
+  if (tomTasks.length) h += `<div class="card"><h3>Mañana<div class="grow"></div><span class="tiny">podés marcarlas hechas si las adelantaste</span></h3>${tomTasks.map(t => taskRow(t, { date: tom, showDate: true })).join("")}</div>`;
   return h;
 }
 
@@ -1372,12 +1449,11 @@ function viewEvalDetail() {
       ${e.reviewDays ? "Días reservados para repaso: <b>" + e.reviewDays + "</b><br>" : ""}
       ${e.obs ? "Observaciones: " + esc(e.obs) : ""}</div></div>`;
   }
-  // temas
   h += `<div class="card"><h3>Temas<div class="grow"></div><span class="tiny">${fmtMin(e.topics.reduce((a, t) => a + (t.estMin || 0), 0))} estimados</span></h3>`;
   h += e.topics.map(tp => `<div class="task" style="cursor:default">
       <span class="pill ${tp.diff >= 3 ? "bad" : tp.diff === 2 ? "warn" : ""}" title="Dificultad">${tp.diff >= 3 ? "difícil" : tp.diff === 2 ? "media" : "fácil"}</span>
       <div class="tinfo"><div class="tt">${esc(tp.name)}</div><div class="tmeta"><span class="mins">${fmtMin(tp.estMin)}</span></div></div>
-      <select style="width:auto;background:var(--card2);border:1px solid var(--line);border-radius:7px;padding:4px;font-size:.7rem" onchange="setTopicState('${e.id}','${tp.id}',this.value)">
+      <select style="width:auto;background:var(--card2);border:1px solid var(--line);border-radius:7px;padding:4px;font-size:.7rem" onchange="setTopicState('${e.id}','${tp.id}',this.value)" aria-label="Estado del tema">
         ${[["nv", "No visto"], ["emp", "Empezado"], ["ent", "Entendido"], ["dom", "Dominado"]].map(([k, v]) => `<option value="${k}" ${tp.state === k ? "selected" : ""}>${v}</option>`).join("")}
       </select>
       <button class="btn sm ghost" title="Eliminar tema" onclick="delTopic('${e.id}','${tp.id}')">×</button></div>`).join("");
@@ -1386,7 +1462,6 @@ function viewEvalDetail() {
       <div><select id="tp_diff" style="width:100%;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:8px"><option value="1">Fácil</option><option value="2" selected>Media</option><option value="3">Difícil</option></select></div>
       <div><input id="tp_min" type="number" value="90" min="10" step="10" title="Minutos estimados" style="width:100%;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:8px"></div>
       <button class="btn" onclick="addTopic('${e.id}')">Agregar</button></div></div>`;
-  // plan
   h += `<div class="card"><h3>Plan de estudio<div class="grow"></div>
     ${plan.length ? `<button class="btn sm" onclick="replanPending('${e.id}')">Replanificar pendientes</button>` : ""}
     <button class="btn sm primary" onclick="openPlanWizard('${e.id}')">${plan.length ? "Regenerar plan" : "Generar plan"}</button></h3>`;
@@ -1503,7 +1578,7 @@ function viewNotes() {
   let list = state.notes.filter(n => !q || (n.title + " " + n.body + " " + (n.tags || []).join(" ")).toLowerCase().includes(q));
   list = [...list.filter(n => n.pinned), ...list.filter(n => !n.pinned)].sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || (b.updatedAt || "").localeCompare(a.updatedAt || ""));
   let h = `<div class="vhead"><h2>Notas</h2><div class="grow"></div>
-    <input placeholder="Filtrar notas…" value="${escA(ui.notesFilter || "")}" oninput="ui.notesFilter=this.value;render()" style="background:var(--card);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:.78rem">
+    <input placeholder="Filtrar notas…" value="${escA(ui.notesFilter || "")}" oninput="ui.notesFilter=this.value;render()" style="background:var(--card);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:.78rem" aria-label="Filtrar notas">
     <button class="btn primary" onclick="openNoteEditor()">Nueva nota</button></div>`;
   h += list.length ? `<div class="grid2">${list.map(noteCard).join("")}</div>` : '<div class="card"><div class="empty">Sin notas todavía.</div></div>';
   return h;
@@ -1540,7 +1615,7 @@ function renderPomoView() {
       <button class="btn" onclick="openPomoCfg()">Ajustes</button></div>
     <div class="dots">${dots}</div>
     <label style="display:block;font-size:.66rem;color:var(--tx2);margin:16px 0 4px;text-transform:uppercase;letter-spacing:.06em;font-weight:700;text-align:left">Trabajando en</label>
-    <select onchange="pomoSetLink(this.value)" style="width:100%;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:8px;font-size:.8rem">${pomoLinkOptions(sel)}</select>
+    <select onchange="pomoSetLink(this.value)" style="width:100%;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:8px;font-size:.8rem" aria-label="Vincular sesión">${pomoLinkOptions(sel)}</select>
     ${linked ? `<p class="tiny" style="margin-top:8px;text-align:left">${fmtMin(linked.realMin || 0)} acumulados en esta tarea · ${linked.pomos || 0} pomodoros</p>` : ""}
   </div>
   <div class="grid3" style="max-width:640px;margin:0 auto">
@@ -1609,7 +1684,6 @@ function viewStats() {
   const od = overdueTasks().length;
   const pomosTotal = state.sessions.reduce((a, s) => a + (s.pomos || 0), 0);
   const activeDays = new Set(state.sessions.map(s => s.date)).size;
-  // racha de días con estudio
   let streak = 0; { let d = today; if (!state.sessions.some(s => s.date === d)) d = addDays(d, -1); while (state.sessions.some(s => s.date === d)) { streak++; d = addDays(d, -1); } }
   const diff = weekMin - prevWeekMin;
   let h = `<div class="vhead"><h2>Estadísticas</h2><div class="grow"></div><button class="btn" onclick="exportCSV()">Exportar CSV</button></div>`;
@@ -1621,7 +1695,6 @@ function viewStats() {
     <div class="card" style="margin:0"><div class="statnum">${pomosTotal}</div><div class="statlab">pomodoros totales</div></div>
     <div class="card" style="margin:0"><div class="statnum">${streak}</div><div class="statlab">racha de días · ${activeDays} días activos</div></div>
   </div>`;
-  // barras de las últimas 2 semanas
   const days14 = []; for (let i = 13; i >= 0; i--) days14.push(addDays(today, -i));
   const maxD = Math.max(60, ...days14.map(d => minsBetween(d, d)));
   h += `<div class="card"><h3>Últimos 14 días</h3><div class="bars">` + days14.map(d => {
@@ -1630,7 +1703,6 @@ function viewStats() {
       <div class="bar" style="height:${Math.max(3, m / maxD * 100)}px;${d === today ? "" : "opacity:.55"}" title="${escA(fmtD(d) + " · " + fmtMin(m))}"></div>
       <span class="tiny">${dToDate(d).getDate()}</span></div>`;
   }).join("") + "</div></div>";
-  // evolución semanal (8 semanas) — línea SVG
   const weeks = []; for (let i = 7; i >= 0; i--) { const s = addDays(ws, -7 * i); weeks.push({ s, min: minsBetween(s, addDays(s, 6)) }); }
   const maxW = Math.max(60, ...weeks.map(w => w.min));
   const pts = weeks.map((w, i) => (i / (weeks.length - 1) * 560 + 20) + "," + (110 - w.min / maxW * 95 + 5)).join(" ");
@@ -1639,7 +1711,6 @@ function viewStats() {
       <polyline points="${pts}" fill="none" stroke="var(--acc)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
       ${weeks.map((w, i) => `<circle cx="${i / (weeks.length - 1) * 560 + 20}" cy="${110 - w.min / maxW * 95 + 5}" r="3.5" fill="var(--acc)"/><text x="${i / (weeks.length - 1) * 560 + 20}" y="126" text-anchor="middle" style="font-size:9px;fill:var(--tx3)">${fmtD(w.s).slice(4)}</text><text x="${i / (weeks.length - 1) * 560 + 20}" y="${110 - w.min / maxW * 95 - 4}" text-anchor="middle" style="font-size:8.5px;fill:var(--tx2)">${w.min ? Math.round(w.min / 6) / 10 + "h" : ""}</text>`).join("")}
     </svg></div>`;
-  // distribución por materia (últimos 30 días)
   const from30 = addDays(today, -29);
   const bySub = activeSubjects().map(s => ({ s, min: minsBetween(from30, today, x => x.subjectId === s.id) })).filter(x => x.min > 0).sort((a, b) => b.min - a.min);
   const byProj = state.projects.map(p => ({ p, min: minsBetween(from30, today, x => x.projectId === p.id && !x.subjectId) })).filter(x => x.min > 0);
@@ -1656,7 +1727,6 @@ function viewStats() {
       <span class="mins" style="min-width:76px;text-align:right">${fmtMin(min)}</span></div>`).join("");
     h += "</div>";
   }
-  // estimado vs real por materia
   const cmp = activeSubjects().map(s => {
     const ts = state.tasks.filter(t => t.subjectId === s.id && t.status === "done" && (t.estMin || 0) > 0);
     const est = ts.reduce((a, t) => a + t.estMin, 0), real = ts.reduce((a, t) => a + (t.realMin || 0), 0);
@@ -1666,7 +1736,6 @@ function viewStats() {
     h += `<div class="card"><h3>Estimado vs real (tareas completadas con tiempo registrado)</h3>` + cmp.map(({ s, est, real, n }) =>
       `<div class="tiny" style="margin:6px 0">${esc(s.short)} — estimado ${fmtMin(est)} · real ${fmtMin(real)} · ${real > est ? "subestimaste" : "sobreestimaste"} ${Math.abs(Math.round((real - est) / est * 100))}% (${n} tareas)</div>`).join("") + "</div>";
   }
-  // calendario de actividad (12 semanas)
   h += `<div class="card"><h3>Actividad (últimas 12 semanas)</h3><div class="heat" style="grid-template-columns:repeat(28,13px)">`;
   const maxH = Math.max(30, ...state.sessions.map(s => s.min));
   for (let i = 83; i >= 0; i--) {
@@ -1731,7 +1800,7 @@ function viewBackups() {
     <button class="btn primary" onclick="exportJSON()">Exportar JSON</button></div>
   <div class="card"><h3>Importar datos</h3>
     <p class="muted" style="margin-bottom:10px">Elegí un archivo JSON exportado desde Aula (o desde la versión anterior). Antes de aplicar se valida el contenido y podés elegir fusionar o reemplazar.</p>
-    <input type="file" id="impfile" accept=".json,application/json" onchange="importJSON(event)" style="font-size:.8rem"></div>
+    <input type="file" id="impfile" accept=".json,application/json" onchange="importJSON(event)" style="font-size:.8rem" aria-label="Importar archivo JSON"></div>
   <div class="card"><h3>Copias locales automáticas</h3>
     <p class="tiny" style="margin-bottom:8px">Se crea una por día al abrir la aplicación (se conservan las últimas 10, más 10 manuales). Se guardan en este navegador.</p>
     <div id="bklist"><div class="empty">Cargando…</div></div></div>
@@ -1778,7 +1847,6 @@ function importJSON(ev) {
   r.onload = () => {
     let s = null;
     try { s = JSON.parse(r.result); } catch (e) { toast("El archivo no es un JSON válido"); return; }
-    // aceptar también formato de la versión 1
     const isV1 = s && Array.isArray(s.tasks) && s.tasks.length && s.tasks[0].t !== undefined && !s.subjects;
     if (isV1) {
       askConfirm({
@@ -1826,7 +1894,7 @@ function viewConfig() {
       ${[["light", "Claro"], ["dark", "Oscuro"], ["auto", "Automático"]].map(([k, v]) => `<button class="btn sm ${st.theme === k ? "primary" : ""}" onclick="setTheme('${k}')">${v}</button>`).join("")}</div>
     <label class="tiny" style="font-weight:700">Color principal</label>
     <div style="display:flex;gap:6px;margin:6px 0 12px;flex-wrap:wrap">
-      ${SUBJ_COLORS.slice(0, 8).map(c => `<button title="${c}" style="width:26px;height:26px;border-radius:8px;background:${c};border:2px solid ${st.accent === c ? "var(--tx)" : "transparent"};cursor:pointer" onclick="setAccent('${c}')"></button>`).join("")}
+      ${SUBJ_COLORS.slice(0, 8).map(c => `<button title="${c}" style="width:26px;height:26px;border-radius:8px;background:${c};border:2px solid ${st.accent === c ? "var(--tx)" : "transparent"};cursor:pointer" onclick="setAccent('${c}')" aria-label="Color ${c}"></button>`).join("")}
       <input type="color" value="${st.accent}" onchange="setAccent(this.value)" title="Color personalizado" style="width:34px;height:26px;border:none;background:none;cursor:pointer;padding:0">
     </div>
     <label class="tiny" style="font-weight:700">Primer día de la semana</label>
@@ -1848,7 +1916,7 @@ function viewConfig() {
     <p class="tiny" style="margin-top:8px">El permiso del navegador se pide recién al activar esta opción.</p>
     <div class="hr"></div>
     <label class="tiny" style="font-weight:700">Días considerados “próximos”</label>
-    <input type="number" min="1" max="30" value="${st.upcomingDays}" onchange="state.settings.upcomingDays=parseInt(this.value)||7;change();render()" style="width:90px;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:7px;margin-top:4px">
+    <input type="number" min="1" max="30" value="${st.upcomingDays}" onchange="state.settings.upcomingDays=parseInt(this.value)||7;change();render()" style="width:90px;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:7px;margin-top:4px" aria-label="Días próximos">
   </div>
   <div class="card" style="margin:0"><h3>Preferencias</h3>
     <label style="display:flex;gap:8px;align-items:center;font-size:.8rem;cursor:pointer"><input type="checkbox" style="width:auto" ${chk(st.showDone)} onchange="state.settings.showDone=this.checked;change();render()">Mostrar tareas completadas en la lista</label>
@@ -1980,7 +2048,7 @@ function openQuickTask(date, subjectId, projectId) {
       <div><label for="qt_min">Tiempo estimado (min)</label><input id="qt_min" type="number" value="60" min="0" step="5"></div>
     </div>
     <div class="mrow">
-      <div><label for="qt_mode">Programación</label><select id="qt_mode"><option value="d">Día fijo</option><option value="due" ${!date ? "" : ""}>Fecha límite (flexible)</option><option value="none">Sin fecha</option></select></div>
+      <div><label for="qt_mode">Programación</label><select id="qt_mode"><option value="d">Día fijo</option><option value="due">Fecha límite (flexible)</option><option value="none">Sin fecha</option></select></div>
       <div><label for="qt_date">Fecha</label><input id="qt_date" type="date" value="${date || todayISO()}"></div>
     </div>
     <div class="mfoot"><span class="tiny grow">Después podés abrirla para completar detalles avanzados.</span>
@@ -2235,6 +2303,7 @@ function openHabitEditor(id) {
       <button class="btn" onclick="closeModal()">Cancelar</button>
       <button class="btn primary" onclick="saveHabitFromModal(${h ? "'" + h.id + "'" : "null"})">${h ? "Guardar" : "Crear"}</button></div>`);
 }
+
 /* ---------- Nota ---------- */
 function openNoteEditor(id, presetLink) {
   const n = id ? noteById(id) : null;
@@ -2410,7 +2479,6 @@ async function init() {
   window.addEventListener("hashchange", () => { render(); if (window.innerWidth < 980) toggleSidebar(false); });
   document.addEventListener("keydown", onKeydown);
   document.addEventListener("keydown", trapFocus);
-  // cerrar modales al clickear el fondo
   for (const id of ["modalbg", "searchbg"]) byId(id).addEventListener("mousedown", e => { if (e.target.id === id) (id === "searchbg" ? closeSearch : closeModal)(); });
   byId("confirmbg").addEventListener("mousedown", e => { if (e.target.id === "confirmbg") closeConfirm(); });
   await dailyBackup();
