@@ -1,6 +1,6 @@
 /* Service worker de Aula — caché de app shell con versión.
    Al subir una versión nueva, cambiar CACHE_VERSION: el SW viejo se limpia solo. */
-const CACHE_VERSION = "aula-v2.1.0";
+const CACHE_VERSION = "aula-v2.2.0";
 const SHELL = [
   "./",
   "./index.html",
@@ -25,13 +25,12 @@ self.addEventListener("activate", e => {
   );
 });
 
-/* Estrategia: red primero para el shell (para tomar actualizaciones),
-   con caída a caché cuando no hay conexión. Todo lo demás, caché primero. */
+/* Red primero para el shell (para tomar actualizaciones), caché como respaldo offline. */
 self.addEventListener("fetch", e => {
   const req = e.request;
   if (req.method !== "GET") return;
   const url = new URL(req.url);
-  if (url.origin !== location.origin) return; // la app no depende de recursos externos
+  if (url.origin !== location.origin) return;
 
   const isShell = req.mode === "navigate" || SHELL.some(p => url.pathname.endsWith(p.replace("./", "/")));
   if (isShell) {

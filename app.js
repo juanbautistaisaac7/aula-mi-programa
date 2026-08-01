@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.1.0";
+const APP_VERSION = "2.2.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -142,7 +142,7 @@ async function persist() {
   saving = false;
   if (savePending) { savePending = false; persist(); }
 }
-function change() { markDirty(); } // alias semántico: cada mutación llama change()
+function change() { markDirty(); }
 
 async function dailyBackup() {
   try {
@@ -185,14 +185,12 @@ function migrateV1(newState) {
   try { old = JSON.parse(localStorage.getItem(OLD_LS_KEY)); } catch (e) { return false; }
   if (!old || !Array.isArray(old.tasks)) return false;
 
-  const S = {}; // short -> subject id
+  const S = {};
   for (const sub of newState.subjects) S[sub.short] = sub.id;
 
-  // Proyecto MQTT
   const projMQ = { id: uid(), name: "Presentación MQTT (POC)", desc: "Proyecto migrado desde la versión anterior. Ver videos, profundizar, armar POC y practicar la presentación.", due: "2026-08-05", status: "prog", createdAt: todayISO(), milestones: [], subjectIds: [S.CDT].filter(Boolean) };
   newState.projects.push(projMQ);
 
-  // Evaluaciones desde tareas-examen antiguas
   const evAN = { id: uid(), name: "Parcial de Análisis Numérico", subjectId: S.ANP, projectId: null, kind: "parcial", date: "2026-07-30", time: "09:00", mode: "Presencial", place: "", status: "prep", targetGrade: "", grade: "", topics: [], reviewDays: 2, obs: "Migrado desde la versión anterior. Cubre teoría y práctica. Por la mañana.", createdAt: todayISO() };
   const evCD = { id: uid(), name: "Parcial de Comunicación de Datos", subjectId: S.CDP, projectId: null, kind: "parcial", date: "2026-07-30", time: "", mode: "Presencial", place: "", status: "prep", targetGrade: "", grade: "", topics: [], reviewDays: 2, obs: "Migrado desde la versión anterior.", createdAt: todayISO() };
   const evEC = { id: uid(), name: "Parcial de Economía", subjectId: S.EC, projectId: null, kind: "parcial", date: "2026-07-24", time: "20:00", mode: "Virtual", place: "Conectarse 20:00 hs", status: "prep", targetGrade: "", grade: "", topics: [], reviewDays: 0, obs: "Migrado. Conectarse a las 20:00.", createdAt: todayISO() };
@@ -229,14 +227,13 @@ function migrateV1(newState) {
     return r;
   };
   for (const t of old.tasks) {
-    if (t.exam) { // los exámenes viejos pasan a ser evaluaciones, no tareas
+    if (t.exam) {
       if (t.done) { const map = { AN: evAN, CD: evCD, EC: evEC, MQ: evMQ }; if (map[t.s]) map[t.s].status = "rendido"; }
       continue;
     }
     newState.tasks.push(mapTask(t));
   }
 
-  // Hábito de Desarrollo de Software (antes hardcodeado)
   const habit = {
     id: uid(), name: "Proyecto de Desarrollo de Software (1–2 h)",
     desc: "Entender el proyecto y el trabajo de los compañeros, tomar apuntes, subir commits.",
@@ -245,12 +242,10 @@ function migrateV1(newState) {
   };
   newState.habits.push(habit);
 
-  // Registro de tiempo (pomodoros por día) -> sesiones
   for (const [date, l] of Object.entries(old.log || {})) {
-    if (l && l.p) newState.sessions.push({ id: uid(), date, min: l.p, pomos: l.n || 0, taskId: null, subjectId: null, projectId: null, evalId: null, manual: false, ts: dToDate(date).getTime(), note: "Migrado de la versión anterior" });
+    if (l && l.p) newState.sessions.push({ id: uid(), date, min: l.p, pomos: l.n || 0, taskId: null, subjectId: null, projectId: null, evalId: null, manual: false, auto: false, ts: dToDate(date).getTime(), note: "Migrado de la versión anterior" });
     if (l && l.dt) newState.dayLog[date] = { tasksDone: l.dt };
   }
-  // Configuración del pomodoro
   if (old.cfg) newState.settings.pomo = { f: old.cfg.f || 25, s: old.cfg.s || 5, l: old.cfg.l || 15, c: old.cfg.c || 4 };
 
   newState.meta.migratedV1 = true;
@@ -259,7 +254,6 @@ function migrateV1(newState) {
 }
 
 async function loadState() {
-  // 1) IndexedDB principal
   try { db = await idbOpen(); } catch (e) { db = null; }
   let raw = null;
   if (db) { try { raw = await idbGet("kv", "state"); } catch (e) {} }
@@ -267,7 +261,6 @@ async function loadState() {
   if (raw) {
     try { const s = JSON.parse(raw); if (validState(s)) { state = normalizeState(s); return; } } catch (e) { console.warn("Estado dañado, intentando backups…"); }
   }
-  // 2) Recuperación desde backups automáticos
   if (db) {
     try {
       const keys = (await idbKeys("backups")).sort().reverse();
@@ -276,12 +269,10 @@ async function loadState() {
       }
     } catch (e) {}
   }
-  // 3) Copia de emergencia en localStorage
   try {
     const em = typeof localStorage !== "undefined" ? localStorage.getItem(EMERGENCY_KEY) : null;
     if (em) { const s = JSON.parse(em); if (validState(s)) { state = normalizeState(s); toast("Datos recuperados desde la copia de emergencia"); return; } }
   } catch (e) {}
-  // 4) Estado nuevo + migración desde la app anterior
   state = baseState();
   state.subjects = initialSubjects();
   try { if (typeof localStorage !== "undefined" && localStorage.getItem(OLD_LS_KEY) && migrateV1(state)) toast("Datos de la versión anterior migrados correctamente"); } catch (e) { console.warn("Fallo de migración", e); }
@@ -294,7 +285,7 @@ const evalById = id => state.evals.find(e => e.id === id) || null;
 const taskById = id => state.tasks.find(t => t.id === id) || null;
 const noteById = id => state.notes.find(n => n.id === id) || null;
 const habitById = id => state.habits.find(h => h.id === id) || null;
-function ownerOf(t) { // materia o proyecto de una tarea
+function ownerOf(t) {
   if (t.subjectId) { const s = subjById(t.subjectId); if (s) return { name: s.short || s.name, color: s.color, full: s.name }; }
   if (t.projectId) { const p = projById(t.projectId); if (p) return { name: p.name, color: "#64748b", full: p.name }; }
   return null;
@@ -347,8 +338,7 @@ function upcomingEvals(days) {
 
 /* ==================== SESIONES Y ESTADÍSTICAS ==================== */
 function addSession(min, opts = {}) {
-  const s = { id: uid(), date: opts.date || todayISO(), min: Math.round(min), pomos: opts.pomos || 0, taskId: opts.taskId || null, subjectId: opts.subjectId || null, projectId: opts.projectId || null, evalId: opts.evalId || null, manual: !!opts.manual, ts: Date.now(), note: opts.note || "" };
-  // derivar vínculos desde la tarea
+  const s = { id: uid(), date: opts.date || todayISO(), min: Math.round(min), pomos: opts.pomos || 0, taskId: opts.taskId || null, subjectId: opts.subjectId || null, projectId: opts.projectId || null, evalId: opts.evalId || null, manual: !!opts.manual, auto: !!opts.auto, ts: Date.now(), note: opts.note || "" };
   if (s.taskId) { const t = taskById(s.taskId); if (t) { s.subjectId = s.subjectId || t.subjectId; s.projectId = s.projectId || t.projectId; s.evalId = s.evalId || t.evalId; t.realMin = (t.realMin || 0) + s.min; if (opts.pomos) t.pomos = (t.pomos || 0) + opts.pomos; } }
   state.sessions.push(s); change();
   return s;
@@ -375,9 +365,7 @@ function toast(msg, undoFn) {
 }
 function runUndo() { if (ui.undoFn) { ui.undoFn(); ui.undoFn = null; } const t = byId("toast"); if (t) t.classList.remove("show"); }
 
-let confirmCb = null;
 function askConfirm(opts) {
-  // opts: {title, body, okLabel, danger, onOk, second:{title,body,okLabel}}
   const box = byId("confirmbox"), bg = byId("confirmbg");
   const step = o => {
     box.innerHTML = `<h3>${esc(o.title)}</h3><p class="muted" style="margin-bottom:4px">${o.body}</p>
@@ -402,22 +390,42 @@ function doubleDelete(what, onOk) {
     second: { title: "Esta acción es definitiva", body: "No vas a poder recuperar estos datos después de unos segundos. ¿Confirmás la eliminación?", okLabel: "Sí, eliminar definitivamente" }
   });
 }
+
 /* ========================= ACCIONES: TAREAS ========================= */
 function toggleTask(id, date) {
   const t = taskById(id); if (!t) return;
   if (t.recur) {
     const d = date || todayISO();
     t.recurDone = t.recurDone || {};
-    if (t.recurDone[d]) delete t.recurDone[d];
-    else { t.recurDone[d] = 1; bumpDayDone(d); toast("Completada"); }
+    if (t.recurDone[d]) { delete t.recurDone[d]; uncreditTaskDone(t, d); }
+    else { t.recurDone[d] = 1; bumpDayDone(d); creditTaskDone(t, d); toast("Completada"); }
   } else if (t.status === "done") {
-    t.status = "pend"; t.doneAt = null;
+    t.status = "pend"; t.doneAt = null; uncreditTaskDone(t);
   } else {
-    t.status = "done"; t.doneAt = todayISO(); bumpDayDone(todayISO()); toast("Tarea completada");
+    t.status = "done"; t.doneAt = todayISO(); bumpDayDone(todayISO()); creditTaskDone(t); toast("Tarea completada");
   }
   change(); render();
 }
 function bumpDayDone(d) { state.dayLog[d] = state.dayLog[d] || {}; state.dayLog[d].tasksDone = (state.dayLog[d].tasksDone || 0) + 1; }
+/* Al completar una tarea, su tiempo estimado restante se acredita como sesión de estudio,
+   así las horas por materia reflejan TODO lo hecho, no solo lo cronometrado con pomodoro.
+   Se descuenta lo ya registrado (pomodoros/manual) para no contar doble, y se revierte al desmarcar. */
+function creditTaskDone(t, recurDate) {
+  const already = t.recur ? 0 : (t.realMin || 0);
+  const credit = Math.max(0, (t.estMin || 0) - already);
+  if (credit <= 0) return;
+  addSession(credit, { taskId: t.id, date: t.recur ? recurDate : todayISO(), auto: true, note: "Tarea completada (tiempo estimado)" });
+}
+function uncreditTaskDone(t, recurDate) {
+  for (let i = state.sessions.length - 1; i >= 0; i--) {
+    const s = state.sessions[i];
+    if (s.taskId === t.id && s.auto && (!t.recur || s.date === recurDate)) {
+      t.realMin = Math.max(0, (t.realMin || 0) - s.min);
+      state.sessions.splice(i, 1);
+    }
+  }
+  change();
+}
 function postponeTask(id) {
   const t = taskById(id); if (!t || t.recur) return;
   if (t.date) t.date = addDays(t.date < todayISO() ? todayISO() : t.date, 1);
@@ -671,7 +679,6 @@ function delTopic(evId, tpId) {
 }
 function evalPlanTasks(evId) { return state.tasks.filter(t => t.planId === evId && !t.archived); }
 function evalPrep(e) {
-  // nivel de preparación: temas + tareas del plan
   const topics = e.topics || [];
   const tW = topics.length ? topics.reduce((a, t) => a + (t.state === "dom" ? 1 : t.state === "ent" ? .75 : t.state === "emp" ? .35 : 0), 0) / topics.length : null;
   const plan = evalPlanTasks(e.id);
@@ -700,7 +707,7 @@ function generatePlan(evId, opts) {
   const revDays = clamp(e.reviewDays || 0, 0, Math.max(0, days.length - 1));
   const studyDays = days.slice(0, days.length - revDays);
   const reviewDays = days.slice(days.length - revDays);
-  const guide = opts.intensity === "l" ? 150 : opts.intensity === "i" ? 360 : 240; // minutos orientativos por día (no es un límite)
+  const guide = opts.intensity === "l" ? 150 : opts.intensity === "i" ? 360 : 240;
 
   if (opts.replaceExisting) {
     state.tasks = state.tasks.filter(t => !(t.planId === evId && t.status !== "done"));
@@ -866,7 +873,6 @@ function deleteNote(id) {
   });
 }
 function mdLite(src) {
-  // Mini-formato seguro: escapa primero, luego aplica encabezados, listas y negrita.
   const lines = esc(src || "").split("\n");
   let out = [], inUl = false, inOl = false;
   const close = () => { if (inUl) { out.push("</ul>"); inUl = false; } if (inOl) { out.push("</ol>"); inOl = false; } };
@@ -1116,7 +1122,6 @@ function viewHome() {
     <div class="card" style="margin:0"><div class="statnum">${fmtMin(focusToday)}</div><div class="statlab">estudiado hoy</div></div>
   </div>`;
 
-  // planificador de bloques horarios del día
   h += studyTodayCard();
 
   if (evs.length) {
@@ -1368,7 +1373,7 @@ function viewSubjectDetail() {
     <button class="btn sm primary" onclick="openQuickTask(null,'${s.id}')">Nueva tarea</button></div>`;
   h += `<div class="grid3" style="margin-bottom:12px">
     <div class="card" style="margin:0"><div class="statnum">${pct}%</div><div class="statlab">${done.length}/${ts.length} tareas completadas</div><div class="pbar" style="margin-top:6px"><i style="width:${pct}%"></i></div></div>
-    <div class="card" style="margin:0"><div class="statnum">${fmtMin(real)}</div><div class="statlab">tiempo real estudiado · ${fmtMin(weekMin)} esta semana</div></div>
+    <div class="card" style="margin:0"><div class="statnum">${fmtMin(real)}</div><div class="statlab">horas estudiadas (pomodoro + tareas hechas) · ${fmtMin(weekMin)} esta semana</div></div>
     <div class="card" style="margin:0"><div class="statnum">${fmtMin(est)}</div><div class="statlab">estimado total ${real && est ? "· real/est " + Math.round(real / est * 100) + "%" : ""}</div></div>
   </div>`;
   if (nextEv) {
@@ -1620,7 +1625,7 @@ function renderPomoView() {
   </div>
   <div class="grid3" style="max-width:640px;margin:0 auto">
     <div class="card" style="margin:0"><div class="statnum">${todayPomos}</div><div class="statlab">pomodoros hoy</div></div>
-    <div class="card" style="margin:0"><div class="statnum">${fmtMin(todayMin)}</div><div class="statlab">foco hoy</div></div>
+    <div class="card" style="margin:0"><div class="statnum">${fmtMin(todayMin)}</div><div class="statlab">estudiado hoy</div></div>
     <div class="card" style="margin:0"><div class="statnum">${state.settings.pomo.f}/${state.settings.pomo.s}</div><div class="statlab">min foco / descanso</div></div>
   </div>`;
 }
@@ -1686,7 +1691,7 @@ function viewStats() {
   const activeDays = new Set(state.sessions.map(s => s.date)).size;
   let streak = 0; { let d = today; if (!state.sessions.some(s => s.date === d)) d = addDays(d, -1); while (state.sessions.some(s => s.date === d)) { streak++; d = addDays(d, -1); } }
   const diff = weekMin - prevWeekMin;
-  let h = `<div class="vhead"><h2>Estadísticas</h2><div class="grow"></div><button class="btn" onclick="exportCSV()">Exportar CSV</button></div>`;
+  let h = `<div class="vhead"><h2>Estadísticas</h2><span class="sub">incluye pomodoros, sesiones manuales y el tiempo estimado de las tareas completadas</span><div class="grow"></div><button class="btn" onclick="exportCSV()">Exportar CSV</button></div>`;
   h += `<div class="grid3" style="margin-bottom:12px">
     <div class="card" style="margin:0"><div class="statnum">${fmtMin(todayMin)}</div><div class="statlab">hoy</div></div>
     <div class="card" style="margin:0"><div class="statnum">${fmtMin(weekMin)}</div><div class="statlab">esta semana · ${diff >= 0 ? "+" : "−"}${fmtMin(Math.abs(diff))} vs anterior</div></div>
@@ -1716,7 +1721,7 @@ function viewStats() {
   const byProj = state.projects.map(p => ({ p, min: minsBetween(from30, today, x => x.projectId === p.id && !x.subjectId) })).filter(x => x.min > 0);
   const totDist = bySub.reduce((a, x) => a + x.min, 0) + byProj.reduce((a, x) => a + x.min, 0);
   if (totDist) {
-    h += `<div class="card"><h3>Distribución por materia (30 días)</h3>`;
+    h += `<div class="card"><h3>Distribución por materia (30 días)<div class="grow"></div><span class="tiny">pomodoro + manual + tareas completadas</span></h3>`;
     h += bySub.map(({ s, min }) => `<div style="display:flex;align-items:center;gap:10px;margin:7px 0">
       <span class="tag" style="background:${s.color}1c;color:${s.color};min-width:52px;text-align:center">${esc(s.short)}</span>
       <div class="pbar"><i style="width:${Math.round(min / totDist * 100)}%;background:${s.color}"></i></div>
@@ -1731,9 +1736,9 @@ function viewStats() {
     const ts = state.tasks.filter(t => t.subjectId === s.id && t.status === "done" && (t.estMin || 0) > 0);
     const est = ts.reduce((a, t) => a + t.estMin, 0), real = ts.reduce((a, t) => a + (t.realMin || 0), 0);
     return { s, est, real, n: ts.length };
-  }).filter(x => x.est && x.real);
+  }).filter(x => x.est && x.real && x.real !== x.est);
   if (cmp.length) {
-    h += `<div class="card"><h3>Estimado vs real (tareas completadas con tiempo registrado)</h3>` + cmp.map(({ s, est, real, n }) =>
+    h += `<div class="card"><h3>Estimado vs real (tareas con tiempo cronometrado)</h3>` + cmp.map(({ s, est, real, n }) =>
       `<div class="tiny" style="margin:6px 0">${esc(s.short)} — estimado ${fmtMin(est)} · real ${fmtMin(real)} · ${real > est ? "subestimaste" : "sobreestimaste"} ${Math.abs(Math.round((real - est) / est * 100))}% (${n} tareas)</div>`).join("") + "</div>";
   }
   h += `<div class="card"><h3>Actividad (últimas 12 semanas)</h3><div class="heat" style="grid-template-columns:repeat(28,13px)">`;
@@ -1748,12 +1753,12 @@ function viewStats() {
   return h;
 }
 function exportCSV() {
-  let csv = "fecha,minutos,pomodoros,manual,materia,proyecto,tarea\n";
+  let csv = "fecha,minutos,pomodoros,manual,por_tarea_completada,materia,proyecto,tarea\n";
   for (const s of [...state.sessions].sort((a, b) => a.date.localeCompare(b.date))) {
     const sub = s.subjectId ? (subjById(s.subjectId) || {}).short || "" : "";
     const pr = s.projectId ? (projById(s.projectId) || {}).name || "" : "";
     const tk = s.taskId ? (taskById(s.taskId) || {}).title || "" : "";
-    csv += `${s.date},${s.min},${s.pomos || 0},${s.manual ? 1 : 0},"${(sub || "").replace(/"/g, "'")}","${(pr || "").replace(/"/g, "'")}","${(tk || "").replace(/"/g, "'")}"\n`;
+    csv += `${s.date},${s.min},${s.pomos || 0},${s.manual ? 1 : 0},${s.auto ? 1 : 0},"${(sub || "").replace(/"/g, "'")}","${(pr || "").replace(/"/g, "'")}","${(tk || "").replace(/"/g, "'")}"\n`;
   }
   downloadFile("aula-estadisticas-" + todayISO() + ".csv", csv, "text/csv");
   toast("CSV exportado");
@@ -1783,7 +1788,7 @@ function viewHistory() {
   h += sess.length ? sess.map(s => {
     const sub = s.subjectId && subjById(s.subjectId), t = s.taskId && taskById(s.taskId), p = s.projectId && projById(s.projectId);
     return `<div class="task" style="cursor:default"><span class="pill">${fmtD(s.date)}</span>
-      <div class="tinfo"><div class="tt">${fmtMin(s.min)}${s.pomos ? " · " + s.pomos + " pomodoro" + (s.pomos > 1 ? "s" : "") : ""}${s.manual ? " · manual" : ""}</div>
+      <div class="tinfo"><div class="tt">${fmtMin(s.min)}${s.pomos ? " · " + s.pomos + " pomodoro" + (s.pomos > 1 ? "s" : "") : ""}${s.manual ? " · manual" : ""}${s.auto ? " · por tarea completada" : ""}</div>
       <div class="tmeta">${sub ? `<span class="tag" style="background:${sub.color}1c;color:${sub.color}">${esc(sub.short)}</span>` : ""}${t ? `<span class="tiny">${esc(t.title.slice(0, 44))}</span>` : ""}${p ? `<span class="tiny">${esc(p.name.slice(0, 30))}</span>` : ""}${s.note ? `<span class="tiny">${esc(s.note.slice(0, 40))}</span>` : ""}</div></div></div>`;
   }).join("") : '<div class="empty">Sin sesiones registradas.</div>';
   h += "</div>";
@@ -1993,7 +1998,7 @@ function resetApp() {
     second: { title: "¿Estás completamente seguro?", body: "Esta acción es definitiva. Antes se creará una última copia de seguridad local por si te arrepentís (en Copias de seguridad).", okLabel: "Sí, borrar todo" },
     onOk: async () => {
       try { if (db) await idbPut("backups", "pre-reset-" + Date.now(), { ts: Date.now(), label: "Antes de reiniciar", data: JSON.stringify(state) }); } catch (e) {}
-      state = baseState(); state.subjects = initialSubjects(); state.meta.migratedV1 = true; // no re-migrar
+      state = baseState(); state.subjects = initialSubjects(); state.meta.migratedV1 = true;
       change(); render(); toast("Aplicación reiniciada");
     }
   });
@@ -2150,8 +2155,8 @@ function saveTaskEditor(id) {
   t.prio = parseInt(byId("te_prio").value);
   const prevStatus = t.status;
   t.status = byId("te_status").value;
-  if (t.status === "done" && prevStatus !== "done") { t.doneAt = todayISO(); bumpDayDone(todayISO()); }
-  if (t.status !== "done") t.doneAt = null;
+  if (t.status === "done" && prevStatus !== "done") { t.doneAt = todayISO(); bumpDayDone(todayISO()); creditTaskDone(t); }
+  if (t.status !== "done") { t.doneAt = null; if (prevStatus === "done") uncreditTaskDone(t); }
   t.type = byId("te_type").value;
   t.tags = byId("te_tags").value.split(",").map(x => x.trim().replace(/^#/, "")).filter(Boolean);
   t.notes = byId("te_notes").value;
@@ -2234,7 +2239,7 @@ function openPlanWizard(evId) {
   const existing = evalPlanTasks(evId).filter(t => t.status !== "done").length;
   openModal(`<h3>Generar plan de estudio — ${esc(e.name)}</h3>
     <p class="tiny">${e.topics.length} temas cargados · examen el ${fmtD(e.date)} (${fmtRel(e.date)}) · ${e.reviewDays || 0} días finales de repaso${existing ? ` · <b style="color:var(--warn)">hay ${existing} tareas pendientes de un plan anterior</b>` : ""}</p>
-    ${e.topics.length === 0 ? '<p class="muted" style="margin-top:8px;color:var(--warn)">No cargaste temas: el plan solo tendrá días de repaso y simulacros. Podés volver atrás y cargar temas en la ficha de la evaluación.</p>' : ""}
+    ${e.topics.length === 0 ? '<p class="muted" style="margin-top:8px;color:var(--warn)">No cargaste temas: el plan solo tendrá días de repaso y simulacros.</p>' : ""}
     <div class="mrow">
       <div><label for="pw_start">Empezar el</label><input id="pw_start" type="date" value="${todayISO()}"></div>
       <div><label for="pw_int">Intensidad</label><select id="pw_int"><option value="l">Liviana (~2,5 h/día)</option><option value="n" selected>Normal (~4 h/día)</option><option value="i">Intensa (~6 h/día)</option></select></div>
@@ -2348,7 +2353,7 @@ function openManualSession() {
 function openPomoCfg() { go("config"); toast("Las duraciones del pomodoro se editan acá"); }
 
 /* ======================== BÚSQUEDA GLOBAL ======================== */
-let searchMode = "search"; // 'search' | 'cmd'
+let searchMode = "search";
 function openSearch(mode) {
   searchMode = mode || "search";
   const bg = byId("searchbg"), box = byId("searchbox2");
@@ -2443,7 +2448,6 @@ function onKeydown(e) {
   else if (e.key === "p" || e.key === "P") { e.preventDefault(); go("pomodoro"); }
   else if (e.key === "?") { e.preventDefault(); showShortcuts(); }
 }
-/* Bloqueo de foco dentro del modal superior */
 function trapFocus(e) {
   if (e.key !== "Tab") return;
   const tops = ["confirmbg", "searchbg", "modalbg"];
@@ -2463,14 +2467,12 @@ async function init() {
   applyTheme();
   try { localStorage.setItem("aula-theme", state.settings.theme); localStorage.setItem("aula-accent", state.settings.accent); } catch (e) {}
   document.documentElement.style.setProperty("--acc", state.settings.accent);
-  // timer: recuperar si venció con la app cerrada
   const T = state.timer;
   if (!T.total) T.total = phaseDur(T.phase || "focus");
   if (T.run && T.ends) {
     if (Date.now() >= T.ends) { endPhase(true); T.run = false; T.ends = null; T.phase = "focus"; T.left = T.total = phaseDur("focus"); }
     else T.left = Math.round((T.ends - Date.now()) / 1000);
   }
-  // sidebar: abierto por defecto en escritorio
   let sbPref = null; try { sbPref = localStorage.getItem("aula-sb"); } catch (e) {}
   if (window.innerWidth >= 980 && sbPref !== "0") document.body.classList.add("sb-open");
   byId("btnMenu").onclick = () => toggleSidebar();
@@ -2490,7 +2492,6 @@ async function init() {
   checkReminders();
   window.addEventListener("beforeunload", () => { try { const j = JSON.stringify(state); if (db) { const tx = db.transaction("kv", "readwrite"); tx.objectStore("kv").put(j, "state"); } localStorage.setItem(EMERGENCY_KEY, j); } catch (e) {} });
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") persist(); });
-  // PWA: service worker + instalación
   if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
     navigator.serviceWorker.register("sw.js").catch(() => {});
   }
@@ -2502,4 +2503,3 @@ async function init() {
 }
 if (typeof document !== "undefined" && document.readyState !== "loading") init();
 else if (typeof document !== "undefined") document.addEventListener("DOMContentLoaded", init);
-
