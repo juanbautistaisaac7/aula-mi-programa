@@ -1,6 +1,6 @@
 /* Service worker de Aula — caché de app shell con versión.
    Al subir una versión nueva, cambiar CACHE_VERSION: el SW viejo se limpia solo. */
-const CACHE_VERSION = "aula-v2.2.0";
+const CACHE_VERSION = "aula-v2.3.0";
 const SHELL = [
   "./",
   "./index.html",

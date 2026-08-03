@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.2.0";
+const APP_VERSION = "2.3.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -398,23 +398,48 @@ function toggleTask(id, date) {
     const d = date || todayISO();
     t.recurDone = t.recurDone || {};
     if (t.recurDone[d]) { delete t.recurDone[d]; uncreditTaskDone(t, d); }
-    else { t.recurDone[d] = 1; bumpDayDone(d); creditTaskDone(t, d); toast("Completada"); }
+    else { t.recurDone[d] = 1; bumpDayDone(d); askDoneTime(id, d); }
   } else if (t.status === "done") {
     t.status = "pend"; t.doneAt = null; uncreditTaskDone(t);
   } else {
-    t.status = "done"; t.doneAt = todayISO(); bumpDayDone(todayISO()); creditTaskDone(t); toast("Tarea completada");
+    t.status = "done"; t.doneAt = todayISO(); bumpDayDone(todayISO()); askDoneTime(id);
   }
   change(); render();
 }
 function bumpDayDone(d) { state.dayLog[d] = state.dayLog[d] || {}; state.dayLog[d].tasksDone = (state.dayLog[d].tasksDone || 0) + 1; }
-/* Al completar una tarea, su tiempo estimado restante se acredita como sesión de estudio,
-   así las horas por materia reflejan TODO lo hecho, no solo lo cronometrado con pomodoro.
-   Se descuenta lo ya registrado (pomodoros/manual) para no contar doble, y se revierte al desmarcar. */
-function creditTaskDone(t, recurDate) {
+/* Al completar una tarea se pregunta cuánto llevó realmente: ese tiempo (no el estimado)
+   es el que suma a las estadísticas de la materia. Se descuenta lo ya cronometrado con
+   pomodoro/manual para no contar doble, y todo se revierte al desmarcar. */
+function askDoneTime(taskId, date) {
+  const t = taskById(taskId); if (!t) return;
   const already = t.recur ? 0 : (t.realMin || 0);
-  const credit = Math.max(0, (t.estMin || 0) - already);
-  if (credit <= 0) return;
-  addSession(credit, { taskId: t.id, date: t.recur ? recurDate : todayISO(), auto: true, note: "Tarea completada (tiempo estimado)" });
+  const box = byId("confirmbox"), bg = byId("confirmbg");
+  bg.classList.add("open");
+  box.innerHTML = `<h3>Tarea completada</h3>
+    <p class="muted">¿Cuánto tiempo te llevó “${esc(t.title.slice(0, 55))}”?${already ? " Ya tenés " + fmtMin(already) + " cronometrados: se suma solo la diferencia." : ""}</p>
+    <label style="display:block;font-size:.66rem;color:var(--tx2);margin:12px 0 4px;text-transform:uppercase;letter-spacing:.06em;font-weight:700" for="dt_min">Tiempo real (minutos)</label>
+    <input id="dt_min" type="number" min="0" step="5" value="${t.estMin || 60}" style="width:130px;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:8px"
+      onkeydown="if(event.key==='Enter')resolveDoneTime('${t.id}','${date || ""}','input')">
+    <div class="mfoot">
+      <button class="btn" onclick="resolveDoneTime('${t.id}','${date || ""}',null)">Sin tiempo</button>
+      <div class="grow"></div>
+      ${t.estMin ? `<button class="btn" onclick="resolveDoneTime('${t.id}','${date || ""}','est')">Usar estimado (${fmtMin(t.estMin)})</button>` : ""}
+      <button class="btn primary" onclick="resolveDoneTime('${t.id}','${date || ""}','input')">Guardar</button>
+    </div>`;
+  setTimeout(() => { const i = byId("dt_min"); if (i && i.focus) i.focus(); }, 40);
+}
+function resolveDoneTime(taskId, date, mode) {
+  closeConfirm();
+  const t = taskById(taskId); if (!t) { render(); return; }
+  if (mode !== null) {
+    const min = mode === "est" ? (t.estMin || 0) : Math.max(0, parseInt((byId("dt_min") || {}).value) || 0);
+    const already = t.recur ? 0 : (t.realMin || 0);
+    const credit = Math.max(0, min - already);
+    if (credit > 0) addSession(credit, { taskId: t.id, date: t.recur ? (date || todayISO()) : todayISO(), auto: true, note: "Tarea completada (tiempo real)" });
+    if (credit > 0 || already) toast("Registradas " + fmtMin(Math.max(min, already)) + " en la tarea");
+    else toast("Tarea completada");
+  } else toast("Tarea completada (sin tiempo registrado)");
+  render();
 }
 function uncreditTaskDone(t, recurDate) {
   for (let i = state.sessions.length - 1; i >= 0; i--) {
@@ -1002,6 +1027,80 @@ function checkReminders() {
   }
   change();
 }
+
+/* ============= EVALUACIONES Y PROYECTOS QUE YA PASARON =============
+   Al pasar la fecha (y hora) de un parcial/final/presentación —o la fecha
+   objetivo de un proyecto— se pregunta el resultado en la próxima apertura
+   o mientras la app esté abierta, hasta que el usuario cargue un estado. */
+function checkPastEvals() {
+  if (byId("confirmbg").classList.contains("open")) return; // no pisar otro diálogo
+  const now = new Date();
+  const asked = state.meta.askedPast = state.meta.askedPast || {};
+  const dism = ui.dismissedAsk = ui.dismissedAsk || new Set();
+  for (const e of state.evals) {
+    if (["rendido", "aprob", "desaprob"].includes(e.status)) continue;
+    const dt = dToDate(e.date);
+    if (e.time) { const [hh, mm] = e.time.split(":"); dt.setHours(parseInt(hh) || 0, parseInt(mm) || 0); }
+    else dt.setHours(23, 59);
+    if (now > dt && asked["e" + e.id] !== e.date && !dism.has("e" + e.id)) { showPastAsk({ kind: "eval", e }); return; }
+  }
+  for (const p of state.projects) {
+    if (["done", "arch"].includes(p.status) || !p.due) continue;
+    if (todayISO() > p.due && asked["p" + p.id] !== p.due && !dism.has("p" + p.id)) { showPastAsk({ kind: "proj", p }); return; }
+  }
+}
+function showPastAsk(item) {
+  const box = byId("confirmbox"), bg = byId("confirmbg");
+  bg.classList.add("open");
+  if (item.kind === "eval") {
+    const e = item.e;
+    box.innerHTML = `<h3>Pasó ${EVAL_KINDS[e.kind] ? "tu " + EVAL_KINDS[e.kind].toLowerCase() : "tu evaluación"}: ${esc(e.name)}</h3>
+      <p class="muted">Fue el ${fmtD(e.date)}${e.time ? " a las " + esc(e.time) : ""}. ¿Cómo te fue? Actualizá su estado para no olvidarte:</p>
+      <label style="display:block;font-size:.66rem;color:var(--tx2);margin:12px 0 4px;text-transform:uppercase;letter-spacing:.06em;font-weight:700" for="pe_grade">Nota (opcional)</label>
+      <input id="pe_grade" placeholder="Ej: 8" style="width:130px;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:7px">
+      <div class="mfoot">
+        <button class="btn ghost" onclick="dismissPastAsk('e${e.id}')">Más tarde</button>
+        <div class="grow"></div>
+        <button class="btn" onclick="setEvalOutcome('${e.id}','reprog')">Se reprogramó</button>
+        <button class="btn" onclick="setEvalOutcome('${e.id}','rendido')">Rendido (sin nota aún)</button>
+        <button class="btn danger" onclick="setEvalOutcome('${e.id}','desaprob')">Desaprobado</button>
+        <button class="btn primary" onclick="setEvalOutcome('${e.id}','aprob')">Aprobado</button>
+      </div>`;
+  } else {
+    const p = item.p;
+    box.innerHTML = `<h3>Pasó la fecha objetivo: ${esc(p.name)}</h3>
+      <p class="muted">Era el ${fmtD(p.due)}. ¿Cómo terminó el proyecto?</p>
+      <div class="mfoot">
+        <button class="btn ghost" onclick="dismissPastAsk('p${p.id}')">Más tarde</button>
+        <div class="grow"></div>
+        <button class="btn" onclick="setProjOutcome('${p.id}','prog')">Sigue en curso</button>
+        <button class="btn" onclick="setProjOutcome('${p.id}','pausa')">Pausado</button>
+        <button class="btn primary" onclick="setProjOutcome('${p.id}','done')">Completado</button>
+      </div>`;
+  }
+}
+function dismissPastAsk(key) {
+  (ui.dismissedAsk = ui.dismissedAsk || new Set()).add(key); // vuelve a preguntar en la próxima apertura
+  closeConfirm(); checkPastEvals();
+}
+function setEvalOutcome(id, status) {
+  const e = evalById(id); if (!e) return;
+  e.status = status;
+  const g = (byId("pe_grade") || {}).value;
+  if (g && String(g).trim()) e.grade = String(g).trim();
+  (state.meta.askedPast = state.meta.askedPast || {})["e" + id] = e.date;
+  change(); closeConfirm(); render();
+  if (status === "reprog") { toast("Cargá la nueva fecha"); openEvalEditor(id); }
+  else { toast("Estado actualizado: " + EVAL_STATUS[status]); checkPastEvals(); }
+}
+function setProjOutcome(id, status) {
+  const p = projById(id); if (!p) return;
+  p.status = status;
+  (state.meta.askedPast = state.meta.askedPast || {})["p" + id] = p.due;
+  change(); closeConfirm(); render();
+  toast("Proyecto: " + PROJ_STATUS[status]);
+  checkPastEvals();
+}
 /* ========================= ROUTER / SIDEBAR ========================= */
 const VIEWS = [
   ["home", "Inicio"], ["today", "Hoy"], ["calendar", "Calendario"], ["week", "Semana"],
@@ -1093,6 +1192,7 @@ function taskRow(t, opts = {}) {
       ${canToday ? `<button title="Asignar a hoy" onclick="assignToday('${t.id}')">Hoy</button>` : ""}
       ${!t.recur ? `<button title="Posponer para mañana" onclick="postponeTask('${t.id}')">+1d</button>` : ""}
       <button title="Editar" onclick="openTaskEditor('${t.id}')">Editar</button>
+      <button title="Eliminar definitivamente" style="color:var(--bad)" onclick="deleteTask('${t.id}')">×</button>
     </div>
   </div>`;
 }
@@ -2053,8 +2153,16 @@ function openQuickTask(date, subjectId, projectId) {
       <div><label for="qt_min">Tiempo estimado (min)</label><input id="qt_min" type="number" value="60" min="0" step="5"></div>
     </div>
     <div class="mrow">
-      <div><label for="qt_mode">Programación</label><select id="qt_mode"><option value="d">Día fijo</option><option value="due">Fecha límite (flexible)</option><option value="none">Sin fecha</option></select></div>
-      <div><label for="qt_date">Fecha</label><input id="qt_date" type="date" value="${date || todayISO()}"></div>
+      <div><label for="qt_mode">Programación</label><select id="qt_mode" onchange="byId('qt_p2').style.display=this.value==='period'?'block':'none'">
+        <option value="d">Día fijo</option>
+        <option value="due">Fecha límite (flexible)</option>
+        <option value="period">Todos los días (período)</option>
+        <option value="none">Sin fecha</option></select></div>
+      <div><label for="qt_date">Fecha${""}</label><input id="qt_date" type="date" value="${date || todayISO()}"></div>
+    </div>
+    <div id="qt_p2" style="display:none">
+      <label for="qt_date2">Hasta (inclusive)</label><input id="qt_date2" type="date" value="${date || todayISO()}">
+      <p class="tiny" style="margin-top:4px">Se crea una tarea igual por cada día del período, cada una con su tiempo estimado. Ideal para “practicar con parciales viejos, 1 h por día hasta el examen”.</p>
     </div>
     <div class="mfoot"><span class="tiny grow">Después podés abrirla para completar detalles avanzados.</span>
       <button class="btn" onclick="closeModal()">Cancelar</button>
@@ -2064,12 +2172,23 @@ function saveQuickTask() {
   const title = byId("qt_title").value.trim();
   if (!title) { toast("Falta el título"); return; }
   const link = byId("qt_link").value, mode = byId("qt_mode").value, date = byId("qt_date").value || todayISO();
-  const t = quickAddTask({
+  const base = {
     title, estMin: parseInt(byId("qt_min").value) || 0,
     subjectId: link.startsWith("s:") ? link.slice(2) : null,
-    projectId: link.startsWith("p:") ? link.slice(2) : null,
-    date: mode === "d" ? date : null, due: mode === "due" ? date : null
-  });
+    projectId: link.startsWith("p:") ? link.slice(2) : null
+  };
+  if (mode === "period") {
+    const d2 = byId("qt_date2").value || date;
+    if (d2 < date) { toast("La fecha final debe ser igual o posterior a la inicial"); return; }
+    const total = Math.round((dToDate(d2) - dToDate(date)) / 864e5) + 1;
+    if (total > 120) { toast("Máximo 120 días por período"); return; }
+    const ids = [];
+    for (let d = date; d <= d2; d = addDays(d, 1)) ids.push(quickAddTask(Object.assign({ date: d }, base)).id);
+    closeModal(); render();
+    toast(total + " tareas creadas: " + fmtD(date) + " a " + fmtD(d2), () => { state.tasks = state.tasks.filter(x => !ids.includes(x.id)); change(); render(); });
+    return;
+  }
+  const t = quickAddTask(Object.assign({ date: mode === "d" ? date : null, due: mode === "due" ? date : null }, base));
   closeModal(); render();
   toast("Tarea creada", () => { state.tasks = state.tasks.filter(x => x.id !== t.id); change(); render(); });
 }
@@ -2155,7 +2274,7 @@ function saveTaskEditor(id) {
   t.prio = parseInt(byId("te_prio").value);
   const prevStatus = t.status;
   t.status = byId("te_status").value;
-  if (t.status === "done" && prevStatus !== "done") { t.doneAt = todayISO(); bumpDayDone(todayISO()); creditTaskDone(t); }
+  if (t.status === "done" && prevStatus !== "done") { t.doneAt = todayISO(); bumpDayDone(todayISO()); askDoneTime(t.id); }
   if (t.status !== "done") { t.doneAt = null; if (prevStatus === "done") uncreditTaskDone(t); }
   t.type = byId("te_type").value;
   t.tags = byId("te_tags").value.split(",").map(x => x.trim().replace(/^#/, "")).filter(Boolean);
@@ -2490,6 +2609,9 @@ async function init() {
   setInterval(persist, 15000);
   setInterval(checkReminders, 5 * 60 * 1000);
   checkReminders();
+  ui.dismissedAsk = new Set();
+  setTimeout(checkPastEvals, 600);
+  setInterval(checkPastEvals, 5 * 60 * 1000);
   window.addEventListener("beforeunload", () => { try { const j = JSON.stringify(state); if (db) { const tx = db.transaction("kv", "readwrite"); tx.objectStore("kv").put(j, "state"); } localStorage.setItem(EMERGENCY_KEY, j); } catch (e) {} });
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") persist(); });
   if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
