@@ -196,6 +196,14 @@ body.sb-open #sidebar{transform:translateX(0)}
 .hcell.on{background:var(--acc)}
 .hcell.today{outline:1.5px solid var(--acc)}
 /* stats */
+.statgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:10px;margin-bottom:12px}
+.statgrid .card{margin:0;padding:13px 14px}
+table.stt{width:100%;border-collapse:collapse;font-size:.78rem}
+table.stt th{padding:6px 8px;font-weight:600;color:var(--tx3);text-align:left;white-space:nowrap}
+table.stt td{padding:7px 8px}
+table.stt tbody tr{border-top:1px solid var(--line2)}
+table.stt tbody tr:hover{background:var(--hover)}
+svg text{user-select:none}
 .bars{display:flex;align-items:flex-end;gap:3px;height:130px}
 .bars .b{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:0}
 .bars .bar{width:68%;max-width:26px;border-radius:4px 4px 2px 2px;background:var(--acc);opacity:.85}

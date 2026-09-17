@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.3.0";
+const APP_VERSION = "2.4.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -1776,81 +1776,823 @@ function viewHabits() {
   return h;
 }
 
-/* ======================= VISTA: ESTADÍSTICAS ======================= */
-function viewStats() {
+/* =====================================================================
+   ESTADÍSTICAS — núcleo de cálculo, motor de gráficos SVG y póster
+   ===================================================================== */
+let svgUid = 0;
+/* Colores resueltos a valores literales: los SVG deben verse igual dentro
+   de la app y al exportarlos (donde las variables CSS no existen). */
+function chartColors() {
+  let cs = null;
+  try { cs = getComputedStyle(document.documentElement); } catch (e) {}
+  const dark = ((document.documentElement || {}).dataset || {}).theme === "dark";
+  const g = (v, fb) => { try { const x = cs && cs.getPropertyValue(v); return (x && x.trim()) || fb; } catch (e) { return fb; } };
+  return {
+    dark,
+    acc: g("--acc", "#4338ca"),
+    tx: g("--tx", dark ? "#eef1f6" : "#101828"),
+    tx2: g("--tx2", dark ? "#a8b3c4" : "#475467"),
+    tx3: g("--tx3", dark ? "#66738a" : "#98a2b3"),
+    card: g("--card", dark ? "#161b24" : "#ffffff"),
+    card2: g("--card2", dark ? "#1d2430" : "#f1f3f6"),
+    line: g("--line", dark ? "#2a3342" : "#e4e7ec"),
+    ok: g("--ok", dark ? "#3ccb7f" : "#067647"),
+    warn: g("--warn", dark ? "#f0b13c" : "#b54708"),
+    bad: g("--bad", dark ? "#f27a6c" : "#b42318"),
+    bg: g("--bg", dark ? "#0e1117" : "#f5f6f8")
+  };
+}
+const SVG_FONT = "Inter,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif";
+function hClock(m) { const h = m / 60; return (h >= 10 ? Math.round(h) : Math.round(h * 10) / 10) + " h"; }
+
+/* ------------------------- Rango temporal ------------------------- */
+function getStatsRange() {
   const today = todayISO();
-  const ws = weekStartOf(today, state.settings.weekStart);
-  const prevWs = addDays(ws, -7);
-  const monthStart = today.slice(0, 8) + "01";
-  const weekMin = minsBetween(ws, today), prevWeekMin = minsBetween(prevWs, addDays(ws, -1));
-  const monthMin = minsBetween(monthStart, today);
-  const todayMin = minsBetween(today, today);
-  const doneTotal = state.tasks.filter(t => t.status === "done").length;
-  const od = overdueTasks().length;
-  const pomosTotal = state.sessions.reduce((a, s) => a + (s.pomos || 0), 0);
-  const activeDays = new Set(state.sessions.map(s => s.date)).size;
-  let streak = 0; { let d = today; if (!state.sessions.some(s => s.date === d)) d = addDays(d, -1); while (state.sessions.some(s => s.date === d)) { streak++; d = addDays(d, -1); } }
-  const diff = weekMin - prevWeekMin;
-  let h = `<div class="vhead"><h2>Estadísticas</h2><span class="sub">incluye pomodoros, sesiones manuales y el tiempo estimado de las tareas completadas</span><div class="grow"></div><button class="btn" onclick="exportCSV()">Exportar CSV</button></div>`;
-  h += `<div class="grid3" style="margin-bottom:12px">
-    <div class="card" style="margin:0"><div class="statnum">${fmtMin(todayMin)}</div><div class="statlab">hoy</div></div>
-    <div class="card" style="margin:0"><div class="statnum">${fmtMin(weekMin)}</div><div class="statlab">esta semana · ${diff >= 0 ? "+" : "−"}${fmtMin(Math.abs(diff))} vs anterior</div></div>
-    <div class="card" style="margin:0"><div class="statnum">${fmtMin(monthMin)}</div><div class="statlab">este mes</div></div>
-    <div class="card" style="margin:0"><div class="statnum">${doneTotal}</div><div class="statlab">tareas completadas${od ? ` · <span style="color:var(--bad)">${od} atrasadas</span>` : ""}</div></div>
-    <div class="card" style="margin:0"><div class="statnum">${pomosTotal}</div><div class="statlab">pomodoros totales</div></div>
-    <div class="card" style="margin:0"><div class="statnum">${streak}</div><div class="statlab">racha de días · ${activeDays} días activos</div></div>
+  const kind = ui.statsRange || "month";
+  const anc = ui.statsAnchor || today;
+  if (kind === "week") {
+    const ws = weekStartOf(anc, state.settings.weekStart);
+    return { kind, from: ws, to: addDays(ws, 6), label: "Semana del " + fmtD(ws), short: "Semana" };
+  }
+  if (kind === "month") {
+    const [Y, M] = anc.split("-").map(Number);
+    const last = new Date(Y, M, 0).getDate();
+    return { kind, from: Y + "-" + pad(M) + "-01", to: Y + "-" + pad(M) + "-" + pad(last), label: capitalize(MESL[M - 1]) + " " + Y, short: "Mes" };
+  }
+  if (kind === "year") {
+    const Y = parseInt(anc.slice(0, 4));
+    return { kind, from: Y + "-01-01", to: Y + "-12-31", label: "Año " + Y, short: "Año" };
+  }
+  return { kind: "all", from: firstActivityDate(), to: today, label: "Histórico completo", short: "Histórico" };
+}
+function firstActivityDate() {
+  let d = null;
+  for (const s of state.sessions) if (s.date && (!d || s.date < d)) d = s.date;
+  for (const t of state.tasks) { const x = t.doneAt || t.createdAt; if (x && (!d || x < d)) d = x; }
+  return d || state.meta.created || todayISO();
+}
+function shiftStats(dir) {
+  const kind = ui.statsRange || "month";
+  const anc = ui.statsAnchor || todayISO();
+  if (kind === "week") ui.statsAnchor = addDays(weekStartOf(anc, state.settings.weekStart), dir * 7);
+  else if (kind === "month") { const [Y, M] = anc.split("-").map(Number); ui.statsAnchor = iso(new Date(Y, M - 1 + dir, 1)); }
+  else if (kind === "year") ui.statsAnchor = (parseInt(anc.slice(0, 4)) + dir) + "-01-01";
+  render();
+}
+function setStatsRange(k) { ui.statsRange = k; ui.statsAnchor = todayISO(); render(); }
+
+/* ---------------------- Cálculo de estadísticas ---------------------- */
+function computeStats(R) {
+  const today = todayISO();
+  const inR = d => d && d >= R.from && d <= R.to;
+  const sess = state.sessions.filter(s => inR(s.date));
+  const byDay = {};
+  for (const s of sess) byDay[s.date] = (byDay[s.date] || 0) + s.min;
+
+  const days = [];
+  for (let d = R.from; d <= R.to && days.length < 4000; d = addDays(d, 1)) days.push(d);
+  const elapsed = days.filter(d => d <= today);
+  const total = sess.reduce((a, s) => a + s.min, 0);
+  const activeDays = Object.keys(byDay).length;
+  const vals = Object.values(byDay).sort((a, b) => a - b);
+  const median = vals.length ? (vals.length % 2 ? vals[(vals.length - 1) / 2] : Math.round((vals[vals.length / 2 - 1] + vals[vals.length / 2]) / 2)) : 0;
+  let best = { d: null, m: 0 };
+  for (const [d, m] of Object.entries(byDay)) if (m > best.m) best = { d, m };
+
+  // rachas (globales, sobre todo el historial)
+  const allDays = new Set(state.sessions.map(s => s.date));
+  let streak = 0; { let d = today; if (!allDays.has(d)) d = addDays(d, -1); while (allDays.has(d)) { streak++; d = addDays(d, -1); } }
+  let bestStreak = 0; { const srt = [...allDays].sort(); let cur = 0, prev = null; for (const d of srt) { cur = (prev && addDays(prev, 1) === d) ? cur + 1 : 1; bestStreak = Math.max(bestStreak, cur); prev = d; } }
+
+  // composición del tiempo
+  const comp = { pomo: 0, manual: 0, auto: 0, otro: 0 };
+  for (const s of sess) {
+    if (s.pomos) comp.pomo += s.min;
+    else if (s.manual) comp.manual += s.min;
+    else if (s.auto) comp.auto += s.min;
+    else comp.otro += s.min;
+  }
+
+  // por día de la semana y por hora
+  const dow = Array.from({ length: 7 }, () => ({ min: 0, n: 0 }));
+  for (const [d, m] of Object.entries(byDay)) { const k = dToDate(d).getDay(); dow[k].min += m; dow[k].n++; }
+  const hours = Array.from({ length: 24 }, () => 0);
+  let hourKnown = 0;
+  for (const s of sess) {
+    if (!s.ts) continue;
+    const dt = new Date(s.ts);
+    if (isNaN(dt)) continue;
+    const hh = dt.getHours(), mm = dt.getMinutes();
+    if (hh === 0 && mm === 0) continue; // sesiones migradas sin hora real
+    hours[hh] += s.min; hourKnown += s.min;
+  }
+
+  // materias y proyectos
+  const subs = state.subjects.map(s => ({
+    s, min: sess.filter(x => x.subjectId === s.id).reduce((a, x) => a + x.min, 0),
+    done: state.tasks.filter(t => t.subjectId === s.id && t.status === "done" && inR(t.doneAt)).length,
+    pend: state.tasks.filter(t => t.subjectId === s.id && !t.archived && t.status !== "done" && t.status !== "canc").length,
+    sessions: sess.filter(x => x.subjectId === s.id).length
+  })).filter(x => x.min > 0 || x.done > 0);
+  subs.sort((a, b) => b.min - a.min);
+  const projs = state.projects.map(p => ({
+    p, min: sess.filter(x => x.projectId === p.id && !x.subjectId).reduce((a, x) => a + x.min, 0)
+  })).filter(x => x.min > 0).sort((a, b) => b.min - a.min);
+
+  // tareas
+  const doneR = state.tasks.filter(t => t.status === "done" && inR(t.doneAt));
+  const createdR = state.tasks.filter(t => inR(t.createdAt));
+  const onTime = doneR.filter(t => { const lim = t.date || t.due; return lim && t.doneAt <= lim; }).length;
+  const withLim = doneR.filter(t => t.date || t.due).length;
+  const timed = doneR.filter(t => (t.estMin || 0) > 0 && (t.realMin || 0) > 0);
+  const estSum = timed.reduce((a, t) => a + t.estMin, 0), realSum = timed.reduce((a, t) => a + t.realMin, 0);
+  const byType = {};
+  for (const t of doneR) byType[t.type || "estudio"] = (byType[t.type || "estudio"] || 0) + 1;
+  const statusCount = { pend: 0, prog: 0, done: 0, post: 0, canc: 0 };
+  for (const t of state.tasks) if (!t.archived) statusCount[t.status] = (statusCount[t.status] || 0) + 1;
+
+  // evaluaciones
+  const evalsR = state.evals.filter(e => inR(e.date));
+  const graded = state.evals.filter(e => e.grade !== "" && e.grade != null && !isNaN(parseFloat(e.grade)))
+    .map(e => ({ e, g: parseFloat(e.grade) })).sort((a, b) => a.e.date.localeCompare(b.e.date));
+  const gradeAvg = graded.length ? Math.round(graded.reduce((a, x) => a + x.g, 0) / graded.length * 10) / 10 : null;
+
+  // hábitos
+  const habits = state.habits.filter(h => !h.archived).map(h => {
+    let due = 0, ok = 0;
+    for (const d of elapsed) { if (habitDueOn(h, d)) { due++; if (h.checks && h.checks[d]) ok++; } }
+    return { h, due, ok, pct: due ? Math.round(ok / due * 100) : null };
+  });
+
+  // serie temporal con granularidad adaptativa
+  let series = [], gran = "day";
+  if (days.length <= 62) {
+    gran = "day";
+    series = days.map(d => ({ k: d, v: byDay[d] || 0, label: String(dToDate(d).getDate()), full: fmtD(d) }));
+  } else if (days.length <= 190) {
+    gran = "week";
+    let cur = weekStartOf(R.from, state.settings.weekStart);
+    while (cur <= R.to) {
+      let v = 0; for (let i = 0; i < 7; i++) { const d = addDays(cur, i); if (d >= R.from && d <= R.to) v += byDay[d] || 0; }
+      series.push({ k: cur, v, label: dToDate(cur).getDate() + "/" + (dToDate(cur).getMonth() + 1), full: "Semana del " + fmtD(cur) });
+      cur = addDays(cur, 7);
+    }
+  } else {
+    gran = "month";
+    let [Y, M] = R.from.split("-").map(Number);
+    const endK = R.to.slice(0, 7);
+    while (Y + "-" + pad(M) <= endK && series.length < 240) {
+      const key = Y + "-" + pad(M);
+      let v = 0; for (const [d, m] of Object.entries(byDay)) if (d.slice(0, 7) === key) v += m;
+      series.push({ k: key + "-01", v, label: MES[M - 1] + (M === 1 || series.length === 0 ? " " + String(Y).slice(2) : ""), full: capitalize(MESL[M - 1]) + " " + Y });
+      M++; if (M > 12) { M = 1; Y++; }
+    }
+  }
+
+  // comparación con el período anterior
+  const spanDays = days.length;
+  const prevFrom = addDays(R.from, -spanDays), prevTo = addDays(R.from, -1);
+  const prevTotal = state.sessions.filter(s => s.date >= prevFrom && s.date <= prevTo).reduce((a, s) => a + s.min, 0);
+  const prevDone = state.tasks.filter(t => t.status === "done" && t.doneAt >= prevFrom && t.doneAt <= prevTo).length;
+
+  return {
+    R, days, elapsed, byDay, sess, total, activeDays, median, best, streak, bestStreak, comp, dow, hours, hourKnown,
+    subs, projs, doneR, createdR, onTime, withLim, timed, estSum, realSum, byType, statusCount,
+    evalsR, graded, gradeAvg, habits, series, gran, prevTotal, prevDone,
+    avgCalendar: elapsed.length ? total / elapsed.length : 0,
+    avgActive: activeDays ? total / activeDays : 0,
+    pomos: sess.reduce((a, s) => a + (s.pomos || 0), 0),
+    sessionAvg: sess.length ? total / sess.length : 0,
+    overdue: overdueTasks().length,
+    coverage: elapsed.length ? Math.round(activeDays / elapsed.length * 100) : 0
+  };
+}
+
+/* ========================= MOTOR DE GRÁFICOS ========================= */
+function svgWrap(w, h, inner, cls) {
+  return `<svg viewBox="0 0 ${w} ${h}" width="100%" style="display:block;height:auto;max-height:${h * 1.1}px;font-family:${SVG_FONT}" role="img" class="${cls || ""}">${inner}</svg>`;
+}
+function txt(x, y, s, size, fill, anchor, weight) {
+  return `<text x="${x}" y="${y}" font-size="${size}" fill="${fill}" text-anchor="${anchor || "start"}"${weight ? ` font-weight="${weight}"` : ""} font-family="${SVG_FONT}">${esc(s)}</text>`;
+}
+/* Línea + área con media móvil */
+function chartTimeline(st, C, W, H) {
+  const pts = st.series;
+  const P = { l: 46, r: 16, t: 20, b: 34 };
+  const iw = W - P.l - P.r, ih = H - P.t - P.b;
+  const max = Math.max(60, ...pts.map(p => p.v));
+  const uid = "tl" + (++svgUid);
+  const X = i => P.l + (pts.length <= 1 ? iw / 2 : i * iw / (pts.length - 1));
+  const Y = v => P.t + ih - (v / max) * ih;
+  let g = `<defs><linearGradient id="${uid}" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%" stop-color="${C.acc}" stop-opacity=".38"/><stop offset="100%" stop-color="${C.acc}" stop-opacity="0"/></linearGradient></defs>`;
+  for (let i = 0; i <= 4; i++) {
+    const v = max * i / 4, y = Y(v);
+    g += `<line x1="${P.l}" y1="${y}" x2="${W - P.r}" y2="${y}" stroke="${C.line}" stroke-width="1"${i ? ' stroke-dasharray="2 4"' : ""}/>`;
+    g += txt(P.l - 8, y + 3.5, hClock(v), 9.5, C.tx3, "end");
+  }
+  const d = pts.map((p, i) => (i ? "L" : "M") + X(i).toFixed(1) + " " + Y(p.v).toFixed(1)).join(" ");
+  g += `<path d="${d} L ${X(pts.length - 1).toFixed(1)} ${P.t + ih} L ${X(0).toFixed(1)} ${P.t + ih} Z" fill="url(#${uid})"/>`;
+  g += `<path d="${d}" fill="none" stroke="${C.acc}" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>`;
+  // media móvil
+  if (pts.length >= 5) {
+    const win = pts.length > 40 ? 7 : 3;
+    const ma = pts.map((_, i) => { const s = Math.max(0, i - win + 1); const sl = pts.slice(s, i + 1); return sl.reduce((a, p) => a + p.v, 0) / sl.length; });
+    g += `<path d="${ma.map((v, i) => (i ? "L" : "M") + X(i).toFixed(1) + " " + Y(v).toFixed(1)).join(" ")}" fill="none" stroke="${C.warn}" stroke-width="1.6" stroke-dasharray="5 4" opacity=".85"/>`;
+    g += txt(W - P.r, P.t - 7, "media móvil " + win, 9, C.warn, "end");
+  }
+  const step = Math.ceil(pts.length / (W > 800 ? 26 : 12));
+  pts.forEach((p, i) => {
+    if (pts.length <= 40 && p.v > 0) g += `<circle cx="${X(i).toFixed(1)}" cy="${Y(p.v).toFixed(1)}" r="2.6" fill="${C.acc}"><title>${escA(p.full + " · " + fmtMin(p.v))}</title></circle>`;
+    if (i % step === 0 || i === pts.length - 1) g += txt(X(i), H - 12, p.label, 9, C.tx3, "middle");
+  });
+  const avg = st.total / Math.max(1, pts.length);
+  if (avg > 0) {
+    g += `<line x1="${P.l}" y1="${Y(avg)}" x2="${W - P.r}" y2="${Y(avg)}" stroke="${C.ok}" stroke-width="1.3" stroke-dasharray="7 5" opacity=".9"/>`;
+    g += txt(P.l + 5, Y(avg) - 5, "promedio " + hClock(avg), 9, C.ok, "start", 700);
+  }
+  return svgWrap(W, H, g);
+}
+/* Barras verticales genéricas */
+function chartBars(items, C, W, H, o) {
+  o = o || {};
+  const P = { l: o.noAxis ? 8 : 40, r: 12, t: 16, b: 28 };
+  const iw = W - P.l - P.r, ih = H - P.t - P.b;
+  const max = Math.max(1, ...items.map(x => x.v));
+  const bw = iw / items.length;
+  let g = "";
+  if (!o.noAxis) for (let i = 0; i <= 3; i++) {
+    const v = max * i / 3, y = P.t + ih - (v / max) * ih;
+    g += `<line x1="${P.l}" y1="${y}" x2="${W - P.r}" y2="${y}" stroke="${C.line}" stroke-width="1"${i ? ' stroke-dasharray="2 4"' : ""}/>`;
+    g += txt(P.l - 7, y + 3.5, o.fmt ? o.fmt(v) : hClock(v), 9, C.tx3, "end");
+  }
+  items.forEach((x, i) => {
+    const bh = Math.max(x.v > 0 ? 3 : 0, (x.v / max) * ih);
+    const bx = P.l + i * bw + bw * .16, w = bw * .68;
+    g += `<rect x="${bx.toFixed(1)}" y="${(P.t + ih - bh).toFixed(1)}" width="${w.toFixed(1)}" height="${bh.toFixed(1)}" rx="${Math.min(4, w / 3).toFixed(1)}" fill="${x.color || C.acc}" opacity="${x.dim ? .45 : .95}"><title>${escA((x.full || x.label) + " · " + (o.fmt ? o.fmt(x.v) : fmtMin(x.v)))}</title></rect>`;
+    if (items.length <= 26) g += txt(bx + w / 2, H - 10, x.label, items.length > 14 ? 8 : 9.5, x.hi ? C.acc : C.tx3, "middle", x.hi ? 700 : 400);
+    if (o.valueLabels && x.v > 0) g += txt(bx + w / 2, P.t + ih - bh - 5, o.fmt ? o.fmt(x.v) : hClock(x.v), 8.5, C.tx2, "middle", 600);
+  });
+  return svgWrap(W, H, g);
+}
+/* Dona con leyenda */
+function chartDonut(items, C, W, H, o) {
+  o = o || {};
+  const cx = H / 2 + 6, cy = H / 2, rOut = H / 2 - 12, rIn = rOut * .62;
+  const tot = items.reduce((a, x) => a + x.v, 0) || 1;
+  let a0 = -Math.PI / 2, g = "";
+  items.forEach(x => {
+    const a1 = a0 + (x.v / tot) * Math.PI * 2;
+    const big = (a1 - a0) > Math.PI ? 1 : 0;
+    const p = (r, a) => [(cx + r * Math.cos(a)).toFixed(2), (cy + r * Math.sin(a)).toFixed(2)];
+    const [x1, y1] = p(rOut, a0), [x2, y2] = p(rOut, a1), [x3, y3] = p(rIn, a1), [x4, y4] = p(rIn, a0);
+    g += `<path d="M${x1} ${y1} A${rOut} ${rOut} 0 ${big} 1 ${x2} ${y2} L${x3} ${y3} A${rIn} ${rIn} 0 ${big} 0 ${x4} ${y4} Z" fill="${x.color}" opacity=".93"><title>${escA(x.label + " · " + fmtMin(x.v) + " · " + Math.round(x.v / tot * 100) + "%")}</title></path>`;
+    a0 = a1;
+  });
+  g += txt(cx, cy - 2, o.center || hClock(tot), 17, C.tx, "middle", 800);
+  g += txt(cx, cy + 14, o.sub || "total", 9, C.tx3, "middle");
+  const lx = H + 22;
+  items.slice(0, 9).forEach((x, i) => {
+    const ly = 22 + i * 19;
+    g += `<rect x="${lx}" y="${ly - 8}" width="10" height="10" rx="3" fill="${x.color}"/>`;
+    g += txt(lx + 16, ly + 1, x.label.length > 24 ? x.label.slice(0, 23) + "…" : x.label, 10.5, C.tx2);
+    g += txt(W - 8, ly + 1, hClock(x.v) + "  " + Math.round(x.v / tot * 100) + "%", 10, C.tx3, "end");
+  });
+  return svgWrap(W, H, g);
+}
+/* Barras horizontales */
+function chartHBars(items, C, W, H, o) {
+  o = o || {};
+  const rowH = Math.min(30, (H - 14) / Math.max(1, items.length));
+  const lw = o.labelW || 84, vw = 86;
+  const max = Math.max(1, ...items.map(x => x.v));
+  let g = "";
+  items.forEach((x, i) => {
+    const y = 10 + i * rowH;
+    g += `<rect x="${lw - 8 - Math.min(52, x.label.length * 6.2)}" y="${y + rowH / 2 - 8}" width="${Math.min(52, x.label.length * 6.2)}" height="16" rx="5" fill="${x.color}" opacity=".16"/>`;
+    g += txt(lw - 12, y + rowH / 2 + 4, x.label, 10, x.color, "end", 700);
+    const bw = (W - lw - vw) * (x.v / max);
+    g += `<rect x="${lw}" y="${y + rowH / 2 - 7}" width="${W - lw - vw}" height="14" rx="7" fill="${C.card2}"/>`;
+    g += `<rect x="${lw}" y="${y + rowH / 2 - 7}" width="${Math.max(2, bw).toFixed(1)}" height="14" rx="7" fill="${x.color}"><title>${escA(x.full || x.label)}</title></rect>`;
+    g += txt(W - 6, y + rowH / 2 + 4, x.vLabel || hClock(x.v), 10, C.tx2, "end", 600);
+  });
+  return svgWrap(W, H, g);
+}
+/* Barras dobles (estimado vs real) */
+function chartDual(items, C, W, H) {
+  const P = { l: 62, r: 14, t: 26, b: 26 };
+  const iw = W - P.l - P.r, ih = H - P.t - P.b;
+  const max = Math.max(1, ...items.map(x => Math.max(x.a, x.b)));
+  const bw = iw / items.length;
+  let g = txt(P.l, 12, "estimado", 9.5, C.tx3) + `<rect x="${P.l - 12}" y="5" width="8" height="8" rx="2" fill="${C.tx3}" opacity=".5"/>`;
+  g += txt(P.l + 74, 12, "real", 9.5, C.acc) + `<rect x="${P.l + 62}" y="5" width="8" height="8" rx="2" fill="${C.acc}"/>`;
+  for (let i = 0; i <= 3; i++) {
+    const v = max * i / 3, y = P.t + ih - (v / max) * ih;
+    g += `<line x1="${P.l}" y1="${y}" x2="${W - P.r}" y2="${y}" stroke="${C.line}" stroke-width="1"${i ? ' stroke-dasharray="2 4"' : ""}/>` + txt(P.l - 7, y + 3.5, hClock(v), 9, C.tx3, "end");
+  }
+  items.forEach((x, i) => {
+    const x0 = P.l + i * bw;
+    const ha = (x.a / max) * ih, hb = (x.b / max) * ih;
+    g += `<rect x="${(x0 + bw * .16).toFixed(1)}" y="${(P.t + ih - ha).toFixed(1)}" width="${(bw * .3).toFixed(1)}" height="${ha.toFixed(1)}" rx="3" fill="${C.tx3}" opacity=".45"><title>estimado ${escA(fmtMin(x.a))}</title></rect>`;
+    g += `<rect x="${(x0 + bw * .52).toFixed(1)}" y="${(P.t + ih - hb).toFixed(1)}" width="${(bw * .3).toFixed(1)}" height="${hb.toFixed(1)}" rx="3" fill="${x.color || C.acc}"><title>real ${escA(fmtMin(x.b))}</title></rect>`;
+    g += txt(x0 + bw / 2, H - 9, x.label, 9, C.tx3, "middle");
+  });
+  return svgWrap(W, H, g);
+}
+/* Barra apilada horizontal */
+function chartStack(parts, C, W, H) {
+  const tot = parts.reduce((a, p) => a + p.v, 0) || 1;
+  let x = 0, g = "";
+  parts.forEach(p => {
+    const w = (p.v / tot) * W;
+    if (w > 0) g += `<rect x="${x.toFixed(1)}" y="0" width="${Math.max(1, w - 2).toFixed(1)}" height="26" rx="6" fill="${p.color}"><title>${escA(p.label + " · " + fmtMin(p.v) + " · " + Math.round(p.v / tot * 100) + "%")}</title></rect>`;
+    x += w;
+  });
+  parts.filter(p => p.v > 0).forEach((p, i) => {
+    g += `<rect x="${i * Math.min(160, W / 4)}" y="36" width="9" height="9" rx="2.5" fill="${p.color}"/>`;
+    g += txt(i * Math.min(160, W / 4) + 14, 44, p.label + " " + Math.round(p.v / tot * 100) + "%", 9.5, C.tx2);
+  });
+  return svgWrap(W, H, g);
+}
+/* Mapa de calor anual estilo contribuciones */
+function chartHeat(C, W, H, endDate, weeks) {
+  const cell = 11, gap = 3, step = cell + gap;
+  const end = weekStartOf(endDate, state.settings.weekStart);
+  const start = addDays(end, -7 * (weeks - 1));
+  const byDay = {};
+  for (const s of state.sessions) byDay[s.date] = (byDay[s.date] || 0) + s.min;
+  const max = Math.max(60, ...Object.values(byDay));
+  let g = "", lastMonth = "";
+  for (let w = 0; w < weeks; w++) {
+    const colDate = addDays(start, w * 7);
+    const mk = colDate.slice(5, 7);
+    if (mk !== lastMonth && dToDate(colDate).getDate() <= 7) { g += txt(34 + w * step, 10, MES[parseInt(mk) - 1], 8.5, C.tx3); lastMonth = mk; }
+    for (let d = 0; d < 7; d++) {
+      const date = addDays(colDate, d);
+      if (date > endDate) continue;
+      const m = byDay[date] || 0;
+      const op = m ? clamp(.22 + (m / max) * .78, .22, 1) : 1;
+      g += `<rect x="${34 + w * step}" y="${16 + d * step}" width="${cell}" height="${cell}" rx="2.6" fill="${m ? C.acc : C.card2}" opacity="${op.toFixed(2)}"><title>${escA(fmtD(date) + " · " + fmtMin(m))}</title></rect>`;
+    }
+  }
+  const ws = state.settings.weekStart;
+  [1, 3, 5].forEach(i => { g += txt(28, 16 + i * step + 9, DAYS[(ws + i) % 7], 8.5, C.tx3, "end"); });
+  const lx = 34 + weeks * step - 118;
+  g += txt(lx - 6, 16 + 7 * step + 14, "menos", 8.5, C.tx3, "end");
+  [.22, .45, .68, .85, 1].forEach((op, i) => { g += `<rect x="${lx + i * 15}" y="${16 + 7 * step + 5}" width="11" height="11" rx="2.6" fill="${C.acc}" opacity="${op}"/>`; });
+  g += txt(lx + 82, 16 + 7 * step + 14, "más", 8.5, C.tx3);
+  return svgWrap(W, H, g);
+}
+/* Evolución de notas */
+function chartGrades(graded, C, W, H) {
+  const P = { l: 30, r: 14, t: 16, b: 30 };
+  const iw = W - P.l - P.r, ih = H - P.t - P.b;
+  const max = Math.max(10, ...graded.map(x => x.g));
+  const X = i => P.l + (graded.length <= 1 ? iw / 2 : i * iw / (graded.length - 1));
+  const Y = v => P.t + ih - (v / max) * ih;
+  let g = "";
+  for (let i = 0; i <= 2; i++) { const v = max * i / 2, y = Y(v); g += `<line x1="${P.l}" y1="${y}" x2="${W - P.r}" y2="${y}" stroke="${C.line}" stroke-dasharray="2 4"/>` + txt(P.l - 6, y + 3.5, String(Math.round(v)), 9, C.tx3, "end"); }
+  const y4 = Y(4);
+  g += `<line x1="${P.l}" y1="${y4}" x2="${W - P.r}" y2="${y4}" stroke="${C.bad}" stroke-width="1.2" stroke-dasharray="6 4" opacity=".7"/>`;
+  if (graded.length > 1) g += `<path d="${graded.map((x, i) => (i ? "L" : "M") + X(i).toFixed(1) + " " + Y(x.g).toFixed(1)).join(" ")}" fill="none" stroke="${C.acc}" stroke-width="2.2" stroke-linejoin="round"/>`;
+  graded.forEach((x, i) => {
+    g += `<circle cx="${X(i).toFixed(1)}" cy="${Y(x.g).toFixed(1)}" r="4.5" fill="${x.g >= 4 ? C.ok : C.bad}"><title>${escA(x.e.name + " · " + x.g)}</title></circle>`;
+    g += txt(X(i), Y(x.g) - 9, String(x.g), 9.5, C.tx2, "middle", 700);
+    g += txt(X(i), H - 16, (x.e.name || "").slice(0, 12), 8, C.tx3, "middle");
+    g += txt(X(i), H - 6, fmtD(x.e.date).slice(4), 7.5, C.tx3, "middle");
+  });
+  return svgWrap(W, H, g);
+}
+/* Anillo de progreso */
+function chartRing(pct, C, size, color, label, sub) {
+  const r = size / 2 - 9, cx = size / 2, cy = size / 2, cir = 2 * Math.PI * r;
+  const off = cir * (1 - clamp(pct, 0, 100) / 100);
+  let g = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${C.card2}" stroke-width="9"/>`;
+  g += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${color}" stroke-width="9" stroke-linecap="round" stroke-dasharray="${cir.toFixed(1)}" stroke-dashoffset="${off.toFixed(1)}" transform="rotate(-90 ${cx} ${cy})"/>`;
+  g += txt(cx, cy + 3, label, size / 5, C.tx, "middle", 800);
+  if (sub) g += txt(cx, cy + size / 5 + 6, sub, size / 12, C.tx3, "middle");
+  return svgWrap(size, size, g);
+}
+
+/* ========================== VISTA COMPLETA ========================== */
+function viewStats() {
+  const R = getStatsRange();
+  const st = computeStats(R);
+  const C = chartColors();
+  const dTot = st.total - st.prevTotal;
+  const tab = (k, l) => `<button class="btn sm ${(ui.statsRange || "month") === k ? "primary" : ""}" onclick="setStatsRange('${k}')">${l}</button>`;
+
+  let h = `<div class="vhead"><h2>Estadísticas</h2><span class="sub">${esc(R.label)}</span><div class="grow"></div>
+    <button class="btn primary" onclick="openPosterModal()">Descargar informe</button>
+    <button class="btn ghost" onclick="exportRangeCSV()" title="Planilla con el resumen de este período">CSV</button></div>`;
+
+  h += `<div class="card" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 12px">
+    ${tab("week", "Semana")}${tab("month", "Mes")}${tab("year", "Año")}${tab("all", "Histórico")}
+    <div class="grow"></div>
+    ${R.kind !== "all" ? `<button class="btn sm ghost" onclick="shiftStats(-1)" title="Anterior">‹</button>
+    <span class="tiny" style="min-width:120px;text-align:center;font-weight:700;color:var(--tx2)">${esc(R.label)}</span>
+    <button class="btn sm ghost" onclick="shiftStats(1)" title="Siguiente" ${R.to >= todayISO() ? "disabled" : ""}>›</button>` : `<span class="tiny">${fmtD(R.from)} → ${fmtD(R.to)} · ${st.days.length} días</span>`}
   </div>`;
-  const days14 = []; for (let i = 13; i >= 0; i--) days14.push(addDays(today, -i));
-  const maxD = Math.max(60, ...days14.map(d => minsBetween(d, d)));
-  h += `<div class="card"><h3>Últimos 14 días</h3><div class="bars">` + days14.map(d => {
-    const m = minsBetween(d, d);
-    return `<div class="b"><span class="tiny">${m ? Math.round(m / 6) / 10 + "h" : ""}</span>
-      <div class="bar" style="height:${Math.max(3, m / maxD * 100)}px;${d === today ? "" : "opacity:.55"}" title="${escA(fmtD(d) + " · " + fmtMin(m))}"></div>
-      <span class="tiny">${dToDate(d).getDate()}</span></div>`;
-  }).join("") + "</div></div>";
-  const weeks = []; for (let i = 7; i >= 0; i--) { const s = addDays(ws, -7 * i); weeks.push({ s, min: minsBetween(s, addDays(s, 6)) }); }
-  const maxW = Math.max(60, ...weeks.map(w => w.min));
-  const pts = weeks.map((w, i) => (i / (weeks.length - 1) * 560 + 20) + "," + (110 - w.min / maxW * 95 + 5)).join(" ");
-  h += `<div class="card"><h3>Evolución semanal (horas de estudio)</h3>
-    <svg viewBox="0 0 600 130" style="width:100%;height:auto" role="img" aria-label="Evolución semanal">
-      <polyline points="${pts}" fill="none" stroke="var(--acc)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
-      ${weeks.map((w, i) => `<circle cx="${i / (weeks.length - 1) * 560 + 20}" cy="${110 - w.min / maxW * 95 + 5}" r="3.5" fill="var(--acc)"/><text x="${i / (weeks.length - 1) * 560 + 20}" y="126" text-anchor="middle" style="font-size:9px;fill:var(--tx3)">${fmtD(w.s).slice(4)}</text><text x="${i / (weeks.length - 1) * 560 + 20}" y="${110 - w.min / maxW * 95 - 4}" text-anchor="middle" style="font-size:8.5px;fill:var(--tx2)">${w.min ? Math.round(w.min / 6) / 10 + "h" : ""}</text>`).join("")}
-    </svg></div>`;
-  const from30 = addDays(today, -29);
-  const bySub = activeSubjects().map(s => ({ s, min: minsBetween(from30, today, x => x.subjectId === s.id) })).filter(x => x.min > 0).sort((a, b) => b.min - a.min);
-  const byProj = state.projects.map(p => ({ p, min: minsBetween(from30, today, x => x.projectId === p.id && !x.subjectId) })).filter(x => x.min > 0);
-  const totDist = bySub.reduce((a, x) => a + x.min, 0) + byProj.reduce((a, x) => a + x.min, 0);
-  if (totDist) {
-    h += `<div class="card"><h3>Distribución por materia (30 días)<div class="grow"></div><span class="tiny">pomodoro + manual + tareas completadas</span></h3>`;
-    h += bySub.map(({ s, min }) => `<div style="display:flex;align-items:center;gap:10px;margin:7px 0">
-      <span class="tag" style="background:${s.color}1c;color:${s.color};min-width:52px;text-align:center">${esc(s.short)}</span>
-      <div class="pbar"><i style="width:${Math.round(min / totDist * 100)}%;background:${s.color}"></i></div>
-      <span class="mins" style="min-width:76px;text-align:right">${fmtMin(min)} · ${Math.round(min / totDist * 100)}%</span></div>`).join("");
-    h += byProj.map(({ p, min }) => `<div style="display:flex;align-items:center;gap:10px;margin:7px 0">
-      <span class="tag" style="background:var(--card2);color:var(--tx2);min-width:52px;text-align:center">${esc(p.name.slice(0, 8))}</span>
-      <div class="pbar"><i style="width:${Math.round(min / totDist * 100)}%;background:var(--tx3)"></i></div>
-      <span class="mins" style="min-width:76px;text-align:right">${fmtMin(min)}</span></div>`).join("");
-    h += "</div>";
+
+  /* --- KPIs --- */
+  const kpi = (v, l, extra) => `<div class="card"><div class="statnum">${v}</div><div class="statlab">${l}</div>${extra || ""}</div>`;
+  h += `<div class="statgrid">
+    ${kpi(hClock(st.total), "total estudiado" + (st.prevTotal ? ` · <span style="color:${dTot >= 0 ? "var(--ok)" : "var(--bad)"}">${dTot >= 0 ? "▲" : "▼"} ${hClock(Math.abs(dTot))} vs período anterior</span>` : ""))}
+    ${kpi(hClock(st.avgCalendar), "promedio por día (todos los días)")}
+    ${kpi(hClock(st.avgActive), "promedio por día activo")}
+    ${kpi(hClock(st.median), "mediana diaria")}
+    ${kpi(st.best.d ? hClock(st.best.m) : "—", st.best.d ? "mejor día · " + fmtD(st.best.d) : "mejor día")}
+    ${kpi(st.activeDays + "<span style='font-size:1rem;color:var(--tx3)'>/" + st.elapsed.length + "</span>", "días con actividad (" + st.coverage + "% de constancia)")}
+    ${kpi(st.streak, "racha actual · mejor: " + st.bestStreak + " días")}
+    ${kpi(st.pomos, "pomodoros · " + st.sess.length + " sesiones")}
+    ${kpi(hClock(st.sessionAvg), "duración media por sesión")}
+    ${kpi(st.doneR.length, "tareas completadas" + (st.prevDone ? ` · ${st.doneR.length >= st.prevDone ? "▲" : "▼"} ${Math.abs(st.doneR.length - st.prevDone)} vs anterior` : ""))}
+    ${kpi(st.withLim ? Math.round(st.onTime / st.withLim * 100) + "%" : "—", "completadas en fecha (" + st.onTime + "/" + st.withLim + ")")}
+    ${kpi(st.overdue, st.overdue ? `tareas atrasadas <span style="color:var(--bad)">a resolver</span>` : "tareas atrasadas · estás al día")}
+  </div>`;
+
+  /* --- Evolución --- */
+  h += `<div class="card"><h3>Evolución ${st.gran === "day" ? "diaria" : st.gran === "week" ? "semanal" : "mensual"}<div class="grow"></div>
+    <span class="tiny">${st.series.length} ${st.gran === "day" ? "días" : st.gran === "week" ? "semanas" : "meses"} · pico ${hClock(Math.max(0, ...st.series.map(p => p.v)))}</span></h3>
+    ${chartTimeline(st, C, 880, 250)}</div>`;
+
+  /* --- Ritmo: día de semana + franja horaria --- */
+  const dowItems = st.dow.map((x, i) => ({ label: DAYS[i], full: DAYSL[i], v: x.n ? Math.round(x.min / x.n) : 0, hi: i === new Date().getDay() }));
+  const bestDow = dowItems.reduce((a, b) => b.v > a.v ? b : a, dowItems[0]);
+  h += `<div class="grid2">
+    <div class="card" style="margin:0"><h3>Promedio por día de la semana<div class="grow"></div><span class="tiny">mejor: ${esc(bestDow.full)}</span></h3>
+      ${chartBars(dowItems, C, 430, 200, { valueLabels: true })}</div>`;
+  if (st.hourKnown > 0) {
+    const hrItems = st.hours.map((v, i) => ({ label: i % 3 === 0 ? String(i) : "", full: i + ":00", v }));
+    const peak = st.hours.indexOf(Math.max(...st.hours));
+    h += `<div class="card" style="margin:0"><h3>¿A qué hora estudiás?<div class="grow"></div><span class="tiny">pico: ${peak}:00 hs</span></h3>
+      ${chartBars(hrItems, C, 430, 200, {})}</div>`;
+  } else {
+    h += `<div class="card" style="margin:0"><h3>¿A qué hora estudiás?</h3><div class="empty">Se completa con las sesiones de pomodoro y las manuales que registres de acá en adelante.</div></div>`;
   }
-  const cmp = activeSubjects().map(s => {
-    const ts = state.tasks.filter(t => t.subjectId === s.id && t.status === "done" && (t.estMin || 0) > 0);
-    const est = ts.reduce((a, t) => a + t.estMin, 0), real = ts.reduce((a, t) => a + (t.realMin || 0), 0);
-    return { s, est, real, n: ts.length };
-  }).filter(x => x.est && x.real && x.real !== x.est);
-  if (cmp.length) {
-    h += `<div class="card"><h3>Estimado vs real (tareas con tiempo cronometrado)</h3>` + cmp.map(({ s, est, real, n }) =>
-      `<div class="tiny" style="margin:6px 0">${esc(s.short)} — estimado ${fmtMin(est)} · real ${fmtMin(real)} · ${real > est ? "subestimaste" : "sobreestimaste"} ${Math.abs(Math.round((real - est) / est * 100))}% (${n} tareas)</div>`).join("") + "</div>";
+  h += `</div>`;
+
+  /* --- Distribución por materia --- */
+  const distItems = [
+    ...st.subs.filter(x => x.min > 0).map(x => ({ label: x.s.name, short: x.s.short, v: x.min, color: x.s.color })),
+    ...st.projs.map(x => ({ label: x.p.name, short: x.p.name.slice(0, 6), v: x.min, color: C.tx3 }))
+  ];
+  if (distItems.length) {
+    h += `<div class="grid2">
+      <div class="card" style="margin:0"><h3>Distribución del tiempo</h3>${chartDonut(distItems, C, 440, 210, { center: hClock(st.total), sub: R.short.toLowerCase() })}</div>
+      <div class="card" style="margin:0"><h3>Horas por materia</h3>
+        ${chartHBars(distItems.slice(0, 9).map(x => ({ label: x.short, color: x.color, v: x.v, full: x.label + " · " + fmtMin(x.v) })), C, 430, Math.max(80, distItems.slice(0, 9).length * 28 + 14))}</div>
+    </div>`;
   }
-  h += `<div class="card"><h3>Actividad (últimas 12 semanas)</h3><div class="heat" style="grid-template-columns:repeat(28,13px)">`;
-  const maxH = Math.max(30, ...state.sessions.map(s => s.min));
-  for (let i = 83; i >= 0; i--) {
-    const d = addDays(today, -i);
-    const m = minsBetween(d, d);
-    const op = m ? clamp(.25 + m / maxH * .75, 0, 1) : 0;
-    h += `<div title="${escA(fmtD(d) + " · " + fmtMin(m))}" style="${m ? `background:var(--acc);opacity:${op}` : ""}"></div>`;
+
+  /* --- Composición del tiempo --- */
+  const compParts = [
+    { label: "Pomodoro", v: st.comp.pomo, color: C.acc },
+    { label: "Tareas completadas", v: st.comp.auto, color: C.ok },
+    { label: "Manual", v: st.comp.manual, color: C.warn },
+    { label: "Otras", v: st.comp.otro, color: C.tx3 }
+  ].filter(p => p.v > 0);
+  if (compParts.length) h += `<div class="card"><h3>¿De dónde vienen las horas?<div class="grow"></div><span class="tiny">cómo se registró cada minuto</span></h3>${chartStack(compParts, C, 860, 54)}</div>`;
+
+  /* --- Precisión de estimación --- */
+  if (st.timed.length) {
+    const ratio = st.realSum / st.estSum;
+    const cmpItems = st.subs.filter(x => x.min > 0).map(x => {
+      const ts = st.doneR.filter(t => t.subjectId === x.s.id && (t.estMin || 0) > 0 && (t.realMin || 0) > 0);
+      return { label: x.s.short, a: ts.reduce((a, t) => a + t.estMin, 0), b: ts.reduce((a, t) => a + t.realMin, 0), color: x.s.color };
+    }).filter(x => x.a > 0);
+    h += `<div class="grid2"><div class="card" style="margin:0"><h3>Precisión de tus estimaciones</h3>
+      <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+        <div style="width:118px">${chartRing(clamp(100 - Math.abs(1 - ratio) * 100, 0, 100), C, 118, ratio > 1.15 ? C.bad : ratio < .85 ? C.warn : C.ok, Math.round(ratio * 100) + "%", "real/est")}</div>
+        <div style="flex:1;min-width:180px"><p class="muted" style="line-height:1.6">Sobre ${st.timed.length} tareas con tiempo real cargado: estimaste <b>${hClock(st.estSum)}</b> y te llevó <b>${hClock(st.realSum)}</b>.<br>
+        ${ratio > 1.08 ? "Tendés a <b style='color:var(--bad)'>subestimar</b>: sumale un " + Math.round((ratio - 1) * 100) + "% a lo que calculás." : ratio < .92 ? "Tendés a <b style='color:var(--warn)'>sobreestimar</b>: te sobra un " + Math.round((1 - ratio) * 100) + "% del tiempo que reservás." : "Tus estimaciones son <b style='color:var(--ok)'>muy precisas</b>. Seguí planificando así."}</p></div>
+      </div></div>`;
+    h += cmpItems.length ? `<div class="card" style="margin:0"><h3>Estimado vs real por materia</h3>${chartDual(cmpItems, C, 430, 210)}</div>` : `<div class="card" style="margin:0"><h3>Estimado vs real por materia</h3><div class="empty">Cargá el tiempo real al completar tareas para ver esta comparación.</div></div>`;
+    h += `</div>`;
   }
-  h += "</div></div>";
+
+  /* --- Tareas --- */
+  const typeItems = Object.entries(st.byType).sort((a, b) => b[1] - a[1]).map(([k, v], i) => ({ label: TASK_TYPES[k] || k, v, color: SUBJ_COLORS[i % SUBJ_COLORS.length] }));
+  h += `<div class="grid2">
+    <div class="card" style="margin:0"><h3>Tareas del período<div class="grow"></div><span class="tiny">${st.createdR.length} creadas · ${st.doneR.length} completadas</span></h3>
+      <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+        <div style="width:112px">${chartRing(st.createdR.length ? clamp(st.doneR.length / Math.max(st.createdR.length, 1) * 100, 0, 100) : 0, C, 112, C.acc, (st.createdR.length ? Math.round(st.doneR.length / st.createdR.length * 100) : 0) + "%", "cerradas")}</div>
+        <div style="flex:1;min-width:150px" class="tiny">
+          ${Object.entries(st.statusCount).filter(([, v]) => v > 0).map(([k, v]) => `<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--line2)"><span>${TASK_STATUS[k]}</span><b>${v}</b></div>`).join("")}
+        </div></div></div>
+    <div class="card" style="margin:0"><h3>Qué tipo de trabajo hiciste</h3>
+      ${typeItems.length ? chartHBars(typeItems.map(x => ({ label: x.label.length > 12 ? x.label.slice(0, 11) + "…" : x.label, v: x.v, color: x.color, vLabel: x.v + (x.v === 1 ? " tarea" : " tareas"), full: x.label + ": " + x.v })), C, 430, Math.max(70, typeItems.length * 26 + 12), { labelW: 100 }) : '<div class="empty">Sin tareas completadas en este período.</div>'}</div>
+  </div>`;
+
+  /* --- Notas y evaluaciones --- */
+  if (st.graded.length) {
+    const apr = st.graded.filter(x => x.g >= 4).length;
+    h += `<div class="card"><h3>Rendimiento en evaluaciones<div class="grow"></div>
+      <span class="tiny">promedio ${st.gradeAvg} · ${apr}/${st.graded.length} aprobadas</span></h3>${chartGrades(st.graded.slice(-14), C, 860, 190)}</div>`;
+  }
+
+  /* --- Hábitos --- */
+  const hb = st.habits.filter(x => x.due > 0);
+  if (hb.length) {
+    h += `<div class="card"><h3>Cumplimiento de hábitos<div class="grow"></div><span class="tiny">en ${esc(R.label.toLowerCase())}</span></h3>
+      ${chartHBars(hb.map(x => ({ label: x.h.name.length > 14 ? x.h.name.slice(0, 13) + "…" : x.h.name, v: x.pct, color: x.pct >= 80 ? C.ok : x.pct >= 50 ? C.warn : C.bad, vLabel: x.pct + "% (" + x.ok + "/" + x.due + ")", full: x.h.name })), C, 860, Math.max(70, hb.length * 28 + 12), { labelW: 120 })}</div>`;
+  }
+
+  /* --- Mapa de calor --- */
+  h += `<div class="card"><h3>Mapa de actividad<div class="grow"></div><span class="tiny">último año · cada cuadrito es un día</span></h3>
+    <div style="overflow-x:auto">${chartHeat(C, 800, 130, todayISO(), 53)}</div></div>`;
+
+  /* --- Ranking de materias (tabla) --- */
+  if (st.subs.length) {
+    h += `<div class="card"><h3>Detalle por materia</h3>
+      <div style="overflow-x:auto"><table class="stt">
+      <thead><tr><th>Materia</th><th style="text-align:right">Horas</th><th style="text-align:right">% del total</th>
+        <th style="text-align:right">Sesiones</th><th style="text-align:right">Completadas</th>
+        <th style="text-align:right">Pendientes</th><th style="text-align:right">Prom./día activo</th></tr></thead><tbody>`;
+    for (const x of st.subs) {
+      const dAct = new Set(st.sess.filter(s => s.subjectId === x.s.id).map(s => s.date)).size;
+      h += `<tr style="cursor:pointer" onclick="go('subject','${x.s.id}')">
+        <td><span class="tag" style="background:${x.s.color}1c;color:${x.s.color}">${esc(x.s.short)}</span> ${esc(x.s.name)}</td>
+        <td style="text-align:right;font-variant-numeric:tabular-nums"><b>${hClock(x.min)}</b></td>
+        <td style="text-align:right;color:var(--tx3)">${st.total ? Math.round(x.min / st.total * 100) : 0}%</td>
+        <td style="text-align:right;color:var(--tx3)">${x.sessions}</td>
+        <td style="text-align:right;color:var(--ok)">${x.done}</td>
+        <td style="text-align:right;color:${x.pend ? "var(--warn)" : "var(--tx3)"}">${x.pend}</td>
+        <td style="text-align:right;color:var(--tx3)">${dAct ? hClock(x.min / dAct) : "—"}</td></tr>`;
+    }
+    h += `</tbody></table></div></div>`;
+  }
+
+  /* --- Conclusiones automáticas --- */
+  const ins = buildInsights(st, C);
+  if (ins.length) h += `<div class="card" style="border-left:3px solid var(--acc)"><h3>Lo que dicen tus números</h3>${ins.map(x => `<p class="muted" style="margin:6px 0;line-height:1.55">${x}</p>`).join("")}</div>`;
   return h;
+}
+
+function buildInsights(st, C) {
+  const out = [];
+  if (!st.total) return ["Todavía no hay tiempo registrado en este período. Usá el pomodoro, registrá una sesión manual o completá tareas cargando cuánto te llevaron."];
+  out.push(`Estudiaste <b>${hClock(st.total)}</b> en ${st.activeDays} de ${st.elapsed.length} días (${st.coverage}% de constancia), con un promedio de <b>${hClock(st.avgActive)}</b> los días que te sentaste a estudiar.`);
+  const bd = st.dow.map((x, i) => ({ i, avg: x.n ? x.min / x.n : 0 })).sort((a, b) => b.avg - a.avg);
+  if (bd[0].avg > 0) {
+    const worst = bd.filter(x => x.avg > 0).slice(-1)[0];
+    out.push(`Tu mejor día es el <b>${DAYSL[bd[0].i]}</b> (${hClock(bd[0].avg)} en promedio)${worst && worst.i !== bd[0].i ? `, y el más flojo el <b>${DAYSL[worst.i]}</b> (${hClock(worst.avg)})` : ""}.`);
+  }
+  if (st.hourKnown > 0) {
+    const peak = st.hours.indexOf(Math.max(...st.hours));
+    const fr = peak < 6 ? "de madrugada" : peak < 12 ? "a la mañana" : peak < 19 ? "a la tarde" : "a la noche";
+    out.push(`Rendís más <b>${fr}</b>: tu franja pico arranca a las <b>${peak}:00</b>. Reservá ahí lo más difícil.`);
+  }
+  if (st.subs.length > 1 && st.total) {
+    const top = st.subs[0], last = st.subs.filter(x => x.min > 0).slice(-1)[0];
+    out.push(`<b>${esc(top.s.name)}</b> se llevó el ${Math.round(top.min / st.total * 100)}% de tus horas${last && last.s.id !== top.s.id ? `, mientras que <b>${esc(last.s.name)}</b> apenas el ${Math.round(last.min / st.total * 100)}%` : ""}.`);
+    const abandoned = state.subjects.filter(s => !s.archived && !st.subs.some(x => x.s.id === s.id && x.min > 0) && state.tasks.some(t => t.subjectId === s.id && !t.archived && t.status !== "done"));
+    if (abandoned.length) out.push(`Sin una sola hora en este período pero con pendientes: <b>${abandoned.map(s => esc(s.short)).join(", ")}</b>.`);
+  }
+  if (st.timed.length >= 3) {
+    const r = st.realSum / st.estSum;
+    if (r > 1.08) out.push(`Cuando planificás, te quedás corto: lo real fue un <b>${Math.round((r - 1) * 100)}% más</b> de lo estimado. Multiplicá por ${Math.round(r * 100) / 100} tus próximas estimaciones.`);
+    else if (r < .92) out.push(`Reservás de más: usás solo el <b>${Math.round(r * 100)}%</b> del tiempo que estimás. Podés meter más cosas por día.`);
+    else out.push(`Tus estimaciones son muy precisas (${Math.round(r * 100)}% de lo previsto). Confiá en tu planificación.`);
+  }
+  if (st.prevTotal) {
+    const d = st.total - st.prevTotal, p = Math.round(Math.abs(d) / st.prevTotal * 100);
+    out.push(d >= 0 ? `Vas <b style="color:var(--ok)">${p}% arriba</b> del período anterior (${hClock(st.prevTotal)} → ${hClock(st.total)}).`
+      : `Bajaste un <b style="color:var(--bad)">${p}%</b> respecto del período anterior (${hClock(st.prevTotal)} → ${hClock(st.total)}).`);
+  }
+  if (st.streak >= 3) out.push(`Llevás <b>${st.streak} días seguidos</b> estudiando${st.streak >= st.bestStreak ? " — es tu mejor racha histórica." : ` (tu récord es ${st.bestStreak}).`}`);
+  if (st.overdue) out.push(`Tenés <b style="color:var(--bad)">${st.overdue} tareas atrasadas</b>: conviene replanificarlas antes de que se acumulen.`);
+  if (st.gradeAvg !== null) out.push(`Tu promedio de notas cargadas es <b>${st.gradeAvg}</b> sobre ${st.graded.length} evaluaciones.`);
+  return out;
+}
+
+/* ===================== INFORME DESCARGABLE (PÓSTER) ===================== */
+function openPosterModal() {
+  const R = getStatsRange();
+  openModal(`<h3>Descargar informe de estadísticas</h3>
+    <p class="muted">Genera una lámina con todos tus números y gráficos de <b>${esc(R.label)}</b>, lista para guardar o compartir.</p>
+    <label for="po_fmt">Formato</label>
+    <select id="po_fmt"><option value="png">PNG (imagen, ideal para compartir)</option><option value="svg">SVG (vectorial, calidad infinita)</option></select>
+    <label for="po_scale">Resolución (solo PNG)</label>
+    <select id="po_scale"><option value="2">Alta (2x · ~2480 px)</option><option value="3">Muy alta (3x · ~3720 px)</option><option value="1">Normal (1x)</option></select>
+    <p class="tiny" style="margin-top:10px">Usa el tema actual (${chartColors().dark ? "oscuro" : "claro"}). Si querés la versión clara, cambiá el tema antes de descargar.</p>
+    <div class="mfoot"><button class="btn" onclick="closeModal()">Cancelar</button>
+      <button class="btn primary" onclick="downloadPoster()">Generar y descargar</button></div>`);
+}
+function downloadPoster() {
+  const fmt = (byId("po_fmt") || {}).value || "png";
+  const scale = parseFloat((byId("po_scale") || {}).value) || 2;
+  closeModal();
+  toast("Generando informe…");
+  setTimeout(() => {
+    let svg;
+    try { svg = buildStatsPoster(); } catch (e) { console.error(e); toast("No se pudo generar el informe"); return; }
+    const R = getStatsRange();
+    const name = "aula-informe-" + R.label.toLowerCase().replace(/[^a-z0-9]+/gi, "-") + "-" + todayISO();
+    if (fmt === "svg") { downloadFile(name + ".svg", svg, "image/svg+xml;charset=utf-8"); toast("Informe SVG descargado"); return; }
+    const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const cv = document.createElement("canvas");
+        cv.width = Math.round(POSTER_W * scale); cv.height = Math.round(POSTER_H * scale);
+        const ctx = cv.getContext("2d");
+        ctx.scale(scale, scale);
+        ctx.drawImage(img, 0, 0, POSTER_W, POSTER_H);
+        URL.revokeObjectURL(url);
+        cv.toBlob(b => {
+          if (!b) { toast("No se pudo generar el PNG — probá el formato SVG"); return; }
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(b); a.download = name + ".png"; a.click();
+          setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+          toast("Informe descargado");
+        }, "image/png");
+      } catch (e) { console.error(e); toast("No se pudo generar el PNG — probá el formato SVG"); }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); toast("No se pudo rasterizar; descargando SVG"); downloadFile(name + ".svg", svg, "image/svg+xml;charset=utf-8"); };
+    img.src = url;
+  }, 60);
+}
+const POSTER_W = 1240, POSTER_H = 1860;
+function buildStatsPoster() {
+  const R = getStatsRange(), st = computeStats(R), C = chartColors();
+  const W = POSTER_W, H = POSTER_H;
+  const M = 44, colW = W - M * 2;
+  const panel = (x, y, w, h, title, sub) => {
+    let s = `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="16" fill="${C.card}" stroke="${C.line}"/>`;
+    if (title) s += txt(x + 18, y + 26, title, 13.5, C.tx, "start", 700);
+    if (sub) s += txt(x + w - 18, y + 26, sub, 10.5, C.tx3, "end");
+    return s;
+  };
+  const nest = (x, y, w, h, svg) => svg.replace(/^<svg /, `<svg x="${x}" y="${y}" width="${w}" height="${h}" `).replace(' width="100%"', "").replace(/ style="[^"]*"/, "");
+  let g = `<rect width="${W}" height="${H}" fill="${C.bg}"/>`;
+
+  /* Encabezado */
+  g += `<rect x="${M}" y="30" width="${colW}" height="104" rx="18" fill="${C.acc}"/>`;
+  g += `<rect x="${M}" y="30" width="${colW}" height="104" rx="18" fill="${C.card}" opacity="${C.dark ? .12 : .06}"/>`;
+  g += txt(M + 26, 70, "Informe de estudio", 24, "#ffffff", "start", 800);
+  g += txt(M + 26, 96, R.label + "  ·  " + fmtD(R.from) + " → " + fmtD(R.to), 13, "#ffffff", "start", 500);
+  g += txt(M + 26, 118, "Aula · generado el " + fmtDFull(todayISO()), 10.5, "#ffffff", "start");
+  g += txt(W - M - 26, 78, hClock(st.total), 34, "#ffffff", "end", 800);
+  g += txt(W - M - 26, 100, "tiempo total estudiado", 11, "#ffffff", "end");
+  g += txt(W - M - 26, 118, st.activeDays + " días activos · " + st.pomos + " pomodoros", 10.5, "#ffffff", "end");
+
+  /* Tira de KPIs */
+  const kpis = [
+    [hClock(st.avgCalendar), "promedio por día"],
+    [hClock(st.avgActive), "prom. día activo"],
+    [hClock(st.median), "mediana diaria"],
+    [st.best.d ? hClock(st.best.m) : "—", "mejor día"],
+    [st.coverage + "%", "constancia"],
+    [st.streak + "", "racha actual"],
+    [st.bestStreak + "", "mejor racha"],
+    [st.doneR.length + "", "tareas hechas"],
+    [st.withLim ? Math.round(st.onTime / st.withLim * 100) + "%" : "—", "en fecha"],
+    [hClock(st.sessionAvg), "media/sesión"]
+  ];
+  const kw = colW / kpis.length;
+  kpis.forEach((k, i) => {
+    const x = M + i * kw;
+    g += `<rect x="${x + 4}" y="150" width="${kw - 8}" height="76" rx="12" fill="${C.card}" stroke="${C.line}"/>`;
+    g += txt(x + kw / 2, 186, k[0], 19, C.tx, "middle", 800);
+    g += txt(x + kw / 2, 206, k[1], 9.5, C.tx3, "middle");
+  });
+
+  /* Evolución */
+  let y = 244;
+  g += panel(M, y, colW, 280, "Evolución " + (st.gran === "day" ? "diaria" : st.gran === "week" ? "semanal" : "mensual"), "pico " + hClock(Math.max(0, ...st.series.map(p => p.v))));
+  g += nest(M + 10, y + 34, colW - 20, 236, chartTimeline(st, C, 1120, 236));
+  y += 296;
+
+  /* Fila: dona + día de semana + horas */
+  const c3 = (colW - 32) / 3;
+  const distItems = [
+    ...st.subs.filter(x => x.min > 0).map(x => ({ label: x.s.short + " · " + x.s.name, short: x.s.short, v: x.min, color: x.s.color })),
+    ...st.projs.map(x => ({ label: x.p.name, short: x.p.name.slice(0, 6), v: x.min, color: C.tx3 }))
+  ];
+  g += panel(M, y, c3, 250, "Distribución del tiempo");
+  if (distItems.length) g += nest(M + 8, y + 48, c3 - 16, 172, chartDonut(distItems.map(x => ({ label: x.short, v: x.v, color: x.color })), C, 440, 210, { center: hClock(st.total), sub: R.short.toLowerCase() }));
+  else g += txt(M + c3 / 2, y + 130, "sin datos", 12, C.tx3, "middle");
+
+  const dowItems = st.dow.map((x, i) => ({ label: DAYS[i], full: DAYSL[i], v: x.n ? Math.round(x.min / x.n) : 0 }));
+  g += panel(M + c3 + 16, y, c3, 250, "Promedio por día");
+  g += nest(M + c3 + 24, y + 34, c3 - 16, 208, chartBars(dowItems, C, 380, 208, { valueLabels: true }));
+
+  g += panel(M + (c3 + 16) * 2, y, c3, 250, "Franja horaria", st.hourKnown ? "pico " + st.hours.indexOf(Math.max(...st.hours)) + ":00" : "");
+  if (st.hourKnown) g += nest(M + (c3 + 16) * 2 + 8, y + 34, c3 - 16, 208, chartBars(st.hours.map((v, i) => ({ label: i % 4 === 0 ? String(i) : "", full: i + ":00", v })), C, 380, 208, {}));
+  else g += txt(M + (c3 + 16) * 2 + c3 / 2, y + 130, "sin horas registradas", 11, C.tx3, "middle");
+  y += 266;
+
+  /* Fila: horas por materia + composición + precisión */
+  const cL = colW * .52, cR = colW - cL - 16;
+  g += panel(M, y, cL, 236, "Horas por materia");
+  if (distItems.length) g += nest(M + 10, y + 36, cL - 20, 190, chartHBars(distItems.slice(0, 9).map(x => ({ label: x.short, color: x.color, v: x.v, full: x.label })), C, 560, Math.max(120, Math.min(9, distItems.length) * 22 + 12)));
+  const compParts = [
+    { label: "Pomodoro", v: st.comp.pomo, color: C.acc },
+    { label: "Tareas", v: st.comp.auto, color: C.ok },
+    { label: "Manual", v: st.comp.manual, color: C.warn },
+    { label: "Otras", v: st.comp.otro, color: C.tx3 }
+  ].filter(p => p.v > 0);
+  g += panel(M + cL + 16, y, cR, 236, "Origen de las horas");
+  if (compParts.length) g += nest(M + cL + 28, y + 44, cR - 24, 56, chartStack(compParts, C, 520, 56));
+  if (st.timed.length) {
+    const ratio = st.realSum / st.estSum;
+    g += txt(M + cL + 28, y + 132, "Precisión de estimaciones", 12, C.tx, "start", 700);
+    g += nest(M + cL + 28, y + 142, 78, 78, chartRing(clamp(100 - Math.abs(1 - ratio) * 100, 0, 100), C, 78, ratio > 1.15 ? C.bad : ratio < .85 ? C.warn : C.ok, Math.round(ratio * 100) + "%", ""));
+    g += txt(M + cL + 118, y + 172, "Estimado " + hClock(st.estSum) + "  ·  real " + hClock(st.realSum), 11, C.tx2, "start", 600);
+    g += txt(M + cL + 118, y + 192, ratio > 1.08 ? "Subestimás un " + Math.round((ratio - 1) * 100) + "%" : ratio < .92 ? "Sobreestimás un " + Math.round((1 - ratio) * 100) + "%" : "Estimaciones muy precisas", 11, ratio > 1.08 ? C.bad : ratio < .92 ? C.warn : C.ok, "start", 700);
+    g += txt(M + cL + 118, y + 210, "sobre " + st.timed.length + " tareas cronometradas", 9.5, C.tx3, "start");
+  }
+  y += 252;
+
+  /* Mapa de calor */
+  g += panel(M, y, colW, 190, "Mapa de actividad — último año", "cada cuadrito es un día");
+  g += nest(M + (colW - 820) / 2, y + 38, 820, 140, chartHeat(C, 820, 140, todayISO(), 53));
+  y += 206;
+
+  /* Fila final: notas + tabla materias */
+  const tW = colW * .58, nW = colW - tW - 16;
+  g += panel(M, y, tW, 300, "Detalle por materia");
+  let ty = y + 52;
+  g += txt(M + 18, y + 46, "Materia", 10, C.tx3, "start", 600);
+  g += txt(M + tW - 210, y + 46, "Horas", 10, C.tx3, "end", 600);
+  g += txt(M + tW - 140, y + 46, "%", 10, C.tx3, "end", 600);
+  g += txt(M + tW - 76, y + 46, "Hechas", 10, C.tx3, "end", 600);
+  g += txt(M + tW - 18, y + 46, "Pend.", 10, C.tx3, "end", 600);
+  st.subs.slice(0, 9).forEach((x, i) => {
+    const yy = ty + i * 26;
+    g += `<line x1="${M + 14}" y1="${yy - 13}" x2="${M + tW - 14}" y2="${yy - 13}" stroke="${C.line}"/>`;
+    g += `<rect x="${M + 18}" y="${yy - 10}" width="${Math.min(46, x.s.short.length * 9 + 12)}" height="15" rx="4" fill="${x.s.color}" opacity=".18"/>`;
+    g += txt(M + 24, yy + 1, x.s.short, 9.5, x.s.color, "start", 700);
+    g += txt(M + 72, yy + 1, x.s.name.length > 30 ? x.s.name.slice(0, 29) + "…" : x.s.name, 10.5, C.tx2);
+    g += txt(M + tW - 210, yy + 1, hClock(x.min), 10.5, C.tx, "end", 700);
+    g += txt(M + tW - 140, yy + 1, (st.total ? Math.round(x.min / st.total * 100) : 0) + "%", 10.5, C.tx3, "end");
+    g += txt(M + tW - 76, yy + 1, String(x.done), 10.5, C.ok, "end");
+    g += txt(M + tW - 18, yy + 1, String(x.pend), 10.5, x.pend ? C.warn : C.tx3, "end");
+  });
+  if (!st.subs.length) g += txt(M + tW / 2, y + 150, "sin actividad por materia", 12, C.tx3, "middle");
+
+  g += panel(M + tW + 16, y, nW, 300, st.graded.length ? "Evolución de notas" : "Resumen de tareas", st.graded.length ? "promedio " + st.gradeAvg : "");
+  if (st.graded.length) {
+    g += nest(M + tW + 26, y + 40, nW - 20, 150, chartGrades(st.graded.slice(-8), C, 460, 170));
+    const apr = st.graded.filter(x => x.g >= 4).length;
+    g += txt(M + tW + 30, y + 218, "Aprobadas: " + apr + " de " + st.graded.length, 11.5, C.ok, "start", 700);
+    g += txt(M + tW + 30, y + 240, "Promedio general: " + st.gradeAvg, 11.5, C.tx2, "start", 600);
+    g += txt(M + tW + 30, y + 262, "Mejor nota: " + Math.max(...st.graded.map(x => x.g)), 11.5, C.tx2, "start", 600);
+  } else {
+    const rows = Object.entries(st.statusCount).filter(([, v]) => v > 0);
+    rows.forEach(([k, v], i) => {
+      const yy = y + 66 + i * 30;
+      g += txt(M + tW + 32, yy, TASK_STATUS[k], 11.5, C.tx2, "start");
+      g += txt(M + tW + nW - 32, yy, String(v), 13, C.tx, "end", 800);
+    });
+    g += txt(M + tW + 32, y + 66 + rows.length * 30 + 14, "Creadas en el período: " + st.createdR.length, 11, C.tx3, "start");
+  }
+  y += 316;
+
+  /* Conclusiones */
+  const insights = buildInsights(st, C).map(s => s.replace(/<[^>]+>/g, "")).slice(0, 5);
+  g += panel(M, y, colW, 152, "Lo que dicen tus números");
+  insights.forEach((s, i) => {
+    const line = s.length > 150 ? s.slice(0, 149) + "…" : s;
+    g += `<circle cx="${M + 24}" cy="${y + 52 + i * 22 - 4}" r="3" fill="${C.acc}"/>`;
+    g += txt(M + 36, y + 52 + i * 22, line, 11, C.tx2);
+  });
+
+  /* Pie */
+  g += txt(M, H - 20, "Aula v" + APP_VERSION + " · organizador académico personal", 10, C.tx3);
+  g += txt(W - M, H - 20, "Datos locales de este dispositivo · " + st.sess.length + " sesiones analizadas", 10, C.tx3, "end");
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="${SVG_FONT}">${g}</svg>`;
+}
+/* CSV del período analizado: resumen diario + por materia + métricas globales */
+function exportRangeCSV() {
+  const R = getStatsRange(), st = computeStats(R);
+  const q = s => '"' + String(s == null ? "" : s).replace(/"/g, "'") + '"';
+  let csv = "AULA - INFORME DE ESTADISTICAS\n";
+  csv += "periodo," + q(R.label) + "\ndesde," + R.from + "\nhasta," + R.to + "\ngenerado," + todayISO() + "\n\n";
+  csv += "METRICA,VALOR\n";
+  [["Total estudiado (min)", Math.round(st.total)], ["Promedio por dia (min)", Math.round(st.avgCalendar)],
+  ["Promedio por dia activo (min)", Math.round(st.avgActive)], ["Mediana diaria (min)", st.median],
+  ["Mejor dia", st.best.d || "-"], ["Mejor dia (min)", st.best.m], ["Dias del periodo", st.elapsed.length],
+  ["Dias con actividad", st.activeDays], ["Constancia (%)", st.coverage], ["Racha actual", st.streak],
+  ["Mejor racha", st.bestStreak], ["Pomodoros", st.pomos], ["Sesiones", st.sess.length],
+  ["Duracion media sesion (min)", Math.round(st.sessionAvg)], ["Tareas completadas", st.doneR.length],
+  ["Tareas creadas", st.createdR.length], ["Completadas en fecha", st.onTime], ["Con fecha limite", st.withLim],
+  ["Tiempo estimado (min)", st.estSum], ["Tiempo real (min)", st.realSum],
+  ["Promedio de notas", st.gradeAvg == null ? "-" : st.gradeAvg], ["Atrasadas hoy", st.overdue]]
+    .forEach(r => { csv += q(r[0]) + "," + r[1] + "\n"; });
+  csv += "\nDIA,MINUTOS,HORAS,DIA_SEMANA\n";
+  for (const d of st.elapsed) csv += d + "," + (st.byDay[d] || 0) + "," + Math.round((st.byDay[d] || 0) / 6) / 10 + "," + q(DAYSL[dToDate(d).getDay()]) + "\n";
+  csv += "\nMATERIA,ABREV,MINUTOS,HORAS,PORCENTAJE,SESIONES,COMPLETADAS,PENDIENTES\n";
+  for (const x of st.subs) csv += q(x.s.name) + "," + q(x.s.short) + "," + x.min + "," + Math.round(x.min / 6) / 10 + "," + (st.total ? Math.round(x.min / st.total * 100) : 0) + "," + x.sessions + "," + x.done + "," + x.pend + "\n";
+  csv += "\nDIA_SEMANA,MINUTOS_TOTAL,DIAS,PROMEDIO_MIN\n";
+  st.dow.forEach((x, i) => { csv += q(DAYSL[i]) + "," + x.min + "," + x.n + "," + (x.n ? Math.round(x.min / x.n) : 0) + "\n"; });
+  if (st.hourKnown) { csv += "\nHORA,MINUTOS\n"; st.hours.forEach((v, i) => { if (v) csv += i + ":00," + v + "\n"; }); }
+  if (st.graded.length) { csv += "\nEVALUACION,FECHA,NOTA,ESTADO\n"; for (const x of st.graded) csv += q(x.e.name) + "," + x.e.date + "," + x.g + "," + q(EVAL_STATUS[x.e.status] || x.e.status) + "\n"; }
+  downloadFile("aula-informe-" + R.from + "_" + R.to + ".csv", csv, "text/csv;charset=utf-8");
+  toast("CSV del período descargado");
 }
 function exportCSV() {
   let csv = "fecha,minutos,pomodoros,manual,por_tarea_completada,materia,proyecto,tarea\n";
@@ -2499,6 +3241,7 @@ function searchItems(q) {
       ["Ir a Materias", () => go("subjects")], ["Ir a Parciales y finales", () => go("evals")], ["Ir a Proyectos", () => go("projects")],
       ["Ir a Planes de estudio", () => go("plans")], ["Ir a Notas", () => go("notes")], ["Ir a Hábitos", () => go("habits")],
       ["Ir a Estadísticas", () => go("stats")], ["Ir a Historial", () => go("history")], ["Ir a Configuración", () => go("config")],
+      ["Descargar informe de estadísticas", () => { go("stats"); setTimeout(openPosterModal, 80); }],
       ["Crear copia de seguridad", () => manualBackup()], ["Exportar JSON", () => exportJSON()], ["Exportar estadísticas CSV", () => exportCSV()],
       ["Cambiar tema", () => cycleTheme()], ["Ver atajos de teclado", () => showShortcuts()], ["Forzar guardado", () => { persist(); toast("Guardado"); }]
     ];
