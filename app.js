@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.6.0";
+const APP_VERSION = "2.7.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -39,9 +39,9 @@ let ui = { calMonth: null, listFilters: {}, searchSel: 0, undoBuf: null, notesFi
 function defaultSettings() {
   return {
     theme: "auto", accent: "#4338ca", weekStart: 1,
-    pomo: { f: 25, s: 5, l: 15, c: 4 },
     sounds: true, notif: false, hourFmt: 24, showDone: true,
-    upcomingDays: 7, tags: ["repaso", "importante", "entrega"]
+    upcomingDays: 7, tags: ["repaso", "importante", "entrega"],
+    dayCutoffHour: 4, autoArchiveDays: 7
   };
 }
 function baseState() {
@@ -171,6 +171,9 @@ function validState(s) {
 function normalizeState(s) {
   const b = baseState();
   s.settings = Object.assign(defaultSettings(), s.settings || {});
+  if (s.settings.dayCutoffHour === undefined) s.settings.dayCutoffHour = 4;
+  if (s.settings.autoArchiveDays === undefined) s.settings.autoArchiveDays = 7;
+  setTimeout(() => { try { runAutoArchive(); } catch(e){} }, 500);
   s.settings.pomo = Object.assign({ f: 25, s: 5, l: 15, c: 4 }, s.settings.pomo || {});
   for (const k of ["subjects", "projects", "evals", "tasks", "notes", "habits", "sessions"]) if (!Array.isArray(s[k])) s[k] = [];
   s.dayLog = s.dayLog || {}; s.dayPlan = s.dayPlan || {}; s.meta = Object.assign(b.meta, s.meta || {});
@@ -298,6 +301,69 @@ const EVAL_STATUS = { plan: "Planificado", prep: "Preparando", rendido: "Rendido
 const PROJ_STATUS = { idea: "Idea", plan: "Planificado", prog: "En progreso", pausa: "Pausado", done: "Completado", arch: "Archivado" };
 const PRIO = ["Baja", "Media", "Alta"];
 
+
+/* ==================== DÍA ACADÉMICO Y AUTO-ARCHIVO ==================== */
+function academicToday() {
+  const now = new Date();
+  const cutoff = state && state.settings && state.settings.dayCutoffHour != null ? state.settings.dayCutoffHour : 4;
+  if (now.getHours() < cutoff) {
+    const y = new Date(now);
+    y.setDate(y.getDate() - 1);
+    return iso(y);
+  }
+  return iso(now);
+}
+
+function getEffectiveDoneDate(t, preferredDate) {
+  if (preferredDate) return preferredDate;
+  const acad = academicToday();
+  if (t && t.date) {
+    const today = todayISO();
+    const yesterday = addDays(today, -1);
+    if (t.date === yesterday) return yesterday;
+    if (t.date <= today) return acad;
+  }
+  return acad;
+}
+
+function runAutoArchive() {
+  if (!state || !state.settings) return 0;
+  const days = state.settings.autoArchiveDays;
+  if (!days || days <= 0) return 0;
+  const cutoff = addDays(todayISO(), -days);
+  let n = 0;
+  for (const t of state.tasks) {
+    if (!t.archived && t.status === "done") {
+      const d = t.doneAt || t.date;
+      if (d && d < cutoff) {
+        t.archived = true;
+        n++;
+      }
+    }
+  }
+  if (n > 0) change();
+  return n;
+}
+
+function isEvalFinished(e) {
+  return ["aprob", "rendido", "desaprob"].includes(e.status);
+}
+function isProjectFinished(p) {
+  return ["done", "arch"].includes(p.status);
+}
+function activeEvals(subjOrProjId) {
+  return state.evals.filter(e => {
+    if (isEvalFinished(e)) return false;
+    if (!subjOrProjId) return true;
+    if (subjOrProjId.startsWith("s:")) return e.subjectId === subjOrProjId.slice(2);
+    if (subjOrProjId.startsWith("p:")) return e.projectId === subjOrProjId.slice(2);
+    return e.subjectId === subjOrProjId || e.projectId === subjOrProjId;
+  });
+}
+function activeProjects() {
+  return state.projects.filter(p => !isProjectFinished(p));
+}
+
 /* ================== RECURRENCIA Y VISIBILIDAD ================== */
 function occursOn(t, date) {
   if (!t.recur) return t.date === date;
@@ -326,15 +392,21 @@ function orderedTasks(list) {
   return [...list].sort((a, b) => {
     const ao = (a.ord == null ? Infinity : a.ord), bo = (b.ord == null ? Infinity : b.ord);
     if (ao !== bo) return ao - bo;
+    if (a.time && b.time && a.time !== b.time) return a.time.localeCompare(b.time);
+    if (a.time && !b.time) return -1;
+    if (!a.time && b.time) return 1;
     return (b.prio - a.prio) || ((a.estMin || 0) - (b.estMin || 0)) || String(a.createdAt || "").localeCompare(String(b.createdAt || ""));
   });
 }
 /* Reordenamiento por arrastre (escritorio) y botones ↑ ↓ (todos los dispositivos) */
+
 let dragId = null, dragAfter = false;
 function dragArm(el) { const p = el.closest && el.closest(".task"); if (p) p.draggable = true; }
 function dragDisarm(el) { const p = el.closest && el.closest(".task"); if (p) p.draggable = false; }
 function clearDropMarks() {
-  document.querySelectorAll(".task.dropbefore,.task.dropafter").forEach(x => x.classList.remove("dropbefore", "dropafter"));
+  document.querySelectorAll(".task.dropbefore,.task.dropafter,.day-dropzone.drop-target-active").forEach(x => {
+    x.classList.remove("dropbefore", "dropafter", "drop-target-active");
+  });
 }
 function taskDragStart(ev, id) {
   dragId = id; dragAfter = false;
@@ -350,27 +422,73 @@ function taskDragEnd(ev) {
 function taskDragOver(ev, id) {
   if (!dragId || id === dragId) return;
   ev.preventDefault();
+  ev.stopPropagation();
   try { ev.dataTransfer.dropEffect = "move"; } catch (e) {}
   const el = ev.currentTarget, r = el.getBoundingClientRect();
   dragAfter = (ev.clientY - r.top) > r.height / 2;
   clearDropMarks();
   el.classList.add(dragAfter ? "dropafter" : "dropbefore");
 }
-function taskDragLeave(ev) { const el = ev.currentTarget; if (el && el.classList) el.classList.remove("dropbefore", "dropafter"); }
+function taskDragLeave(ev) {
+  const el = ev.currentTarget;
+  if (el && el.classList) el.classList.remove("dropbefore", "dropafter");
+}
 function taskDrop(ev, targetId, date) {
   ev.preventDefault(); ev.stopPropagation();
   clearDropMarks();
   const src = dragId; dragId = null;
   if (!src || src === targetId) return;
-  const ids = tasksOn(date).map(t => t.id);
-  const from = ids.indexOf(src);
-  if (from < 0) return;
-  ids.splice(from, 1);
+  const tSrc = taskById(src);
+  if (!tSrc) return;
+  const prevDate = tSrc.date;
+  tSrc.date = date;
+  const ids = tasksOn(date).map(t => t.id).filter(id => id !== src);
   let at = ids.indexOf(targetId);
-  if (at < 0) return;
-  applyOrder(ids, at + (dragAfter ? 1 : 0), src);
-  toast("Orden actualizado");
+  if (at < 0) at = ids.length;
+  else if (dragAfter) at += 1;
+  applyOrder(ids, at, src);
+  toast("Tarea asignada a " + fmtRel(date) + " (" + fmtD(date) + ")", () => {
+    tSrc.date = prevDate; change(); render();
+  });
 }
+function dayContainerDragOver(ev) {
+  if (!dragId) return;
+  ev.preventDefault();
+  try { ev.dataTransfer.dropEffect = "move"; } catch (e) {}
+  const el = ev.currentTarget;
+  if (el && el.classList) el.classList.add("drop-target-active");
+}
+function dayContainerDragLeave(ev) {
+  const el = ev.currentTarget;
+  if (el && el.classList) el.classList.remove("drop-target-active");
+}
+function dayContainerDrop(ev, targetDate) {
+  ev.preventDefault(); ev.stopPropagation();
+  clearDropMarks();
+  const src = dragId; dragId = null;
+  if (!src) return;
+  const tSrc = taskById(src);
+  if (!tSrc) return;
+  const prevDate = tSrc.date;
+  if (prevDate === targetDate) return;
+  tSrc.date = targetDate;
+  tSrc.ord = null;
+  change(); render();
+  toast("Tarea movida a " + fmtRel(targetDate) + " (" + fmtD(targetDate) + ")", () => {
+    tSrc.date = prevDate; change(); render();
+  });
+}
+function shiftTaskToDate(taskId, targetDate) {
+  const t = taskById(taskId); if (!t) return;
+  const prevDate = t.date;
+  t.date = targetDate;
+  t.ord = null;
+  change(); render();
+  toast("Tarea movida a " + fmtRel(targetDate) + " (" + fmtD(targetDate) + ")", () => {
+    t.date = prevDate; change(); render();
+  });
+}
+
 function moveTaskOrder(id, dir, date) {
   const ids = tasksOn(date).map(t => t.id);
   const i = ids.indexOf(id), j = i + dir;
@@ -454,56 +572,120 @@ function doubleDelete(what, onOk) {
   });
 }
 
+
+
+/* ==================== COMENTARIOS DE TAREAS ==================== */
+function renderCommentsList(t) {
+  const comments = t.comments || [];
+  if (!comments.length) return '<p class="tiny muted" style="padding:6px 0">Sin comentarios ni notas añadidas todavía.</p>';
+  return comments.map(c => {
+    const dStr = c.createdAt ? new Date(c.createdAt).toLocaleDateString() + ' ' + new Date(c.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+    return '<div class="comment-bubble">' +
+      '<div class="comment-head">' +
+        '<span><b>' + esc(c.author || "Nota") + '</b> · ' + dStr + '</span>' +
+        '<button class="btn sm ghost" style="padding:0 5px;height:20px;min-width:20px" onclick="deleteTaskComment(\'' + t.id + '\',\'' + c.id + '\')" title="Eliminar nota">×</button>' +
+      '</div>' +
+      '<div class="comment-text">' + esc(c.text) + '</div>' +
+    '</div>';
+  }).join("");
+}
+
+function addTaskComment(taskId) {
+  const t = taskById(taskId); if (!t) return;
+  const input = byId("te_newcomment");
+  if (!input || !input.value.trim()) return;
+  t.comments = t.comments || [];
+  t.comments.push({
+    id: uid(),
+    text: input.value.trim(),
+    createdAt: Date.now(),
+    author: "Yo"
+  });
+  input.value = "";
+  change();
+  const listEl = byId("te_comments_list");
+  if (listEl) listEl.innerHTML = renderCommentsList(t);
+  const countEl = byId("te_comment_count");
+  if (countEl) countEl.textContent = "(" + t.comments.length + ")";
+}
+
+function deleteTaskComment(taskId, commentId) {
+  const t = taskById(taskId); if (!t) return;
+  t.comments = (t.comments || []).filter(c => c.id !== commentId);
+  change();
+  const listEl = byId("te_comments_list");
+  if (listEl) listEl.innerHTML = renderCommentsList(t);
+  const countEl = byId("te_comment_count");
+  if (countEl) countEl.textContent = "(" + t.comments.length + ")";
+}
+
 /* ========================= ACCIONES: TAREAS ========================= */
 function toggleTask(id, date) {
   const t = taskById(id); if (!t) return;
   if (t.recur) {
-    const d = date || todayISO();
+    const d = date || academicToday();
     t.recurDone = t.recurDone || {};
     if (t.recurDone[d]) { delete t.recurDone[d]; uncreditTaskDone(t, d); }
     else { t.recurDone[d] = 1; bumpDayDone(d); askDoneTime(id, d); }
   } else if (t.status === "done") {
     t.status = "pend"; t.doneAt = null; uncreditTaskDone(t);
   } else {
-    t.status = "done"; t.doneAt = todayISO(); bumpDayDone(todayISO()); askDoneTime(id);
+    const doneD = getEffectiveDoneDate(t, date);
+    t.status = "done"; t.doneAt = doneD; bumpDayDone(doneD); askDoneTime(id, doneD);
   }
   change(); render();
 }
 function bumpDayDone(d) { state.dayLog[d] = state.dayLog[d] || {}; state.dayLog[d].tasksDone = (state.dayLog[d].tasksDone || 0) + 1; }
-/* Al completar una tarea se pregunta cuánto llevó realmente: ese tiempo (no el estimado)
-   es el que suma a las estadísticas de la materia. Se descuenta lo ya cronometrado con
-   pomodoro/manual para no contar doble, y todo se revierte al desmarcar. */
-function askDoneTime(taskId, date) {
+
+function askDoneTime(taskId, doneDate) {
   const t = taskById(taskId); if (!t) return;
+  doneDate = doneDate || academicToday();
   const already = t.recur ? 0 : (t.realMin || 0);
   const box = byId("confirmbox"), bg = byId("confirmbg");
   bg.classList.add("open");
-  box.innerHTML = `<h3>Tarea completada</h3>
-    <p class="muted">¿Cuánto tiempo te llevó “${esc(t.title.slice(0, 55))}”?${already ? " Ya tenés " + fmtMin(already) + " cronometrados: se suma solo la diferencia." : ""}</p>
-    <label style="display:block;font-size:.66rem;color:var(--tx2);margin:12px 0 4px;text-transform:uppercase;letter-spacing:.06em;font-weight:700" for="dt_min">Tiempo real (minutos)</label>
-    <input id="dt_min" type="number" min="0" step="5" value="${t.estMin || 60}" style="width:130px;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:8px"
-      onkeydown="if(event.key==='Enter')resolveDoneTime('${t.id}','${date || ""}','input')">
-    <div class="mfoot">
-      <button class="btn" onclick="resolveDoneTime('${t.id}','${date || ""}',null)">Sin tiempo</button>
-      <div class="grow"></div>
-      ${t.estMin ? `<button class="btn" onclick="resolveDoneTime('${t.id}','${date || ""}','est')">Usar estimado (${fmtMin(t.estMin)})</button>` : ""}
-      <button class="btn primary" onclick="resolveDoneTime('${t.id}','${date || ""}','input')">Guardar</button>
-    </div>`;
+  const yest = addDays(todayISO(), -1);
+  const tod = todayISO();
+  box.innerHTML = '<h3>Tarea completada</h3>' +
+    '<p class="muted">¿Cuánto tiempo te llevó “' + esc(t.title.slice(0, 55)) + '”?' + (already ? ' Ya tenés ' + fmtMin(already) + ' cronometrados.' : '') + '</p>' +
+    '<div style="margin:12px 0;background:var(--card2);padding:10px 12px;border-radius:9px;border:1px solid var(--line)">' +
+      '<div style="font-size:.72rem;font-weight:700;margin-bottom:6px;color:var(--tx2)">FECHA DE ESTUDIO</div>' +
+      '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+        '<input id="dt_date" type="date" value="' + doneDate + '" style="background:var(--card);border:1px solid var(--line);border-radius:6px;padding:5px 8px;font-size:.8rem;width:140px">' +
+        '<button class="btn sm ghost" type="button" onclick="byId(\'dt_date\').value=\'' + yest + '\'">Ayer (' + fmtD(yest) + ')</button>' +
+        '<button class="btn sm ghost" type="button" onclick="byId(\'dt_date\').value=\'' + tod + '\'">Hoy (' + fmtD(tod) + ')</button>' +
+      '</div>' +
+      '<p class="tiny" style="margin-top:5px;color:var(--tx3)">Si la hiciste anoche tarde (madrugada), podés asignarla a ayer para no alterar tus estadísticas.</p>' +
+    '</div>' +
+    '<label style="display:block;font-size:.66rem;color:var(--tx2);margin:10px 0 4px;text-transform:uppercase;letter-spacing:.06em;font-weight:700" for="dt_min">Tiempo real (minutos)</label>' +
+    '<input id="dt_min" type="number" min="0" step="5" value="' + (t.estMin || 60) + '" style="width:130px;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:8px"' +
+      ' onkeydown="if(event.key===\'Enter\')resolveDoneTime(\'' + t.id + '\',\'input\')">' +
+    '<div class="mfoot">' +
+      '<button class="btn" onclick="resolveDoneTime(\'' + t.id + '\',null)">Sin tiempo</button>' +
+      '<div class="grow"></div>' +
+      (t.estMin ? '<button class="btn" onclick="resolveDoneTime(\'' + t.id + '\',\'est\')">Usar estimado (' + fmtMin(t.estMin) + ')</button>' : '') +
+      '<button class="btn primary" onclick="resolveDoneTime(\'' + t.id + '\',\'input\')">Guardar</button>' +
+    '</div>';
   setTimeout(() => { const i = byId("dt_min"); if (i && i.focus) i.focus(); }, 40);
 }
-function resolveDoneTime(taskId, date, mode) {
+
+function resolveDoneTime(taskId, mode) {
+  const dtInput = byId("dt_date");
+  const chosenDate = (dtInput && dtInput.value) || academicToday();
   closeConfirm();
   const t = taskById(taskId); if (!t) { render(); return; }
+  t.doneAt = chosenDate;
   if (mode !== null) {
     const min = mode === "est" ? (t.estMin || 0) : Math.max(0, parseInt((byId("dt_min") || {}).value) || 0);
     const already = t.recur ? 0 : (t.realMin || 0);
     const credit = Math.max(0, min - already);
-    if (credit > 0) addSession(credit, { taskId: t.id, date: t.recur ? (date || todayISO()) : todayISO(), auto: true, note: "Tarea completada (tiempo real)" });
-    if (credit > 0 || already) toast("Registradas " + fmtMin(Math.max(min, already)) + " en la tarea");
-    else toast("Tarea completada");
-  } else toast("Tarea completada (sin tiempo registrado)");
+    if (credit > 0) addSession(credit, { taskId: t.id, date: chosenDate, auto: true, note: "Tarea completada (tiempo real)" });
+    if (credit > 0 || already) toast("Registradas " + fmtMin(Math.max(min, already)) + " para el " + fmtD(chosenDate));
+    else toast("Tarea completada (" + fmtD(chosenDate) + ")");
+  } else toast("Tarea completada (" + fmtD(chosenDate) + ")");
+  change();
   render();
 }
+
 function uncreditTaskDone(t, recurDate) {
   for (let i = state.sessions.length - 1; i >= 0; i--) {
     const s = state.sessions[i];
@@ -551,11 +733,16 @@ function deleteTask(id) {
 function quickAddTask(data) {
   const t = {
     id: uid(), title: data.title, desc: data.desc || "", subjectId: data.subjectId || null, projectId: data.projectId || null,
-    evalId: data.evalId || null, planId: data.planId || null, date: data.date || null, due: data.due || null,
-    estMin: data.estMin || 0, prio: data.prio == null ? 1 : data.prio, status: "pend", type: data.type || "estudio",
-    tags: data.tags || [], subtasks: [], notes: "", recur: data.recur || null, recurDone: {}, realMin: 0, pomos: 0,
-    createdAt: todayISO(), doneAt: null, archived: false
+    evalId: data.evalId || null, planId: data.planId || null, date: data.date || null, time: data.time || null, due: data.due || null,
+    estMin: data.estMin || 0, prio: data.prio == null ? 1 : data.prio, status: data.status || "pend", type: data.type || "estudio",
+    tags: data.tags || [], subtasks: data.subtasks || [], notes: data.notes || "", comments: data.comments || [],
+    recur: data.recur || null, recurDone: data.recurDone || {}, realMin: data.realMin || 0, pomos: 0,
+    createdAt: data.createdAt || todayISO(), doneAt: data.doneAt || null, archived: !!data.archived
   };
+  if (t.evalId && !t.subjectId) {
+    const e = evalById(t.evalId);
+    if (e) { t.subjectId = e.subjectId || null; t.projectId = e.projectId || null; }
+  }
   state.tasks.push(t); change();
   return t;
 }
@@ -584,7 +771,7 @@ function addStudyBlock() {
   if (f == null || t == null) { toast("Cargá hora de inicio y de fin"); return; }
   if (t <= f) { toast("La hora de fin debe ser posterior a la de inicio"); return; }
   const dp = state.dayPlan[todayISO()] = state.dayPlan[todayISO()] || { blocks: [] };
-  dp.blocks.push({ id: uid(), from, to, pomo: byId("sb_pomo").checked });
+  dp.blocks.push({ id: uid(), from, to, pomo: false });
   dp.blocks.sort((a, b) => hmToMin(a.from) - hmToMin(b.from));
   change(); render(); toast("Bloque agregado");
 }
@@ -617,36 +804,23 @@ function studyTodayCard() {
   const today = todayISO();
   pruneDayPlan();
   const dp = state.dayPlan[today] = state.dayPlan[today] || { blocks: [] };
-  const P = state.settings.pomo;
   const rows = dp.blocks.map(b => {
-    const min = blockMinutes(b), n = pomosInBlock(b);
+    const min = blockMinutes(b);
     return `<div class="task" style="cursor:default">
       <span class="pill acc" style="min-width:104px;text-align:center">${esc(b.from)} – ${esc(b.to)}</span>
-      <div class="tinfo"><div class="tt">${fmtMin(min)}${b.pomo ? ` · con pomodoro: entran <b>${n}</b>` : " · sin pomodoro"}</div></div>
+      <div class="tinfo"><div class="tt">${fmtMin(min)} de tiempo disponible</div></div>
       <button class="btn sm ghost" title="Quitar bloque" onclick="delStudyBlock('${b.id}')">×</button></div>`;
   }).join("");
   const totMin = dp.blocks.reduce((a, b) => a + blockMinutes(b), 0);
-  const totPom = dp.blocks.reduce((a, b) => a + pomosInBlock(b), 0);
-  let dist = "";
-  if (totPom > 0) {
-    dist = `<div class="hr"></div>
-    <p class="tiny" style="margin-bottom:6px">Distribuí los <b>${totPom}</b> pomodoros por materia y creá las tareas de hoy — <span id="distLeft">quedan ${totPom}</span></p>` +
-    activeSubjects().map(s => `<div style="display:flex;align-items:center;gap:8px;margin:4px 0">
-      <span class="tag" style="background:${s.color}1c;color:${s.color};min-width:52px;text-align:center">${esc(s.short)}</span>
-      <span style="flex:1;font-size:.78rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.name)}</span>
-      <input type="number" class="dist-inp" data-sid="${s.id}" value="0" min="0" max="${totPom}" oninput="updateDistLeft(${totPom})" aria-label="Pomodoros para ${escA(s.name)}" style="width:64px;background:var(--card2);border:1px solid var(--line);border-radius:7px;padding:5px 7px"></div>`).join("") +
-    `<div style="display:flex;justify-content:flex-end;margin-top:8px"><button class="btn sm primary" onclick="createDistTasks()">Crear tareas para hoy</button></div>`;
-  }
-  return `<div class="card"><h3>Estudio de hoy<div class="grow"></div>
-    <span class="tiny">${totMin ? fmtMin(totMin) + " disponibles" + (totPom ? " · " + totPom + " pomodoros posibles" : "") : ""}</span></h3>
-    ${rows || '<p class="tiny" style="margin-bottom:6px">Cargá tus horarios de estudio de hoy. Podés agregar varios bloques (por ejemplo 14:00–17:00 y 20:00–22:00) y elegir en cuáles usás pomodoro.</p>'}
+  return `<div class="card"><h3>Bloques de estudio de hoy<div class="grow"></div>
+    <span class="tiny">${totMin ? fmtMin(totMin) + " disponibles hoy" : ""}</span></h3>
+    ${rows || '<p class="tiny" style="margin-bottom:6px">Cargá tus horarios disponibles para hoy (por ejemplo 14:00–17:00 y 20:00–22:00) para organizar tu jornada.</p>'}
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
       <input type="time" id="sb_from" value="14:00" aria-label="Hora de inicio" style="background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:6px">
       <span class="tiny">a</span>
       <input type="time" id="sb_to" value="17:00" aria-label="Hora de fin" style="background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:6px">
-      <label style="display:flex;gap:5px;align-items:center;font-size:.76rem;color:var(--tx2);cursor:pointer"><input type="checkbox" id="sb_pomo" checked style="width:auto">con pomodoro (${P.f}/${P.s})</label>
-      <button class="btn sm" onclick="addStudyBlock()">Agregar bloque</button>
-    </div>${dist}</div>`;
+      <button class="btn sm primary" onclick="addStudyBlock()">Agregar bloque</button>
+    </div></div>`;
 }
 
 /* ======================== ACCIONES: MATERIAS ======================== */
@@ -998,71 +1172,16 @@ function notify(msg) {
   if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
   try { new Notification("Aula", { body: msg }); } catch (e) {}
 }
-function startPomo(taskId) {
-  const T = state.timer;
-  if (taskId !== undefined) { T.taskId = taskId; const t = taskId && taskById(taskId); if (t) { T.subjectId = t.subjectId; T.projectId = t.projectId; } }
-  T.run = true; T.ends = Date.now() + T.left * 1000;
-  change(); renderPomoUI();
-}
-function pausePomo() { const T = state.timer; if (!T.run) return; T.run = false; T.left = Math.max(0, Math.round((T.ends - Date.now()) / 1000)); T.ends = null; change(); renderPomoUI(); }
-function resetPomo() { const T = state.timer; T.run = false; T.ends = null; T.phase = "focus"; T.cycle = 0; T.left = T.total = phaseDur("focus"); change(); renderPomoUI(); }
-function skipPomo() { endPhase(false); }
-function pomoSetLink(val) {
-  const T = state.timer;
-  T.taskId = null; T.subjectId = null; T.projectId = null;
-  if (val.startsWith("t:")) { T.taskId = val.slice(2); const t = taskById(T.taskId); if (t) { T.subjectId = t.subjectId; T.projectId = t.projectId; } }
-  else if (val.startsWith("s:")) T.subjectId = val.slice(2);
-  else if (val.startsWith("p:")) T.projectId = val.slice(2);
-  change();
-}
-function endPhase(credit) {
-  const T = state.timer;
-  if (T.phase === "focus") {
-    if (credit) {
-      addSession(state.settings.pomo.f, { pomos: 1, taskId: T.taskId, subjectId: T.subjectId, projectId: T.projectId });
-      toast("Pomodoro completado — descanso"); notify("Pomodoro completado. Tomate un descanso."); beep();
-    }
-    T.cycle++;
-    T.phase = (T.cycle % state.settings.pomo.c === 0) ? "long" : "short";
-    T.left = T.total = phaseDur(T.phase);
-    T.run = true; T.ends = Date.now() + T.left * 1000;
-  } else {
-    if (credit) { toast("Fin del descanso"); notify("Fin del descanso. Siguiente pomodoro."); beep(); }
-    T.phase = "focus"; T.left = T.total = phaseDur("focus");
-    T.run = false; T.ends = null;
-  }
-  change();
-  if (route.view === "pomodoro" || route.view === "home") render(); else renderPomoUI();
-}
-function pomoTick() {
-  const T = state.timer;
-  if (!T.run || !T.ends) return;
-  T.left = Math.max(0, Math.round((T.ends - Date.now()) / 1000));
-  if (T.left <= 0) { endPhase(true); return; }
-  updatePomoTime();
-}
+function startPomo(taskId) {}
+function pausePomo() {}
+function resetPomo() {}
+function skipPomo() {}
+function pomoSetLink(val) {}
+function endPhase(credit) {}
+function pomoTick() {}
 function fmtClock(sec) { return pad(Math.floor(sec / 60)) + ":" + pad(sec % 60); }
-function updatePomoTime() {
-  const T = state.timer, s = fmtClock(T.left);
-  const el = byId("ptime"); if (el) el.textContent = s;
-  const bar = byId("pfill"); if (bar) bar.style.width = (100 - T.left / T.total * 100) + "%";
-  const mp = byId("mp_time"); if (mp) mp.textContent = s;
-  document.title = T.run ? s + " · " + (T.phase === "focus" ? "Foco" : "Descanso") + " — Aula" : "Aula · Organizador académico";
-}
-function renderPomoUI() {
-  const T = state.timer, mp = byId("minipomo");
-  if (mp) {
-    const active = T.run || T.left !== T.total || T.phase !== "focus";
-    if (active && route.view !== "pomodoro") {
-      mp.classList.add("show");
-      mp.innerHTML = `<span class="ph" style="color:${T.phase === "focus" ? "var(--acc)" : "var(--ok)"}">${T.phase === "focus" ? "Foco" : "Descanso"}</span>
-        <span class="tm" id="mp_time">${fmtClock(T.left)}</span>
-        <span class="tiny">${T.run ? "en curso" : "en pausa"}</span>`;
-    } else mp.classList.remove("show");
-  }
-  if (route.view === "pomodoro") renderPomoView();
-  updatePomoTime();
-}
+function updatePomoTime() {}
+function renderPomoUI() {}
 function logManualSession() {
   const min = parseInt(byId("ms_min").value) || 0;
   if (min <= 0) { toast("Ingresá los minutos"); return; }
@@ -1456,32 +1575,60 @@ function seriesLabel(s) {
 function viewSeries() {
   const all = buildSeries();
   const act = all.filter(s => s.active), old = all.filter(s => !s.active);
-  let h = `<div class="vhead"><h2>Series y repeticiones</h2><span class="sub">tareas que se repiten día a día hasta una fecha</span>
-    <div class="grow"></div><button class="btn primary" onclick="openQuickTask()">Nueva serie</button></div>`;
+  let h = '<div class="vhead"><h2>Series y repeticiones</h2><span class="sub">Gestioná secuencias de estudio y desplazar días fácilmente</span>' +
+    '<div class="grow"></div><button class="btn primary" onclick="openQuickTask()">Nueva serie</button></div>';
+
   const card = s => {
     const lb = seriesLabel(s);
     const daysLeft = s.kind === "recur" ? null : daysTo(s.to);
     const pct = s.tasks.length ? Math.round(s.doneN / s.tasks.length * 100) : 0;
-    return `<div class="card" style="margin:0">
-      <h3 style="margin-bottom:6px">${esc(s.title)}<div class="grow"></div>
-        ${lb ? `<span class="tag" style="background:${lb.color}1c;color:${lb.color}">${esc(lb.name)}</span>` : ""}
-        ${s.kind === "recur" ? '<span class="pill acc">recurrente</span>' : ""}</h3>
-      <div class="tiny" style="margin-bottom:8px">
-        ${s.kind === "recur" ? "Se repite automáticamente" : `Del ${fmtD(s.from)} al ${fmtD(s.to)} · ${s.tasks.length} días`}
-        ${daysLeft !== null ? (daysLeft >= 0 ? ` · termina ${fmtRel(s.to)}` : " · ya terminó") : ""}
-      </div>
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><div class="pbar"><i style="width:${pct}%"></i></div><span class="tiny">${s.doneN}/${s.tasks.length}</span></div>
-      <div class="tiny">${s.mins.length === 1 ? hClock(s.mins[0]) + " cada día" : "entre " + hClock(s.mins[0]) + " y " + hClock(s.mins[s.mins.length - 1]) + " por día"} · <b>${hClock(s.pendMin)} pendientes</b>${s.next ? " · próxima " + fmtD(s.next.date) : ""}</div>
-      <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
-        <button class="btn sm primary" onclick="openSeriesModal('${escA(s.key)}')">Gestionar</button>
-        <button class="btn sm" onclick="selectSeries('${escA(s.key)}')">Seleccionar tareas</button>
-      </div></div>`;
+    
+    // Timeline dots
+    let dotsHtml = '';
+    if (s.kind !== "recur" && s.tasks.length) {
+      dotsHtml = '<div class="series-dots">' + s.tasks.slice(0, 30).map(t => {
+        const isDone = t.status === "done";
+        const isToday = t.date === todayISO();
+        const isOverdue = !isDone && t.date < todayISO();
+        const cls = isDone ? "done" : isToday ? "today" : isOverdue ? "overdue" : "";
+        return '<div class="series-dot ' + cls + '" title="' + fmtD(t.date) + ' - ' + (isDone ? 'Hecha' : 'Pendiente') + '"></div>';
+      }).join("") + (s.tasks.length > 30 ? '<span class="tiny">+' + (s.tasks.length - 30) + '</span>' : '') + '</div>';
+    }
+
+    return '<div class="card" style="margin:0">' +
+      '<h3 style="margin-bottom:6px">' + esc(s.title) + '<div class="grow"></div>' +
+        (lb ? '<span class="tag" style="background:' + lb.color + '1c;color:' + lb.color + '">' + esc(lb.name) + '</span>' : "") +
+        (s.kind === "recur" ? '<span class="pill acc">recurrente</span>' : "") + '</h3>' +
+      '<div class="tiny" style="margin-bottom:8px">' +
+        (s.kind === "recur" ? "Se repite automáticamente" : 'Del ' + fmtD(s.from) + ' al ' + fmtD(s.to) + ' · ' + s.tasks.length + ' días') +
+        (daysLeft !== null ? (daysLeft >= 0 ? ' · termina ' + fmtRel(s.to) : ' · ya terminó') : "") +
+      '</div>' +
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><div class="pbar"><i style="width:' + pct + '%"></i></div><span class="tiny">' + s.doneN + '/' + s.tasks.length + '</span></div>' +
+      dotsHtml +
+      '<div class="tiny" style="margin-top:6px"><b>' + hClock(s.pendMin) + ' pendientes</b>' + (s.next ? ' · próxima ' + fmtD(s.next.date) : "") + '</div>' +
+      '<div style="display:flex;gap:6px;margin-top:12px;flex-wrap:wrap">' +
+        '<button class="btn sm primary" onclick="openSeriesModal(\'' + escA(s.key) + '\')">Gestionar y Desplazar</button>' +
+        '<button class="btn sm" onclick="selectSeries(\'' + escA(s.key) + '\')">Seleccionar tareas</button>' +
+      '</div></div>';
   };
-  h += act.length ? `<div class="grid2">${act.map(card).join("")}</div>`
-    : `<div class="card"><div class="empty">No tenés series activas.<br>Creá una tarea con la opción “Todos los días (período)” y aparece acá para gestionarla entera.</div></div>`;
-  if (old.length) h += `<div class="card" style="margin-top:14px"><h3>Terminadas</h3><div class="grid2" style="margin-top:8px">${old.map(card).join("")}</div></div>`;
+
+  h += act.length ? '<div class="grid2">' + act.map(card).join("") + '</div>'
+    : '<div class="card"><div class="empty">No tenés series activas.<br>Creá una tarea con la opción "Todos los días (período)" y aparece acá para gestionarla entera.</div></div>';
+  if (old.length) h += '<div class="card" style="margin-top:14px"><h3>Terminadas</h3><div class="grid2" style="margin-top:8px">' + old.map(card).join("") + '</div></div>';
   return h;
 }
+
+function shiftSeriesDates(key, days) {
+  const s = seriesByKey(key); if (!s || s.kind === "recur") return;
+  const pend = s.pend;
+  if (!pend.length) { toast("No hay tareas pendientes en esta serie"); return; }
+  pend.forEach(t => {
+    if (t.date) t.date = addDays(t.date, days);
+  });
+  change(); closeModal(); render();
+  toast('Se corrieron ' + pend.length + ' tareas de la serie ' + (days > 0 ? '+' : '') + days + ' día' + (Math.abs(days) > 1 ? 's' : ''));
+}
+
 function selectSeries(key) {
   const s = seriesByKey(key); if (!s) return;
   ui.sel = new Set(s.pend.map(t => t.id));
@@ -1498,6 +1645,22 @@ function openSeriesModal(key) {
   let h = `<h3>${esc(s.title)}</h3>
     <p class="tiny">${lb ? esc(lb.full) + " · " : ""}${recur ? "tarea recurrente" : `del ${fmtD(s.from)} al ${fmtD(s.to)} · ${s.tasks.length} días · ${s.doneN} completadas`}</p>`;
   if (!recur) {
+
+    h += '<div class="card" style="margin:12px 0;background:var(--card2)">' +
+      '<h3>⏩ Desplazar tareas pendientes en el tiempo</h3>' +
+      '<p class="tiny" style="margin-bottom:10px">¿Se pospuso el examen o no pudiste estudiar? Corré todas las fechas pendientes de una sola vez:</p>' +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">' +
+        '<button class="btn sm primary" onclick="shiftSeriesDates(\'' + escA(key) + '\', 1)">+1 día</button>' +
+        '<button class="btn sm primary" onclick="shiftSeriesDates(\'' + escA(key) + '\', 2)">+2 días</button>' +
+        '<button class="btn sm primary" onclick="shiftSeriesDates(\'' + escA(key) + '\', 3)">+3 días</button>' +
+        '<button class="btn sm primary" onclick="shiftSeriesDates(\'' + escA(key) + '\', 7)">+1 semana (+7d)</button>' +
+      '</div>' +
+      '<div class="mrow" style="margin-top:8px">' +
+        '<div><input id="sr_custom_shift" type="number" placeholder="Otro número de días (ej: 4 o -2)" style="background:var(--card)"></div>' +
+        '<button class="btn sm" onclick="shiftSeriesDates(\'' + escA(key) + '\', parseInt(byId(\'sr_custom_shift\').value)||0)">Aplicar días</button>' +
+      '</div>' +
+    '</div>';
+
     h += `<div class="card" style="margin:12px 0"><h3>Tiempo por día</h3>
       <div class="mrow">
         <div><label for="sr_op">Operación</label><select id="sr_op">
@@ -1607,9 +1770,9 @@ function seriesDelete(all) {
 
 /* ========================= ROUTER / SIDEBAR ========================= */
 const VIEWS = [
-  ["home", "Inicio"], ["today", "Hoy"], ["calendar", "Calendario"], ["week", "Semana"],
+  ["home", "Inicio"], ["today", "Planificar días"], ["calendar", "Calendario"], ["week", "Semana"],
   ["subjects", "Materias"], ["evals", "Parciales y finales"], ["projects", "Proyectos"], ["series", "Series y repeticiones"],
-  ["plans", "Planes de estudio"], ["notes", "Notas"], ["pomodoro", "Pomodoro"], ["habits", "Hábitos"],
+  ["plans", "Planes de estudio"], ["notes", "Notas"], ["habits", "Hábitos"],
   ["stats", "Estadísticas"], ["history", "Historial"], ["backups", "Copias de seguridad"], ["config", "Configuración"]
 ];
 function go(view, id) { location.hash = "#/" + view + (id ? "/" + id : ""); }
@@ -1627,14 +1790,14 @@ function toggleSidebar(force) {
 }
 function renderSidebar() {
   const sb = byId("sidebar");
-  const item = (v, label) => `<a href="#/${v}" class="${route.view === v || (v === "subjects" && route.view === "subject") || (v === "evals" && route.view === "eval") || (v === "projects" && route.view === "project") ? "on" : ""}">${label}</a>`;
+  const item = (v, label) => '<a href="#/' + v + '" class="' + (route.view === v || (v === "subjects" && route.view === "subject") || (v === "evals" && route.view === "eval") || (v === "projects" && route.view === "project") ? "on" : "") + '">' + label + '</a>';
   sb.innerHTML =
     '<div class="sec">Planificar</div>' + VIEWS.slice(0, 4).map(v => item(v[0], v[1])).join("") +
     item("list", "Lista completa") +
     '<div class="sec">Organizar</div>' + VIEWS.slice(4, 9).map(v => item(v[0], v[1])).join("") +
-    '<div class="sec">Estudiar</div>' + VIEWS.slice(9, 12).map(v => item(v[0], v[1])).join("") +
+    '<div class="sec">Seguimiento</div>' + VIEWS.slice(9, 12).map(v => item(v[0], v[1])).join("") +
     '<div class="sec">Sistema</div>' + VIEWS.slice(12).map(v => item(v[0], v[1])).join("") +
-    '<div style="padding:14px 10px" class="tiny">Aula v' + APP_VERSION + "</div>";
+    '<div style="padding:14px 10px;display:flex;align-items:center;justify-content:space-between" class="tiny"><span>Aula v' + APP_VERSION + '</span><button class="btn sm ghost" onclick="openMobileGuideModal()" title="Ver en el celular">📱 Celu</button></div>';
 }
 function renderTop() {
   const d = new Date();
@@ -1673,43 +1836,43 @@ function taskRow(t, opts = {}) {
   const done = isDoneOn(t, date);
   const o = ownerOf(t);
   const ev = t.evalId && evalById(t.evalId);
-  const sub = t.subtasks && t.subtasks.length ? `<span class="tiny">${t.subtasks.filter(s => s.done).length}/${t.subtasks.length} sub</span>` : "";
-  const dateBit = opts.showDate ? (t.recur ? '<span class="tiny">recurrente</span>' : t.date ? `<span class="mins">${fmtD(t.date)}</span>` : t.due ? `<span class="mins">vence ${fmtD(t.due)}</span>` : "") :
-    (t.due && !t.date ? `<span class="mins">vence ${fmtD(t.due)}</span>` : "");
+  const sub = t.subtasks && t.subtasks.length ? '<span class="tiny">' + t.subtasks.filter(s => s.done).length + '/' + t.subtasks.length + ' sub</span>' : "";
+  const dateBit = opts.showDate ? (t.recur ? '<span class="tiny">recurrente</span>' : t.date ? '<span class="mins">' + fmtD(t.date) + '</span>' : t.due ? '<span class="mins">vence ' + fmtD(t.due) + '</span>' : "") :
+    (t.due && !t.date ? '<span class="mins">vence ' + fmtD(t.due) + '</span>' : "");
   const late = !t.recur && t.status !== "done" && ((t.date && t.date < todayISO()) || (!t.date && t.due && t.due < todayISO()));
   const canToday = !t.recur && !done && t.date !== todayISO();
   const srt = !!opts.sortable;
-  const dnd = srt ? ` ondragstart="taskDragStart(event,'${t.id}')" ondragend="taskDragEnd(event)" ondragover="taskDragOver(event,'${t.id}')" ondragleave="taskDragLeave(event)" ondrop="taskDrop(event,'${t.id}','${date}')"` : "";
+  const dnd = ' draggable="true" ondragstart="taskDragStart(event,\'' + t.id + '\')" ondragend="taskDragEnd(event)" ondragover="taskDragOver(event,\'' + t.id + '\')" ondragleave="taskDragLeave(event)" ondrop="taskDrop(event,\'' + t.id + '\',\'' + date + '\')"';
   if (!opts.noSel) { ui.selList = ui.selList || []; ui.selList.push(t.id); }
-  return `<div class="task ${done ? "done" : ""} ${isSel(t.id) ? "sel" : ""}" data-id="${t.id}"${dnd} onclick="taskClick(event,'${t.id}')">
-    ${srt ? `<span class="drag" title="Arrastrá para cambiar el orden del día" aria-hidden="true"
-      onclick="event.stopPropagation()" onmousedown="dragArm(this)" onmouseup="dragDisarm(this)" ontouchstart="dragArm(this)">⣿</span>` : ""}
-    <div class="cb ${done ? "on" : ""}" role="checkbox" aria-checked="${done}" tabindex="0" title="${done ? "Desmarcar" : "Completar"}"
-      onclick="event.stopPropagation();toggleTask('${t.id}','${date}')"
-      onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();toggleTask('${t.id}','${date}')}">${done ? "✓" : ""}</div>
-    <div class="tinfo">
-      <div class="tt">${esc(t.title)}${late ? ' <span class="pill bad">atrasada</span>' : ""}${t.status === "prog" ? ' <span class="pill acc">en progreso</span>' : ""}${t.status === "post" ? ' <span class="pill warn">pospuesta</span>' : ""}</div>
-      <div class="tmeta">
-        ${o ? `<span class="tag" style="background:${o.color}1c;color:${o.color};border:1px solid ${o.color}40">${esc(o.name)}</span>` : ""}
-        ${t.estMin ? `<span class="mins">${fmtMin(t.estMin)}</span>` : ""}
-        ${t.prio === 2 ? '<span class="prio2">! alta</span>' : t.prio === 0 ? '<span class="prio0">baja</span>' : ""}
-        ${dateBit} ${sub}
-        ${ev && opts.showEval !== false ? `<span class="tiny">→ ${esc(ev.name.slice(0, 26))}</span>` : ""}
-        ${(t.tags || []).map(x => `<span class="tiny">#${esc(x)}</span>`).join(" ")}
-      </div>
-    </div>
-    <div class="tactions" onclick="event.stopPropagation()">
-      ${srt ? `<button title="Subir en el orden del día" onclick="moveTaskOrder('${t.id}',-1,'${date}')">↑</button>
-      <button title="Bajar en el orden del día" onclick="moveTaskOrder('${t.id}',1,'${date}')">↓</button>` : ""}
-      <button title="Empezar pomodoro" onclick="startFromTask('${t.id}')">▸</button>
-      ${canToday ? `<button title="Asignar a hoy" onclick="assignToday('${t.id}')">Hoy</button>` : ""}
-      ${!t.recur ? `<button title="Posponer para mañana" onclick="postponeTask('${t.id}')">+1d</button>` : ""}
-      <button title="Editar" onclick="openTaskEditor('${t.id}')">Editar</button>
-      <button title="Eliminar definitivamente" style="color:var(--bad)" onclick="deleteTask('${t.id}')">×</button>
-    </div>
-  </div>`;
+  const timeBadge = t.time ? '<span class="time-pill">⏰ ' + esc(t.time) + '</span>' : '';
+  const commentBadge = t.comments && t.comments.length ? '<span class="tiny" style="color:var(--acc);font-weight:600" title="' + t.comments.length + ' notas">💬 ' + t.comments.length + '</span>' : '';
+
+  return '<div class="task ' + (done ? "done " : "") + (isSel(t.id) ? "sel " : "") + '" data-id="' + t.id + '"' + dnd + ' onclick="taskClick(event,\'' + t.id + '\')">' +
+    '<span class="drag" title="Arrastrá para reordenar o mover de día" aria-hidden="true" onclick="event.stopPropagation()" onmousedown="dragArm(this)" onmouseup="dragDisarm(this)" ontouchstart="dragArm(this)">⣿</span>' +
+    '<div class="cb ' + (done ? "on" : "") + '" role="checkbox" aria-checked="' + done + '" tabindex="0" title="' + (done ? "Desmarcar" : "Completar") + '"' +
+      ' onclick="event.stopPropagation();toggleTask(\'' + t.id + '\',\'' + date + '\')"' +
+      ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();event.stopPropagation();toggleTask(\'' + t.id + '\',\'' + date + '\')}">' + (done ? "✓" : "") + '</div>' +
+    '<div class="tinfo">' +
+      '<div class="tt">' + esc(t.title) + (late ? ' <span class="pill bad">atrasada</span>' : "") + (t.status === "prog" ? ' <span class="pill acc">en progreso</span>' : "") + (t.status === "post" ? ' <span class="pill warn">pospuesta</span>' : "") + '</div>' +
+      '<div class="tmeta">' +
+        timeBadge +
+        (o ? '<span class="tag" style="background:' + o.color + '1c;color:' + o.color + ';border:1px solid ' + o.color + '40">' + esc(o.name) + '</span>' : "") +
+        (t.estMin ? '<span class="mins">' + fmtMin(t.estMin) + '</span>' : "") +
+        (t.prio === 2 ? '<span class="prio2">! alta</span>' : t.prio === 0 ? '<span class="prio0">baja</span>' : "") +
+        dateBit + ' ' + sub + ' ' + commentBadge +
+        (ev && opts.showEval !== false ? '<span class="tiny">→ ' + esc(ev.name.slice(0, 26)) + '</span>' : "") +
+        (t.tags || []).map(x => '<span class="tiny">#' + esc(x) + '</span>').join(" ") +
+      '</div>' +
+    '</div>' +
+    '<div class="tactions" onclick="event.stopPropagation()">' +
+      (canToday ? '<button title="Mover a hoy" onclick="shiftTaskToDate(\'' + t.id + '\',\'' + todayISO() + '\')">Hoy</button>' : "") +
+      (!t.recur ? '<button title="Pasar a mañana" onclick="shiftTaskToDate(\'' + t.id + '\',\'' + addDays(todayISO(), 1) + '\')">+1d</button>' : "") +
+      (!t.recur ? '<button title="Pasar a pasado mañana" onclick="shiftTaskToDate(\'' + t.id + '\',\'' + addDays(todayISO(), 2) + '\')">+2d</button>' : "") +
+      '<button title="Editar" onclick="openTaskEditor(\'' + t.id + '\')">Editar</button>' +
+      '<button title="Eliminar" style="color:var(--bad)" onclick="deleteTask(\'' + t.id + '\')">×</button>' +
+    '</div>' +
+  '</div>';
 }
-function startFromTask(id) { startPomo(id); go("pomodoro"); }
 
 /* ============================ VISTA: INICIO ============================ */
 function viewHome() {
@@ -1725,7 +1888,7 @@ function viewHome() {
   const habitsToday = state.habits.filter(h => habitDueOn(h, today));
 
   let h = `<div class="vhead"><h2>${saludo()}</h2><span class="sub">${fmtDFull(today)}</span><div class="grow"></div>
-    <button class="btn" onclick="go('pomodoro')">Empezar a estudiar</button>
+    <button class="btn" onclick="go('today')">Planificar días</button>
     <button class="btn primary" onclick="openQuick()">Agregar</button></div>`;
 
   h += `<div class="grid3" style="margin-bottom:12px">
@@ -1821,18 +1984,101 @@ function postponeAllOverdue() {
 /* ============================ VISTA: HOY ============================ */
 function viewToday() {
   const today = todayISO();
+  const tom = addDays(today, 1);
+  const pas = addDays(today, 2);
   const dayTasks = tasksOn(today);
   const od = overdueTasks();
-  const flex = flexibleUpcoming();
-  let h = `<div class="vhead"><h2>Hoy</h2><span class="sub">${fmtDFull(today)}</span><div class="grow"></div>
-    <button class="btn ${ui.selMode ? "primary" : ""}" onclick="toggleSelMode()" title="Elegir varias tareas (o usá Ctrl+clic y Shift+clic)">Seleccionar</button>
-    <button class="btn primary" onclick="openQuickTask('${today}')">Nueva tarea para hoy</button></div>`;
-  if (od.length) h += `<div class="card"><h3>Atrasadas</h3>${od.map(t => taskRow(t, { showDate: true })).join("")}</div>`;
-  h += `<div class="card"><h3>Programadas para hoy<div class="grow"></div><span class="tiny">arrastrá ⣿ para ordenar tu día</span></h3>${dayTasks.length ? dayTasks.map(t => taskRow(t, { sortable: true })).join("") : '<div class="empty">Sin tareas programadas.</div>'}</div>`;
-  if (flex.length) h += `<div class="card"><h3>Flexibles (vencen pronto)</h3>${flex.map(t => taskRow(t, { showDate: true })).join("")}</div>`;
-  const tom = addDays(today, 1);
   const tomTasks = tasksOn(tom);
-  if (tomTasks.length) h += `<div class="card"><h3>Mañana<div class="grow"></div><span class="tiny">podés marcarlas hechas si las adelantaste</span></h3>${tomTasks.map(t => taskRow(t, { date: tom, showDate: true, sortable: true })).join("")}</div>`;
+  const pasTasks = tasksOn(pas);
+  const flex = flexibleUpcoming();
+
+  let h = '<div class="vhead">' +
+    '<h2>Planificación Diaria</h2>' +
+    '<span class="sub">Hoy es ' + fmtDFull(today) + '</span>' +
+    '<div class="grow"></div>' +
+    '<button class="btn ' + (ui.selMode ? "primary" : "") + '" onclick="toggleSelMode()" title="Elegir varias tareas">Seleccionar</button>' +
+    '<button class="btn primary" onclick="openQuickTask(\'' + today + '\')">+ Nueva tarea</button>' +
+  '</div>';
+
+  if (od.length) {
+    h += '<div class="card" style="border-left:4px solid var(--bad)">' +
+      '<h3>⚠️ Tareas atrasadas (' + od.length + ')' +
+        '<div class="grow"></div>' +
+        '<button class="btn sm danger" onclick="postponeAllOverdue()">Mover todas a Hoy</button>' +
+      '</h3>' +
+      od.map(t => taskRow(t, { showDate: true })).join("") +
+    '</div>';
+  }
+
+  // HOY
+  h += '<div class="day-dropzone" data-date="' + today + '"' +
+    ' ondragover="dayContainerDragOver(event)" ondragleave="dayContainerDragLeave(event)" ondrop="dayContainerDrop(event,\'' + today + '\')">' +
+    '<h3>' +
+      '<span>📌 Hoy · ' + fmtD(today) + '</span>' +
+      '<span class="pill acc">' + dayTasks.length + ' tarea' + (dayTasks.length === 1 ? '' : 's') + '</span>' +
+      '<div class="grow"></div>' +
+      '<span class="tiny">Arrastrá tareas acá para asignarlas a Hoy</span>' +
+      '<button class="btn sm" onclick="openQuickTask(\'' + today + '\')">+ Agregar</button>' +
+    '</h3>' +
+    (dayTasks.length ? dayTasks.map(t => taskRow(t, { date: today, sortable: true })).join("") :
+      '<div class="drop-hint">Sin tareas para hoy. Arrastrá una tarea acá o creá una nueva.</div>') +
+  '</div>';
+
+  // MAÑANA
+  h += '<div class="day-dropzone" data-date="' + tom + '"' +
+    ' ondragover="dayContainerDragOver(event)" ondragleave="dayContainerDragLeave(event)" ondrop="dayContainerDrop(event,\'' + tom + '\')">' +
+    '<h3>' +
+      '<span>🌅 Mañana · ' + fmtD(tom) + '</span>' +
+      '<span class="pill ' + (tomTasks.length ? 'acc' : '') + '">' + tomTasks.length + ' tarea' + (tomTasks.length === 1 ? '' : 's') + '</span>' +
+      '<div class="grow"></div>' +
+      '<span class="tiny">Arrastrá tareas acá para pasarlas a mañana</span>' +
+      '<button class="btn sm" onclick="openQuickTask(\'' + tom + '\')">+ Agregar</button>' +
+    '</h3>' +
+    (tomTasks.length ? tomTasks.map(t => taskRow(t, { date: tom, sortable: true })).join("") :
+      '<div class="drop-hint">Arrastrá tareas de Hoy acá para pasarlas a Mañana.</div>') +
+  '</div>';
+
+  // PASADO MAÑANA
+  h += '<div class="day-dropzone" data-date="' + pas + '"' +
+    ' ondragover="dayContainerDragOver(event)" ondragleave="dayContainerDragLeave(event)" ondrop="dayContainerDrop(event,\'' + pas + '\')">' +
+    '<h3>' +
+      '<span>📅 Pasado mañana · ' + fmtD(pas) + '</span>' +
+      '<span class="pill ' + (pasTasks.length ? 'acc' : '') + '">' + pasTasks.length + ' tarea' + (pasTasks.length === 1 ? '' : 's') + '</span>' +
+      '<div class="grow"></div>' +
+      '<span class="tiny">Arrastrá tareas acá para programar a 2 días</span>' +
+      '<button class="btn sm" onclick="openQuickTask(\'' + pas + '\')">+ Agregar</button>' +
+    '</h3>' +
+    (pasTasks.length ? pasTasks.map(t => taskRow(t, { date: pas, sortable: true })).join("") :
+      '<div class="drop-hint">Arrastrá tareas acá para programarlas a pasado mañana.</div>') +
+  '</div>';
+
+  // PRÓXIMOS DÍAS (+3 a +7 días)
+  h += '<div class="card" style="margin-top:16px">' +
+    '<h3>Próximos días de la semana<div class="grow"></div><span class="tiny">Podés arrastrar tareas a cualquiera de estos días</span></h3>' +
+    '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px;margin-top:10px">';
+  for (let offset = 3; offset <= 7; offset++) {
+    const dStr = addDays(today, offset);
+    const ts = tasksOn(dStr);
+    h += '<div class="day-dropzone" data-date="' + dStr + '" style="margin:0;padding:10px"' +
+      ' ondragover="dayContainerDragOver(event)" ondragleave="dayContainerDragLeave(event)" ondrop="dayContainerDrop(event,\'' + dStr + '\')">' +
+      '<div style="font-weight:700;font-size:.78rem;display:flex;justify-content:space-between;margin-bottom:6px">' +
+        '<span>' + capitalize(DAYS[dToDate(dStr).getDay()]) + ' ' + dToDate(dStr).getDate() + '</span>' +
+        '<span class="tiny">' + ts.length + '</span>' +
+      '</div>' +
+      (ts.length ? ts.map(t => '<div class="wtask ' + (isDoneOn(t, dStr) ? "done" : "") + '" draggable="true" ondragstart="taskDragStart(event,\'' + t.id + '\')" ondragend="taskDragEnd(event)" onclick="openTaskEditor(\'' + t.id + '\')">' +
+        '<span class="tt" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.73rem">' + (t.time ? t.time + ' ' : '') + esc(t.title) + '</span>' +
+      '</div>').join("") : '<div class="drop-hint" style="padding:6px;font-size:.68rem">Soltá tareas acá</div>') +
+    '</div>';
+  }
+  h += '</div></div>';
+
+  if (flex.length) {
+    h += '<div class="card" style="margin-top:14px">' +
+      '<h3>Flexibles (vencen pronto sin día asignado)</h3>' +
+      flex.map(t => taskRow(t, { showDate: true })).join("") +
+    '</div>';
+  }
+
   return h;
 }
 
@@ -2217,36 +2463,8 @@ function pomoLinkOptions(sel) {
   h += `</optgroup><optgroup label="Proyectos">` + state.projects.filter(p => p.status !== "arch" && p.status !== "done").map(p => `<option value="p:${p.id}" ${sel === "p:" + p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("") + "</optgroup>";
   return h;
 }
-function viewPomodoro() { return `<div class="vhead"><h2>Pomodoro</h2><div class="grow"></div>
-    <button class="btn" onclick="openManualSession()">Registrar sesión manual</button></div><div id="pomowrap"></div>`; }
-function renderPomoView() {
-  const w = byId("pomowrap"); if (!w) return;
-  const T = state.timer;
-  const today = todayISO();
-  const todayMin = minsBetween(today, today), todayPomos = pomosBetween(today, today);
-  const sel = T.taskId ? "t:" + T.taskId : T.subjectId ? "s:" + T.subjectId : T.projectId ? "p:" + T.projectId : "";
-  const linked = T.taskId ? taskById(T.taskId) : null;
-  const dots = Array.from({ length: state.settings.pomo.c }, (_, i) => i < (T.cycle % state.settings.pomo.c) || (T.cycle > 0 && T.cycle % state.settings.pomo.c === 0 && T.phase === "long") ? "●" : "○").join(" ");
-  w.innerHTML = `<div class="card pomobig">
-    <div class="phase ${T.phase === "focus" ? "" : "break"}">${T.phase === "focus" ? "Foco" : T.phase === "long" ? "Descanso largo" : "Descanso"}</div>
-    <div class="ptime" id="ptime">${fmtClock(T.left)}</div>
-    <div class="pring"><i id="pfill" style="width:${100 - T.left / T.total * 100}%"></i></div>
-    <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
-      ${T.run ? `<button class="btn" onclick="pausePomo()">Pausar</button>` : `<button class="btn primary" onclick="startPomo()">${T.left === T.total ? "Iniciar" : "Continuar"}</button>`}
-      <button class="btn" onclick="skipPomo()">Saltar fase</button>
-      <button class="btn" onclick="resetPomo()">Reiniciar</button>
-      <button class="btn" onclick="openPomoCfg()">Ajustes</button></div>
-    <div class="dots">${dots}</div>
-    <label style="display:block;font-size:.66rem;color:var(--tx2);margin:16px 0 4px;text-transform:uppercase;letter-spacing:.06em;font-weight:700;text-align:left">Trabajando en</label>
-    <select onchange="pomoSetLink(this.value)" style="width:100%;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:8px;font-size:.8rem" aria-label="Vincular sesión">${pomoLinkOptions(sel)}</select>
-    ${linked ? `<p class="tiny" style="margin-top:8px;text-align:left">${fmtMin(linked.realMin || 0)} acumulados en esta tarea · ${linked.pomos || 0} pomodoros</p>` : ""}
-  </div>
-  <div class="grid3" style="max-width:640px;margin:0 auto">
-    <div class="card" style="margin:0"><div class="statnum">${todayPomos}</div><div class="statlab">pomodoros hoy</div></div>
-    <div class="card" style="margin:0"><div class="statnum">${fmtMin(todayMin)}</div><div class="statlab">estudiado hoy</div></div>
-    <div class="card" style="margin:0"><div class="statnum">${state.settings.pomo.f}/${state.settings.pomo.s}</div><div class="statlab">min foco / descanso</div></div>
-  </div>`;
-}
+function viewPomodoro() { go("today"); return ""; }
+function renderPomoView() {}
 
 /* ========================= VISTA: HÁBITOS ========================= */
 function viewHabits() {
@@ -2698,152 +2916,65 @@ function viewStats() {
   const st = computeStats(R);
   const C = chartColors();
   const dTot = st.total - st.prevTotal;
-  const tab = (k, l) => `<button class="btn sm ${(ui.statsRange || "month") === k ? "primary" : ""}" onclick="setStatsRange('${k}')">${l}</button>`;
+  const tab = (k, l) => '<button class="btn sm ' + ((ui.statsRange || "month") === k ? "primary" : "") + '" onclick="setStatsRange(\'' + k + '\')">' + l + '</button>';
 
-  let h = `<div class="vhead"><h2>Estadísticas</h2><span class="sub">${esc(R.label)}</span><div class="grow"></div>
-    <button class="btn primary" onclick="openPosterModal()">Descargar informe</button>
-    <button class="btn ghost" onclick="exportRangeCSV()" title="Planilla con el resumen de este período">CSV</button></div>`;
+  let h = '<div class="vhead"><h2>Estadísticas</h2><span class="sub">' + esc(R.label) + '</span><div class="grow"></div>' +
+    '<button class="btn primary" onclick="openPosterModal()">Descargar informe</button>' +
+    '<button class="btn ghost" onclick="exportRangeCSV()" title="Exportar CSV">CSV</button></div>';
 
-  h += `<div class="card" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 12px">
-    ${tab("week", "Semana")}${tab("month", "Mes")}${tab("year", "Año")}${tab("all", "Histórico")}
-    <div class="grow"></div>
-    ${R.kind !== "all" ? `<button class="btn sm ghost" onclick="shiftStats(-1)" title="Anterior">‹</button>
-    <span class="tiny" style="min-width:120px;text-align:center;font-weight:700;color:var(--tx2)">${esc(R.label)}</span>
-    <button class="btn sm ghost" onclick="shiftStats(1)" title="Siguiente" ${R.to >= todayISO() ? "disabled" : ""}>›</button>` : `<span class="tiny">${fmtD(R.from)} → ${fmtD(R.to)} · ${st.days.length} días</span>`}
-  </div>`;
+  h += '<div class="card" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 12px">' +
+    tab("week", "Semana") + tab("month", "Mes") + tab("year", "Año") + tab("all", "Histórico") +
+    '<div class="grow"></div>' +
+    (R.kind !== "all" ? '<button class="btn sm ghost" onclick="shiftStats(-1)" title="Anterior">‹</button>' +
+    '<span class="tiny" style="min-width:120px;text-align:center;font-weight:700;color:var(--tx2)">' + esc(R.label) + '</span>' +
+    '<button class="btn sm ghost" onclick="shiftStats(1)" title="Siguiente" ' + (R.to >= todayISO() ? "disabled" : "") + '>›</button>' : '<span class="tiny">' + fmtD(R.from) + ' → ' + fmtD(R.to) + ' · ' + st.days.length + ' días</span>') +
+  '</div>';
 
-  /* --- KPIs --- */
-  const kpi = (v, l, extra) => `<div class="card"><div class="statnum">${v}</div><div class="statlab">${l}</div>${extra || ""}</div>`;
-  h += `<div class="statgrid">
-    ${kpi(hClock(st.total), "total estudiado" + (st.prevTotal ? ` · <span style="color:${dTot >= 0 ? "var(--ok)" : "var(--bad)"}">${dTot >= 0 ? "▲" : "▼"} ${hClock(Math.abs(dTot))} vs período anterior</span>` : ""))}
-    ${kpi(hClock(st.avgCalendar), "promedio por día (todos los días)")}
-    ${kpi(hClock(st.avgActive), "promedio por día activo")}
-    ${kpi(hClock(st.median), "mediana diaria")}
-    ${kpi(st.best.d ? hClock(st.best.m) : "—", st.best.d ? "mejor día · " + fmtD(st.best.d) : "mejor día")}
-    ${kpi(st.activeDays + "<span style='font-size:1rem;color:var(--tx3)'>/" + st.elapsed.length + "</span>", "días con actividad (" + st.coverage + "% de constancia)")}
-    ${kpi(st.streak, "racha actual · mejor: " + st.bestStreak + " días")}
-    ${kpi(st.pomos, "pomodoros · " + st.sess.length + " sesiones")}
-    ${kpi(hClock(st.sessionAvg), "duración media por sesión")}
-    ${kpi(st.doneR.length, "tareas completadas" + (st.prevDone ? ` · ${st.doneR.length >= st.prevDone ? "▲" : "▼"} ${Math.abs(st.doneR.length - st.prevDone)} vs anterior` : ""))}
-    ${kpi(st.withLim ? Math.round(st.onTime / st.withLim * 100) + "%" : "—", "completadas en fecha (" + st.onTime + "/" + st.withLim + ")")}
-    ${kpi(st.overdue, st.overdue ? `tareas atrasadas <span style="color:var(--bad)">a resolver</span>` : "tareas atrasadas · estás al día")}
-  </div>`;
+  /* --- 6 KPIs Esenciales --- */
+  const kpi = (v, l, extra) => '<div class="card"><div class="statnum">' + v + '</div><div class="statlab">' + l + '</div>' + (extra || "") + '</div>';
+  h += '<div class="statgrid">' +
+    kpi(hClock(st.total), "total estudiado" + (st.prevTotal ? ' · <span style="color:' + (dTot >= 0 ? "var(--ok)" : "var(--bad)") + '">' + (dTot >= 0 ? "▲ " : "▼ ") + hClock(Math.abs(dTot)) + ' vs anterior</span>' : "")) +
+    kpi(hClock(st.avgActive), "promedio por día de estudio") +
+    kpi(st.doneR.length, "tareas completadas" + (st.prevDone ? ' · ' + (st.doneR.length >= st.prevDone ? "▲" : "▼") + ' ' + Math.abs(st.doneR.length - st.prevDone) + ' vs anterior' : "")) +
+    kpi(st.withLim ? Math.round(st.onTime / st.withLim * 100) + "%" : "—", "completadas a tiempo (" + st.onTime + "/" + st.withLim + ")") +
+    kpi(st.streak + " días", "racha actual · récord: " + st.bestStreak + " d") +
+    kpi(st.best.d ? hClock(st.best.m) : "—", st.best.d ? "mejor día · " + fmtD(st.best.d) : "mejor día") +
+  '</div>';
 
-  /* --- Evolución --- */
-  h += `<div class="card"><h3>Evolución ${st.gran === "day" ? "diaria" : st.gran === "week" ? "semanal" : "mensual"}<div class="grow"></div>
-    <span class="tiny">${st.series.length} ${st.gran === "day" ? "días" : st.gran === "week" ? "semanas" : "meses"} · pico ${hClock(Math.max(0, ...st.series.map(p => p.v)))}</span></h3>
-    ${chartTimeline(st, C, 880, 250)}</div>`;
+  /* --- Gráfica 1: Evolución del tiempo --- */
+  h += '<div class="card"><h3>Evolución de estudio ' + (st.gran === "day" ? "diaria" : st.gran === "week" ? "semanal" : "mensual") + '<div class="grow"></div>' +
+    '<span class="tiny">' + st.series.length + ' ' + (st.gran === "day" ? "días" : st.gran === "week" ? "semanas" : "meses") + ' · pico ' + hClock(Math.max(0, ...st.series.map(p => p.v))) + '</span></h3>' +
+    chartTimeline(st, C, 880, 240) + '</div>';
 
-  /* --- Ritmo: día de semana + franja horaria --- */
-  const dowItems = st.dow.map((x, i) => ({ label: DAYS[i], full: DAYSL[i], v: x.n ? Math.round(x.min / x.n) : 0, hi: i === new Date().getDay() }));
-  const bestDow = dowItems.reduce((a, b) => b.v > a.v ? b : a, dowItems[0]);
-  h += `<div class="grid2">
-    <div class="card" style="margin:0"><h3>Promedio por día de la semana<div class="grow"></div><span class="tiny">mejor: ${esc(bestDow.full)}</span></h3>
-      ${chartBars(dowItems, C, 430, 200, { valueLabels: true })}</div>`;
-  if (st.hourKnown > 0) {
-    const hrItems = st.hours.map((v, i) => ({ label: i % 3 === 0 ? String(i) : "", full: i + ":00", v }));
-    const peak = st.hours.indexOf(Math.max(...st.hours));
-    h += `<div class="card" style="margin:0"><h3>¿A qué hora estudiás?<div class="grow"></div><span class="tiny">pico: ${peak}:00 hs</span></h3>
-      ${chartBars(hrItems, C, 430, 200, {})}</div>`;
-  } else {
-    h += `<div class="card" style="margin:0"><h3>¿A qué hora estudiás?</h3><div class="empty">Se completa con las sesiones de pomodoro y las manuales que registres de acá en adelante.</div></div>`;
-  }
-  h += `</div>`;
-
-  /* --- Distribución por materia --- */
+  /* --- Gráfica 2: Tiempo por materia --- */
   const distItems = [
     ...st.subs.filter(x => x.min > 0).map(x => ({ label: x.s.name, short: x.s.short, v: x.min, color: x.s.color })),
     ...st.projs.map(x => ({ label: x.p.name, short: x.p.name.slice(0, 6), v: x.min, color: C.tx3 }))
   ];
   if (distItems.length) {
-    h += `<div class="grid2">
-      <div class="card" style="margin:0"><h3>Distribución del tiempo</h3>${chartDonut(distItems, C, 440, 210, { center: hClock(st.total), sub: R.short.toLowerCase() })}</div>
-      <div class="card" style="margin:0"><h3>Horas por materia</h3>
-        ${chartHBars(distItems.slice(0, 9).map(x => ({ label: x.short, color: x.color, v: x.v, full: x.label + " · " + fmtMin(x.v) })), C, 430, Math.max(80, distItems.slice(0, 9).length * 28 + 14))}</div>
-    </div>`;
+    h += '<div class="grid2">' +
+      '<div class="card" style="margin:0"><h3>Distribución de estudio</h3>' + chartDonut(distItems, C, 440, 200, { center: hClock(st.total), sub: R.short.toLowerCase() }) + '</div>' +
+      '<div class="card" style="margin:0"><h3>Horas por materia</h3>' +
+        chartHBars(distItems.slice(0, 9).map(x => ({ label: x.short, color: x.color, v: x.v, full: x.label + " · " + fmtMin(x.v) })), C, 430, Math.max(80, distItems.slice(0, 9).length * 28 + 14)) + '</div>' +
+    '</div>';
   }
 
-  /* --- Composición del tiempo --- */
-  const compParts = [
-    { label: "Pomodoro", v: st.comp.pomo, color: C.acc },
-    { label: "Tareas completadas", v: st.comp.auto, color: C.ok },
-    { label: "Manual", v: st.comp.manual, color: C.warn },
-    { label: "Otras", v: st.comp.otro, color: C.tx3 }
-  ].filter(p => p.v > 0);
-  if (compParts.length) h += `<div class="card"><h3>¿De dónde vienen las horas?<div class="grow"></div><span class="tiny">cómo se registró cada minuto</span></h3>${chartStack(compParts, C, 860, 54)}</div>`;
-
-  /* --- Precisión de estimación --- */
-  if (st.timed.length) {
-    const ratio = st.realSum / st.estSum;
-    const cmpItems = st.subs.filter(x => x.min > 0).map(x => {
-      const ts = st.doneR.filter(t => t.subjectId === x.s.id && (t.estMin || 0) > 0 && (t.realMin || 0) > 0);
-      return { label: x.s.short, a: ts.reduce((a, t) => a + t.estMin, 0), b: ts.reduce((a, t) => a + t.realMin, 0), color: x.s.color };
-    }).filter(x => x.a > 0);
-    h += `<div class="grid2"><div class="card" style="margin:0"><h3>Precisión de tus estimaciones</h3>
-      <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
-        <div style="width:118px">${chartRing(clamp(100 - Math.abs(1 - ratio) * 100, 0, 100), C, 118, ratio > 1.15 ? C.bad : ratio < .85 ? C.warn : C.ok, Math.round(ratio * 100) + "%", "real/est")}</div>
-        <div style="flex:1;min-width:180px"><p class="muted" style="line-height:1.6">Sobre ${st.timed.length} tareas con tiempo real cargado: estimaste <b>${hClock(st.estSum)}</b> y te llevó <b>${hClock(st.realSum)}</b>.<br>
-        ${ratio > 1.08 ? "Tendés a <b style='color:var(--bad)'>subestimar</b>: sumale un " + Math.round((ratio - 1) * 100) + "% a lo que calculás." : ratio < .92 ? "Tendés a <b style='color:var(--warn)'>sobreestimar</b>: te sobra un " + Math.round((1 - ratio) * 100) + "% del tiempo que reservás." : "Tus estimaciones son <b style='color:var(--ok)'>muy precisas</b>. Seguí planificando así."}</p></div>
-      </div></div>`;
-    h += cmpItems.length ? `<div class="card" style="margin:0"><h3>Estimado vs real por materia</h3>${chartDual(cmpItems, C, 430, 210)}</div>` : `<div class="card" style="margin:0"><h3>Estimado vs real por materia</h3><div class="empty">Cargá el tiempo real al completar tareas para ver esta comparación.</div></div>`;
-    h += `</div>`;
+  /* --- Gráfica 3: Tareas por materia --- */
+  const subTasks = st.subs.filter(x => x.s).map(x => {
+    const doneCount = st.doneR.filter(t => t.subjectId === x.s.id).length;
+    return { name: x.s.name, short: x.s.short, color: x.s.color, done: doneCount };
+  }).filter(x => x.done > 0);
+  if (subTasks.length) {
+    h += '<div class="card" style="margin-top:14px"><h3>Tareas completadas por materia</h3>' +
+      '<div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">' +
+        subTasks.map(stk => '<div style="display:flex;align-items:center;gap:10px;font-size:.8rem">' +
+          '<span class="tag" style="background:' + stk.color + '1c;color:' + stk.color + ';min-width:44px;text-align:center">' + esc(stk.short) + '</span>' +
+          '<span style="flex:1">' + esc(stk.name) + '</span>' +
+          '<b>' + stk.done + ' completada' + (stk.done > 1 ? 's' : '') + '</b>' +
+        '</div>').join("") +
+      '</div></div>';
   }
 
-  /* --- Tareas --- */
-  const typeItems = Object.entries(st.byType).sort((a, b) => b[1] - a[1]).map(([k, v], i) => ({ label: TASK_TYPES[k] || k, v, color: SUBJ_COLORS[i % SUBJ_COLORS.length] }));
-  h += `<div class="grid2">
-    <div class="card" style="margin:0"><h3>Tareas del período<div class="grow"></div><span class="tiny">${st.createdR.length} creadas · ${st.doneR.length} completadas</span></h3>
-      <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
-        <div style="width:112px">${chartRing(st.createdR.length ? clamp(st.doneR.length / Math.max(st.createdR.length, 1) * 100, 0, 100) : 0, C, 112, C.acc, (st.createdR.length ? Math.round(st.doneR.length / st.createdR.length * 100) : 0) + "%", "cerradas")}</div>
-        <div style="flex:1;min-width:150px" class="tiny">
-          ${Object.entries(st.statusCount).filter(([, v]) => v > 0).map(([k, v]) => `<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--line2)"><span>${TASK_STATUS[k]}</span><b>${v}</b></div>`).join("")}
-        </div></div></div>
-    <div class="card" style="margin:0"><h3>Qué tipo de trabajo hiciste</h3>
-      ${typeItems.length ? chartHBars(typeItems.map(x => ({ label: x.label.length > 12 ? x.label.slice(0, 11) + "…" : x.label, v: x.v, color: x.color, vLabel: x.v + (x.v === 1 ? " tarea" : " tareas"), full: x.label + ": " + x.v })), C, 430, Math.max(70, typeItems.length * 26 + 12), { labelW: 100 }) : '<div class="empty">Sin tareas completadas en este período.</div>'}</div>
-  </div>`;
-
-  /* --- Notas y evaluaciones --- */
-  if (st.graded.length) {
-    const apr = st.graded.filter(x => x.g >= 4).length;
-    h += `<div class="card"><h3>Rendimiento en evaluaciones<div class="grow"></div>
-      <span class="tiny">promedio ${st.gradeAvg} · ${apr}/${st.graded.length} aprobadas</span></h3>${chartGrades(st.graded.slice(-14), C, 860, 190)}</div>`;
-  }
-
-  /* --- Hábitos --- */
-  const hb = st.habits.filter(x => x.due > 0);
-  if (hb.length) {
-    h += `<div class="card"><h3>Cumplimiento de hábitos<div class="grow"></div><span class="tiny">en ${esc(R.label.toLowerCase())}</span></h3>
-      ${chartHBars(hb.map(x => ({ label: x.h.name.length > 14 ? x.h.name.slice(0, 13) + "…" : x.h.name, v: x.pct, color: x.pct >= 80 ? C.ok : x.pct >= 50 ? C.warn : C.bad, vLabel: x.pct + "% (" + x.ok + "/" + x.due + ")", full: x.h.name })), C, 860, Math.max(70, hb.length * 28 + 12), { labelW: 120 })}</div>`;
-  }
-
-  /* --- Mapa de calor --- */
-  h += `<div class="card"><h3>Mapa de actividad<div class="grow"></div><span class="tiny">último año · cada cuadrito es un día</span></h3>
-    <div style="overflow-x:auto">${chartHeat(C, 800, 130, todayISO(), 53)}</div></div>`;
-
-  /* --- Ranking de materias (tabla) --- */
-  if (st.subs.length) {
-    h += `<div class="card"><h3>Detalle por materia</h3>
-      <div style="overflow-x:auto"><table class="stt">
-      <thead><tr><th>Materia</th><th style="text-align:right">Horas</th><th style="text-align:right">% del total</th>
-        <th style="text-align:right">Sesiones</th><th style="text-align:right">Completadas</th>
-        <th style="text-align:right">Pendientes</th><th style="text-align:right">Prom./día activo</th></tr></thead><tbody>`;
-    for (const x of st.subs) {
-      const dAct = new Set(st.sess.filter(s => s.subjectId === x.s.id).map(s => s.date)).size;
-      h += `<tr style="cursor:pointer" onclick="go('subject','${x.s.id}')">
-        <td><span class="tag" style="background:${x.s.color}1c;color:${x.s.color}">${esc(x.s.short)}</span> ${esc(x.s.name)}</td>
-        <td style="text-align:right;font-variant-numeric:tabular-nums"><b>${hClock(x.min)}</b></td>
-        <td style="text-align:right;color:var(--tx3)">${st.total ? Math.round(x.min / st.total * 100) : 0}%</td>
-        <td style="text-align:right;color:var(--tx3)">${x.sessions}</td>
-        <td style="text-align:right;color:var(--ok)">${x.done}</td>
-        <td style="text-align:right;color:${x.pend ? "var(--warn)" : "var(--tx3)"}">${x.pend}</td>
-        <td style="text-align:right;color:var(--tx3)">${dAct ? hClock(x.min / dAct) : "—"}</td></tr>`;
-    }
-    h += `</tbody></table></div></div>`;
-  }
-
-  /* --- Conclusiones automáticas --- */
-  const ins = buildInsights(st, C);
-  if (ins.length) h += `<div class="card" style="border-left:3px solid var(--acc)"><h3>Lo que dicen tus números</h3>${ins.map(x => `<p class="muted" style="margin:6px 0;line-height:1.55">${x}</p>`).join("")}</div>`;
   return h;
 }
 
@@ -3458,67 +3589,83 @@ function openTaskEditor(id) {
   const t = taskById(id); if (!t) return;
   const sel = t.subjectId ? "s:" + t.subjectId : t.projectId ? "p:" + t.projectId : "";
   const rec = t.recur || {};
-  openModal(`<h3>Editar tarea</h3>
-    <label for="te_title">Título</label><input id="te_title" value="${escA(t.title)}">
-    <label for="te_desc">Descripción</label><textarea id="te_desc" rows="2">${esc(t.desc || "")}</textarea>
-    <div class="mrow">
-      <div><label for="te_link">Materia / proyecto</label><select id="te_link">${linkOptions(sel)}</select></div>
-      <div><label for="te_eval">Evaluación / plan</label><select id="te_eval"><option value="">—</option>${state.evals.map(e => `<option value="${e.id}" ${t.evalId === e.id ? "selected" : ""}>${esc(e.name)}</option>`).join("")}</select></div>
-    </div>
-    <div class="mrow">
-      <div><label for="te_date">Fecha programada</label><input id="te_date" type="date" value="${t.date || ""}"></div>
-      <div><label for="te_due">Fecha límite</label><input id="te_due" type="date" value="${t.due || ""}"></div>
-      <div><label for="te_min">Estimado (min)</label><input id="te_min" type="number" value="${t.estMin || 0}" min="0" step="5"></div>
-    </div>
-    <div class="mrow">
-      <div><label for="te_prio">Prioridad</label><select id="te_prio">${PRIO.map((p, i) => `<option value="${i}" ${t.prio === i ? "selected" : ""}>${p}</option>`).join("")}</select></div>
-      <div><label for="te_status">Estado</label><select id="te_status">${Object.entries(TASK_STATUS).map(([k, v]) => `<option value="${k}" ${t.status === k ? "selected" : ""}>${v}</option>`).join("")}</select></div>
-      <div><label for="te_type">Tipo</label><select id="te_type">${Object.entries(TASK_TYPES).map(([k, v]) => `<option value="${k}" ${t.type === k ? "selected" : ""}>${v}</option>`).join("")}</select></div>
-    </div>
-    <div class="mrow">
-      <div><label for="te_tags">Etiquetas (separadas por coma)</label><input id="te_tags" value="${escA((t.tags || []).join(", "))}"></div>
-      <div><label for="te_rec">Recurrencia</label><select id="te_rec" onchange="byId('te_recdays').style.display=(this.value==='days')?'block':'none';byId('te_recn').style.display=(this.value==='interval')?'block':'none'">
-        <option value="">No se repite</option>
-        <option value="daily" ${rec.kind === "daily" ? "selected" : ""}>Todos los días</option>
-        <option value="days" ${rec.kind === "days" ? "selected" : ""}>Días específicos</option>
-        <option value="weekly" ${rec.kind === "weekly" ? "selected" : ""}>Semanal</option>
-        <option value="monthly" ${rec.kind === "monthly" ? "selected" : ""}>Mensual</option>
-        <option value="interval" ${rec.kind === "interval" ? "selected" : ""}>Cada N días</option></select></div>
-    </div>
-    <div id="te_recdays" style="display:${rec.kind === "days" ? "block" : "none"};margin-top:6px">${DAYS.map((d, i) => `<label style="display:inline-flex;gap:3px;margin-right:8px;font-size:.72rem;text-transform:none;letter-spacing:0"><input type="checkbox" class="te_day" value="${i}" style="width:auto" ${(rec.days || []).includes(i) ? "checked" : ""}>${d}</label>`).join("")}</div>
-    <div id="te_recn" style="display:${rec.kind === "interval" ? "block" : "none"};margin-top:6px"><input id="te_n" type="number" min="2" value="${rec.n || 2}" style="width:110px"> <span class="tiny">días de intervalo</span></div>
-    <label>Subtareas</label><div id="te_subs"></div>
-    <div class="mrow"><div><input id="te_newsub" placeholder="Nueva subtarea…" onkeydown="if(event.key==='Enter')addSubtaskFromEditor('${t.id}')"></div><button class="btn" onclick="addSubtaskFromEditor('${t.id}')">Agregar</button></div>
-    <label for="te_notes">Notas de la tarea</label><textarea id="te_notes" rows="2">${esc(t.notes || "")}</textarea>
-    <p class="tiny" style="margin-top:8px">Tiempo real: ${fmtMin(t.realMin || 0)} · ${t.pomos || 0} pomodoros · creada ${fmtD(t.createdAt)}${t.doneAt ? " · completada " + fmtD(t.doneAt) : ""}</p>
-    <div class="mfoot">
-      <button class="btn danger" onclick="deleteTask('${t.id}')">Eliminar</button>
-      <button class="btn" onclick="archiveTask('${t.id}');closeModal()">${t.archived ? "Restaurar" : "Archivar"}</button>
-      <button class="btn" onclick="duplicateTask('${t.id}');closeModal()">Duplicar</button>
-      <div class="grow"></div>
-      <button class="btn" onclick="closeModal()">Cancelar</button>
-      <button class="btn primary" onclick="saveTaskEditor('${t.id}')">Guardar</button></div>`, true);
+  
+  // Active evals (or the one already selected)
+  const availEvals = state.evals.filter(e => !isEvalFinished(e) || e.id === t.evalId);
+
+  openModal('<h3>Editar tarea</h3>' +
+    '<label for="te_title">Título</label><input id="te_title" value="' + escA(t.title) + '">' +
+    '<label for="te_desc">Descripción</label><textarea id="te_desc" rows="2">' + esc(t.desc || "") + '</textarea>' +
+    '<div class="mrow">' +
+      '<div><label for="te_link">Materia / proyecto</label><select id="te_link" onchange="onTaskEditorLinkChange()">' + linkOptions(sel) + '</select></div>' +
+      '<div><label for="te_eval">Evaluación / Parcial</label><select id="te_eval" onchange="onTaskEditorEvalChange()"><option value="">— Ninguna —</option>' +
+        availEvals.map(e => '<option value="' + e.id + '" ' + (t.evalId === e.id ? "selected" : "") + '>' + esc(e.name) + (isEvalFinished(e) ? " (Finalizada)" : "") + '</option>').join("") +
+      '</select></div>' +
+    '</div>' +
+    '<div class="mrow">' +
+      '<div><label for="te_date">Fecha programada</label><input id="te_date" type="date" value="' + (t.date || "") + '"></div>' +
+      '<div><label for="te_time">Horario (opcional)</label><input id="te_time" type="time" value="' + (t.time || "") + '"></div>' +
+      '<div><label for="te_due">Fecha límite</label><input id="te_due" type="date" value="' + (t.due || "") + '"></div>' +
+      '<div><label for="te_min">Estimado (min)</label><input id="te_min" type="number" value="' + (t.estMin || 0) + '" min="0" step="5"></div>' +
+    '</div>' +
+    '<div class="mrow">' +
+      '<div><label for="te_prio">Prioridad</label><select id="te_prio">' + PRIO.map((p, i) => '<option value="' + i + '" ' + (t.prio === i ? "selected" : "") + '>' + p + '</option>').join("") + '</select></div>' +
+      '<div><label for="te_status">Estado</label><select id="te_status">' + Object.entries(TASK_STATUS).map(([k, v]) => '<option value="' + k + '" ' + (t.status === k ? "selected" : "") + '>' + v + '</option>').join("") + '</select></div>' +
+      '<div><label for="te_type">Tipo</label><select id="te_type">' + Object.entries(TASK_TYPES).map(([k, v]) => '<option value="' + k + '" ' + (t.type === k ? "selected" : "") + '>' + v + '</option>').join("") + '</select></div>' +
+    '</div>' +
+    '<div class="mrow">' +
+      '<div><label for="te_tags">Etiquetas</label><input id="te_tags" value="' + escA((t.tags || []).join(", ")) + '"></div>' +
+      '<div><label for="te_rec">Recurrencia</label><select id="te_rec" onchange="byId(\'te_recdays\').style.display=(this.value===\'days\')?\'block\':\'none\';byId(\'te_recn\').style.display=(this.value===\'interval\')?\'block\':\'none\'">' +
+        '<option value="">No se repite</option>' +
+        '<option value="daily" ' + (rec.kind === "daily" ? "selected" : "") + '>Todos los días</option>' +
+        '<option value="days" ' + (rec.kind === "days" ? "selected" : "") + '>Días específicos</option>' +
+        '<option value="weekly" ' + (rec.kind === "weekly" ? "selected" : "") + '>Semanal</option>' +
+        '<option value="monthly" ' + (rec.kind === "monthly" ? "selected" : "") + '>Mensual</option>' +
+        '<option value="interval" ' + (rec.kind === "interval" ? "selected" : "") + '>Cada N días</option></select></div>' +
+    '</div>' +
+    '<div id="te_recdays" style="display:' + (rec.kind === "days" ? "block" : "none") + ';margin-top:6px">' + DAYS.map((d, i) => '<label style="display:inline-flex;gap:3px;margin-right:8px;font-size:.72rem;text-transform:none;letter-spacing:0"><input type="checkbox" class="te_day" value="' + i + '" style="width:auto" ' + ((rec.days || []).includes(i) ? "checked" : "") + '>' + d + '</label>').join("") + '</div>' +
+    '<div id="te_recn" style="display:' + (rec.kind === "interval" ? "block" : "none") + ';margin-top:6px"><input id="te_n" type="number" min="2" value="' + (rec.n || 2) + '" style="width:110px"> <span class="tiny">días de intervalo</span></div>' +
+    '<label>Subtareas</label><div id="te_subs"></div>' +
+    '<div class="mrow"><div><input id="te_newsub" placeholder="Nueva subtarea…" onkeydown="if(event.key===\'Enter\')addSubtaskFromEditor(\'' + t.id + '\')"></div><button class="btn" onclick="addSubtaskFromEditor(\'' + t.id + '\')">Agregar</button></div>' +
+    
+    /* Sección de Comentarios */
+    '<div style="margin:16px 0;padding:12px;background:var(--card2);border-radius:9px;border:1px solid var(--line)">' +
+      '<div style="font-weight:700;font-size:.78rem;margin-bottom:8px;display:flex;justify-content:space-between">' +
+        '<span>💬 Comentarios y notas <span class="tiny" id="te_comment_count">(' + ((t.comments || []).length) + ')</span></span>' +
+      '</div>' +
+      '<div id="te_comments_list" style="display:flex;flex-direction:column;gap:6px;max-height:160px;overflow-y:auto;margin-bottom:8px">' +
+        renderCommentsList(t) +
+      '</div>' +
+      '<div style="display:flex;gap:6px">' +
+        '<input id="te_newcomment" placeholder="Escribir una duda, avance o comentario…" style="background:var(--card)" onkeydown="if(event.key===\'Enter\')addTaskComment(\'' + t.id + '\')">' +
+        '<button class="btn sm primary" type="button" onclick="addTaskComment(\'' + t.id + '\')">Comentar</button>' +
+      '</div>' +
+    '</div>' +
+
+    '<p class="tiny" style="margin-top:8px">Tiempo real: ' + fmtMin(t.realMin || 0) + ' · creada ' + fmtD(t.createdAt) + (t.doneAt ? ' · completada ' + fmtD(t.doneAt) : '') + '</p>' +
+    '<div class="mfoot">' +
+      '<button class="btn danger" onclick="deleteTask(\'' + t.id + '\')">Eliminar</button>' +
+      '<button class="btn" onclick="archiveTask(\'' + t.id + '\');closeModal()">' + (t.archived ? "Restaurar" : "Archivar") + '</button>' +
+      '<button class="btn" onclick="duplicateTask(\'' + t.id + '\');closeModal()">Duplicar</button>' +
+      '<div class="grow"></div>' +
+      '<button class="btn" onclick="closeModal()">Cancelar</button>' +
+      '<button class="btn primary" onclick="saveTaskEditor(\'' + t.id + '\')">Guardar</button></div>', true);
   renderTaskEditorSubtasks(t);
 }
-function renderTaskEditorSubtasks(t) {
-  const el = byId("te_subs"); if (!el) return;
-  el.innerHTML = (t.subtasks || []).map(s => `<div style="display:flex;gap:8px;align-items:center;padding:4px 0">
-    <div class="cb ${s.done ? "on" : ""}" style="width:16px;height:16px" onclick="toggleSubtask('${t.id}','${s.id}')">${s.done ? "✓" : ""}</div>
-    <span style="flex:1;font-size:.8rem;${s.done ? "text-decoration:line-through;color:var(--tx3)" : ""}">${esc(s.t)}</span>
-    <button class="btn sm ghost" onclick="removeSubtask('${t.id}','${s.id}')">×</button></div>`).join("") || '<p class="tiny">Sin subtareas.</p>';
+
+function onTaskEditorEvalChange() {
+  const evVal = byId("te_eval").value;
+  if (!evVal) return;
+  const e = evalById(evVal);
+  if (!e) return;
+  if (e.subjectId) byId("te_link").value = "s:" + e.subjectId;
+  else if (e.projectId) byId("te_link").value = "p:" + e.projectId;
 }
-function addSubtaskFromEditor(taskId) {
-  const t = taskById(taskId); const i = byId("te_newsub");
-  if (!t || !i || !i.value.trim()) return;
-  t.subtasks = t.subtasks || [];
-  t.subtasks.push({ id: uid(), t: i.value.trim(), done: false });
-  i.value = ""; change(); renderTaskEditorSubtasks(t);
+
+function onTaskEditorLinkChange() {
+  // Can filter evals if needed
 }
-function removeSubtask(taskId, stId) {
-  const t = taskById(taskId); if (!t) return;
-  t.subtasks = (t.subtasks || []).filter(s => s.id !== stId);
-  change(); renderTaskEditorSubtasks(t);
-}
+
 function saveTaskEditor(id) {
   const t = taskById(id); if (!t) return;
   const title = byId("te_title").value.trim();
@@ -3530,17 +3677,20 @@ function saveTaskEditor(id) {
   const ev = byId("te_eval").value; t.evalId = ev || null; if (!ev) t.planId = null; else if (!t.planId) t.planId = ev;
   const prevDate = t.date;
   t.date = byId("te_date").value || null;
+  t.time = byId("te_time").value || null;
   if (t.date !== prevDate) t.ord = null;
   t.due = byId("te_due").value || null;
   t.estMin = parseInt(byId("te_min").value) || 0;
   t.prio = parseInt(byId("te_prio").value);
   const prevStatus = t.status;
   t.status = byId("te_status").value;
-  if (t.status === "done" && prevStatus !== "done") { t.doneAt = todayISO(); bumpDayDone(todayISO()); askDoneTime(t.id); }
+  if (t.status === "done" && prevStatus !== "done") {
+    const doneD = getEffectiveDoneDate(t, t.date);
+    t.doneAt = doneD; bumpDayDone(doneD); askDoneTime(t.id, doneD);
+  }
   if (t.status !== "done") { t.doneAt = null; if (prevStatus === "done") uncreditTaskDone(t); }
   t.type = byId("te_type").value;
   t.tags = byId("te_tags").value.split(",").map(x => x.trim().replace(/^#/, "")).filter(Boolean);
-  t.notes = byId("te_notes").value;
   const rk = byId("te_rec").value;
   if (rk) {
     t.recur = { kind: rk, days: [...document.querySelectorAll(".te_day:checked")].map(x => parseInt(x.value)), n: parseInt((byId("te_n") || {}).value) || 2, start: t.date || todayISO() };
@@ -3548,6 +3698,7 @@ function saveTaskEditor(id) {
   } else t.recur = null;
   change(); closeModal(); render(); toast("Tarea guardada");
 }
+
 
 /* ---------- Materia ---------- */
 function openSubjectEditor(id) {
@@ -3848,6 +3999,40 @@ function trapFocus(e) {
   const first = foc[0], last = foc[foc.length - 1];
   if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
   else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+}
+
+
+/* ==================== GUÍA MÓVIL Y NOTIFICACIONES ==================== */
+function openMobileGuideModal() {
+  openModal('<h3>📱 Aula en tu Celular & Notificaciones</h3>' +
+    '<div style="display:flex;flex-direction:column;gap:12px;margin:14px 0;font-size:.83rem">' +
+      '<div class="card" style="margin:0;padding:12px">' +
+        '<h4 style="font-size:.85rem;font-weight:700;margin-bottom:5px">1. Usar en el celular por Wi-Fi local</h4>' +
+        '<p class="muted">Si abrís Aula en tu red local desde el navegador del celular (ej: <code>http://192.168.1.X:8080</code>), podés usarla en cualquier teléfono o tablet.</p>' +
+      '</div>' +
+      '<div class="card" style="margin:0;padding:12px">' +
+        '<h4 style="font-size:.85rem;font-weight:700;margin-bottom:5px">2. Instalar en la pantalla de inicio (PWA)</h4>' +
+        '<p class="muted"><b>En iPhone:</b> Tocá Compartir en Safari y elegí <b>"Agregar a pantalla de inicio"</b>.</p>' +
+        '<p class="muted" style="margin-top:4px"><b>En Android:</b> Tocá los 3 puntos en Chrome y elegí <b>"Instalar aplicación"</b>.</p>' +
+      '</div>' +
+      '<div class="card" style="margin:0;padding:12px">' +
+        '<h4 style="font-size:.85rem;font-weight:700;margin-bottom:5px">3. Pasar datos al celular en 1 clic</h4>' +
+        '<p class="muted">Hacé una copia de seguridad y cargala en tu celular:</p>' +
+        '<div style="display:flex;gap:8px;margin-top:8px">' +
+          '<button class="btn sm primary" onclick="exportDataJSON()">Descargar copia JSON</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="card" style="margin:0;padding:12px">' +
+        '<h4 style="font-size:.85rem;font-weight:700;margin-bottom:5px">4. Notificaciones del sistema</h4>' +
+        '<p class="muted">Alertas de parciales y tareas del día:</p>' +
+        '<div style="margin-top:8px">' +
+          '<button class="btn sm ' + (state.settings.notif ? "ghost" : "primary") + '" onclick="requestNotifPerm()">' +
+            (state.settings.notif ? "✓ Notificaciones activadas" : "🔔 Activar notificaciones") +
+          '</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+    '<div class="mfoot"><button class="btn primary" onclick="closeModal()">Cerrar</button></div>');
 }
 
 /* ============================ INIT ============================ */
