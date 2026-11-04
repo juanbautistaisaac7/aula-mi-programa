@@ -6,7 +6,26 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
-## Corrida 04:08–(en curso) (hora ARG) — A1, X1, A2, A3, A4a, A4b, B1
+## Corrida 04:08–(en curso) (hora ARG) — A1, X1, A2, A3, A4a, A4b, B1, B2
+
+### B2 · Comentarios en tareas
+
+**Plan:** un hilo de comentarios en el detalle de la tarea, con fecha y hora, editar y borrar con deshacer, y un indicador chiquito en la fila.
+
+**Decisiones:**
+- **Modelo:** `t.comments = [{ id, text, ts, editedTs? }]`. Campo nuevo y opcional, sin migración.
+- **Se guardan al instante**, como las subtareas: no dependen del botón "Guardar" del editor. Así no se pierde un comentario si cerrás con "Cancelar".
+- **Separé "Notas de la tarea" de "Comentarios":** la nota es *un* texto que describe la tarea; los comentarios son un registro con fecha de lo que fue pasando ("pregunté en la consulta", "ya lo resolví"). Las notas viejas quedan como estaban.
+- **Editar** marca "· editado". Guardar vacío no se permite (para eso está Borrar). **Borrar** no pide confirmación pero ofrece *Deshacer*, que es más rápido y menos molesto en el celu.
+- **Ctrl/Cmd+Enter** comenta (en desktop); en el celu está el botón "Comentar".
+- **Indicador en la fila:** un globito de diálogo dibujado en SVG + la cantidad ("💬 2" sin emoji), gris, con `title` "2 comentarios".
+- El texto se escapa siempre (probado con `<b>`), y los saltos de línea se respetan.
+
+**Salió bien:** todo verde a la primera.
+**Salió mal / intentos fallidos:** "Editar" y "Borrar" con borde en cada comentario pesaban mucho visualmente: los dejé como texto (gris y rojo), con 36 px de alto táctil. Para capturar la parte de abajo del editor tuve que hacer un script aparte: el `scrollTop` sobre el modal no movía el contenedor correcto.
+**Tests:** +5 (×2 = 10): agregar (y que vacío no se agregue) y persistir; editar y cancelar; borrar y deshacer; indicador con cantidad; HTML escapado. `npm test`: 86/86.
+**Capturas:** [comentarios en el editor (mobile oscuro)](capturas/B2-editor-mobile-dark.png) · [mobile claro](capturas/B2-editor-mobile-light.png) · [indicador en la fila](capturas/B2-fila-mobile-light.png)
+**Para Bauti:** en las capturas de Hoy en el celu se nota que el título y los datos de cada tarea usan solo la mitad del ancho (se cortan "Segundo parcial / PE"). No es de este ítem; lo anoto para la pasada de diseño (F1).
 
 ### B1 · Hora en tareas
 

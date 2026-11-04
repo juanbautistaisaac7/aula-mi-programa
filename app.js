@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.13.0";
+const APP_VERSION = "2.14.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -1764,6 +1764,7 @@ function taskRow(t, opts = {}) {
         ${t.estMin ? `<span class="mins">${fmtMin(t.estMin)}</span>` : ""}
         ${t.prio === 2 ? '<span class="prio2">! alta</span>' : t.prio === 0 ? '<span class="prio0">baja</span>' : ""}
         ${dateBit} ${sub}
+        ${t.comments && t.comments.length ? `<span class="tiny cmtcount" title="${t.comments.length} comentario${t.comments.length > 1 ? "s" : ""}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg>${t.comments.length}</span>` : ""}
         ${ev && opts.showEval !== false ? `<span class="tiny">→ ${esc(ev.name.slice(0, 26))}</span>` : ""}
         ${(t.tags || []).map(x => `<span class="tiny">#${esc(x)}</span>`).join(" ")}
       </div>
@@ -3514,6 +3515,10 @@ function openTaskEditor(id) {
     <label>Subtareas</label><div id="te_subs"></div>
     <div class="mrow"><div><input id="te_newsub" placeholder="Nueva subtarea…" onkeydown="if(event.key==='Enter')addSubtaskFromEditor('${t.id}')"></div><button class="btn" onclick="addSubtaskFromEditor('${t.id}')">Agregar</button></div>
     <label for="te_notes">Notas de la tarea</label><textarea id="te_notes" rows="2">${esc(t.notes || "")}</textarea>
+    <label for="te_newcmt">Comentarios</label>
+    <div id="te_comments" data-tid="${t.id}"></div>
+    <div class="cmt-new"><textarea id="te_newcmt" rows="1" placeholder="Escribí un comentario…" onkeydown="if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)){event.preventDefault();addTaskComment('${t.id}')}"></textarea>
+      <button class="btn" onclick="addTaskComment('${t.id}')">Comentar</button></div>
     <div style="display:flex;align-items:center;gap:10px;margin-top:12px">
       <p class="tiny" style="flex:1;margin:0">Tiempo real: <b>${fmtMin(t.realMin || 0)}</b> · creada ${fmtD(t.createdAt)}${t.doneAt ? " · completada " + fmtD(t.doneAt) : ""}</p>
       <button class="btn sm" onclick="openManualSession('${t.id}')">Registrar tiempo</button></div>
@@ -3525,6 +3530,53 @@ function openTaskEditor(id) {
       <button class="btn" onclick="closeModal()">Cancelar</button>
       <button class="btn primary" onclick="saveTaskEditor('${t.id}')">Guardar</button></div>`, true);
   renderTaskEditorSubtasks(t);
+  ui.editingComment = null; renderTaskComments(t);
+}
+/* ---------- Comentarios en tareas (B2) ----------
+   t.comments = [{ id, text, ts, editedTs? }]. Se guardan al instante (como las
+   subtareas); borrar tiene deshacer. */
+function fmtStamp(ts) {
+  const d = new Date(ts);
+  return fmtD(iso(d)) + " · " + fmtTime(pad(d.getHours()) + ":" + pad(d.getMinutes()));
+}
+function renderTaskComments(t) {
+  const el = byId("te_comments"); if (!el || el.dataset.tid !== t.id) return;
+  const list = [...(t.comments || [])].sort((a, b) => a.ts - b.ts);
+  el.innerHTML = list.map(c => ui.editingComment === c.id
+    ? `<div class="cmt" data-cid="${c.id}"><textarea id="te_cmt_edit" rows="2" aria-label="Editar comentario">${esc(c.text)}</textarea>
+        <div class="cmt-act"><button class="btn sm ghost" onclick="ui.editingComment=null;renderTaskComments(taskById('${t.id}'))">Cancelar</button>
+        <button class="btn sm primary" onclick="saveTaskComment('${t.id}','${c.id}')">Guardar</button></div></div>`
+    : `<div class="cmt" data-cid="${c.id}"><div class="cmt-meta">${fmtStamp(c.ts)}${c.editedTs ? " · editado" : ""}</div>
+        <div class="cmt-text">${esc(c.text).replace(/\n/g, "<br>")}</div>
+        <div class="cmt-act"><button class="btn sm ghost" onclick="editTaskComment('${t.id}','${c.id}')">Editar</button>
+        <button class="btn sm ghost" style="color:var(--bad)" onclick="deleteTaskComment('${t.id}','${c.id}')">Borrar</button></div></div>`).join("");
+}
+function addTaskComment(taskId) {
+  const t = taskById(taskId), i = byId("te_newcmt");
+  if (!t || !i || !i.value.trim()) return;
+  t.comments = t.comments || [];
+  t.comments.push({ id: uid(), text: i.value.trim(), ts: Date.now() });
+  i.value = ""; change(); renderTaskComments(t); render();
+}
+function editTaskComment(taskId, cid) {
+  ui.editingComment = cid; renderTaskComments(taskById(taskId));
+  const a = byId("te_cmt_edit"); if (a) { a.focus(); a.setSelectionRange(a.value.length, a.value.length); }
+}
+function saveTaskComment(taskId, cid) {
+  const t = taskById(taskId); if (!t) return;
+  const c = (t.comments || []).find(x => x.id === cid), a = byId("te_cmt_edit");
+  if (!c || !a) return;
+  const txt = a.value.trim();
+  if (!txt) { toast("El comentario no puede quedar vacío (para sacarlo, usá Borrar)"); return; }
+  if (txt !== c.text) { c.text = txt; c.editedTs = Date.now(); change(); }
+  ui.editingComment = null; renderTaskComments(t);
+}
+function deleteTaskComment(taskId, cid) {
+  const t = taskById(taskId); if (!t || !t.comments) return;
+  const idx = t.comments.findIndex(x => x.id === cid); if (idx < 0) return;
+  const [c] = t.comments.splice(idx, 1);
+  change(); renderTaskComments(t); render();
+  toast("Comentario borrado", () => { const tt = taskById(taskId); if (!tt) return; tt.comments = tt.comments || []; tt.comments.splice(Math.min(idx, tt.comments.length), 0, c); change(); renderTaskComments(tt); render(); });
 }
 function renderTaskEditorSubtasks(t) {
   const el = byId("te_subs"); if (!el) return;
