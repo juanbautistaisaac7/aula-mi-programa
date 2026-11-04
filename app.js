@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.8.0";
+const APP_VERSION = "2.9.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -15,7 +15,16 @@ const MES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct
 const MESL = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
 function pad(n) { return String(n).padStart(2, "0"); }
 function iso(d) { return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
-function todayISO() { return iso(new Date()); }
+/* "Hoy" para la app. Antes de la hora en que termina tu día (Configuración →
+   "Mi día termina a las…", por defecto 04:00) sigue siendo el día anterior:
+   lo que marcás a las 00:30 cuenta para el día que estabas haciendo. Se aplica a
+   todo (vista Hoy, completar, rachas, estadísticas) para que no haya dos "hoy". */
+function dayEndMin() { const m = state && state.settings ? hmToMin(state.settings.dayEnd) : null; return m == null ? 0 : m; }
+function todayISO() {
+  const d = new Date(), m = dayEndMin();
+  if (m && d.getHours() * 60 + d.getMinutes() < m) d.setDate(d.getDate() - 1);
+  return iso(d);
+}
 function dToDate(s) { const [a, b, c] = s.split("-").map(Number); return new Date(a, b - 1, c); }
 function addDays(s, n) { const d = dToDate(s); d.setDate(d.getDate() + n); return iso(d); }
 function daysTo(s) { return Math.round((dToDate(s) - dToDate(todayISO())) / 864e5); }
@@ -41,7 +50,7 @@ function defaultSettings() {
     theme: "auto", accent: "#4338ca", weekStart: 1,
     pomo: { f: 25, s: 5, l: 15, c: 4 },
     sounds: true, notif: false, hourFmt: 24, showDone: true,
-    upcomingDays: 7, tags: ["repaso", "importante", "entrega"]
+    upcomingDays: 7, tags: ["repaso", "importante", "entrega"], dayEnd: "04:00"
   };
 }
 function baseState() {
@@ -532,6 +541,17 @@ function toggleTask(id, date) {
   }
   change(); render();
 }
+/* Cambia el día en que cuenta una tarea hecha: mueve el contador del día y el
+   tiempo que se registró automáticamente al completarla. */
+function moveDoneDate(t, nd) {
+  const old = t.doneAt;
+  if (!nd || old === nd) return;
+  if (old && state.dayLog[old] && state.dayLog[old].tasksDone) state.dayLog[old].tasksDone--;
+  bumpDayDone(nd);
+  for (const s of state.sessions) if (s.taskId === t.id && s.auto && s.date === old) s.date = nd;
+  t.doneAt = nd;
+  change();
+}
 function bumpDayDone(d) { state.dayLog[d] = state.dayLog[d] || {}; state.dayLog[d].tasksDone = (state.dayLog[d].tasksDone || 0) + 1; }
 /* Al completar una tarea se pregunta cuánto llevó realmente: ese tiempo (no el estimado)
    es el que suma a las estadísticas de la materia. Se descuenta lo ya cronometrado con
@@ -561,7 +581,7 @@ function resolveDoneTime(taskId, date, mode) {
     const min = mode === "est" ? (t.estMin || 0) : Math.max(0, parseInt((byId("dt_min") || {}).value) || 0);
     const already = t.recur ? 0 : (t.realMin || 0);
     const credit = Math.max(0, min - already);
-    if (credit > 0) addSession(credit, { taskId: t.id, date: t.recur ? (date || todayISO()) : todayISO(), auto: true, note: "Tarea completada (tiempo real)" });
+    if (credit > 0) addSession(credit, { taskId: t.id, date: t.recur ? (date || todayISO()) : (t.doneAt || todayISO()), auto: true, note: "Tarea completada (tiempo real)" });
     if (credit > 0 || already) toast("Registradas " + fmtMin(Math.max(min, already)) + " en la tarea");
     else toast("Tarea completada");
   } else toast("Tarea completada (sin tiempo registrado)");
@@ -1700,8 +1720,9 @@ function renderSidebar() {
     '<div style="padding:14px 10px" class="tiny">Aula v' + APP_VERSION + "</div>";
 }
 function renderTop() {
-  const d = new Date();
-  const el = byId("topDate"); if (el) el.textContent = capitalize(DAYSL[d.getDay()]) + " " + d.getDate() + " de " + MESL[d.getMonth()];
+  const today = todayISO(), d = dToDate(today);
+  const late = today !== iso(new Date()); // pasada la medianoche, antes de que termine tu día
+  const el = byId("topDate"); if (el) el.textContent = capitalize(DAYSL[d.getDay()]) + " " + d.getDate() + " de " + MESL[d.getMonth()] + (late ? " · tu día sigue hasta las " + state.settings.dayEnd : "");
   const ne = byId("nextEv");
   if (ne) {
     const evs = upcomingEvals(60);
@@ -2798,7 +2819,7 @@ function viewStats() {
     ${chartTimeline(st, C, 880, 250)}</div>`;
 
   /* --- Ritmo: día de semana + franja horaria --- */
-  const dowItems = st.dow.map((x, i) => ({ label: DAYS[i], full: DAYSL[i], v: x.n ? Math.round(x.min / x.n) : 0, hi: i === new Date().getDay() }));
+  const dowItems = st.dow.map((x, i) => ({ label: DAYS[i], full: DAYSL[i], v: x.n ? Math.round(x.min / x.n) : 0, hi: i === dToDate(todayISO()).getDay() }));
   const bestDow = dowItems.reduce((a, b) => b.v > a.v ? b : a, dowItems[0]);
   h += `<div class="grid2">
     <div class="card" style="margin:0"><h3>Promedio por día de la semana<div class="grow"></div><span class="tiny">mejor: ${esc(bestDow.full)}</span></h3>
@@ -3329,6 +3350,10 @@ function viewConfig() {
     <div style="display:flex;gap:8px;margin-top:6px">
       <button class="btn sm ${st.weekStart === 1 ? "primary" : ""}" onclick="state.settings.weekStart=1;change();render()">Lunes</button>
       <button class="btn sm ${st.weekStart === 0 ? "primary" : ""}" onclick="state.settings.weekStart=0;change();render()">Domingo</button></div>
+    <label class="tiny" style="font-weight:700;display:block;margin-top:12px" for="cfg_dayend">Mi día termina a las</label>
+    <select id="cfg_dayend" style="margin-top:6px;width:100%;max-width:220px;min-height:40px;background:var(--card2);color:var(--tx);border:1px solid var(--line);border-radius:8px;padding:7px" onchange="state.settings.dayEnd=this.value;change();render()">
+      ${["00:00", "01:00", "02:00", "03:00", "04:00", "05:00", "06:00"].map(h => `<option value="${h}" ${st.dayEnd === h ? "selected" : ""}>${h === "00:00" ? "Medianoche" : h}</option>`).join("")}</select>
+    <p class="tiny" style="margin-top:6px">Lo que marques antes de esa hora cuenta para el día anterior. Ideal si estudiás hasta tarde.</p>
   </div>
   <div class="card" style="margin:0"><h3>Pomodoro</h3>
     <div class="mrow"><div><label class="tiny" style="font-weight:700">Foco (min)</label><input id="cfg_f" type="number" min="5" max="120" value="${st.pomo.f}" style="width:100%;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:7px"></div>
@@ -3535,8 +3560,12 @@ function openTaskEditor(id) {
     </div>
     <div class="mrow">
       <div><label for="te_prio">Prioridad</label><select id="te_prio">${PRIO.map((p, i) => `<option value="${i}" ${t.prio === i ? "selected" : ""}>${p}</option>`).join("")}</select></div>
-      <div><label for="te_status">Estado</label><select id="te_status">${Object.entries(TASK_STATUS).map(([k, v]) => `<option value="${k}" ${t.status === k ? "selected" : ""}>${v}</option>`).join("")}</select></div>
+      <div><label for="te_status">Estado</label><select id="te_status" onchange="byId('te_donewrap').style.display=this.value==='done'?'block':'none'">${Object.entries(TASK_STATUS).map(([k, v]) => `<option value="${k}" ${t.status === k ? "selected" : ""}>${v}</option>`).join("")}</select></div>
       <div><label for="te_type">Tipo</label><select id="te_type">${Object.entries(TASK_TYPES).map(([k, v]) => `<option value="${k}" ${t.type === k ? "selected" : ""}>${v}</option>`).join("")}</select></div>
+    </div>
+    <div id="te_donewrap" style="display:${t.status === "done" ? "block" : "none"}">
+      <label for="te_doneat">Completada el</label>
+      <input id="te_doneat" type="date" value="${t.doneAt || todayISO()}" max="${todayISO()}" style="max-width:220px">
     </div>
     <div class="mrow">
       <div><label for="te_tags">Etiquetas (separadas por coma)</label><input id="te_tags" value="${escA((t.tags || []).join(", "))}"></div>
@@ -3599,7 +3628,10 @@ function saveTaskEditor(id) {
   t.prio = parseInt(byId("te_prio").value);
   const prevStatus = t.status;
   t.status = byId("te_status").value;
-  if (t.status === "done" && prevStatus !== "done") { t.doneAt = todayISO(); bumpDayDone(todayISO()); askDoneTime(t.id); }
+  const doneIn = (byId("te_doneat") || {}).value || todayISO();
+  const doneDay = doneIn > todayISO() ? todayISO() : doneIn;
+  if (t.status === "done" && prevStatus !== "done") { t.doneAt = doneDay; bumpDayDone(doneDay); askDoneTime(t.id); }
+  else if (t.status === "done" && t.doneAt !== doneDay) moveDoneDate(t, doneDay);
   if (t.status !== "done") { t.doneAt = null; if (prevStatus === "done") uncreditTaskDone(t); }
   t.type = byId("te_type").value;
   t.tags = byId("te_tags").value.split(",").map(x => x.trim().replace(/^#/, "")).filter(Boolean);

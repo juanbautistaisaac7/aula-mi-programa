@@ -17,7 +17,7 @@ Las palabras de Bauti están citadas tal cual en "Pedido", para no perder lo que
   - Hay un helper de test para cargar un estado en IndexedDB antes de abrir la app, y un test que lo carga, navega todas las vistas sin errores y verifica que no se perdió nada.
   - Existe una función de migración versionada (`state.meta.schema` o similar) a la que los ítems siguientes le agregan pasos, con test de que es idempotente (correrla dos veces da lo mismo).
 
-- [ ] **A2 · La tarea que hice anoche figura como hecha hoy**
+- [x] **A2 · La tarea que hice anoche figura como hecha hoy**
   Pedido: *"si una tarea estaba programada para un día y la marcó al siguiente a las 00:1 pero la hice el día anterior se marca hoy, cambiar eso ver cómo se puede arreglar"*.
   Causa: `toggleTask` y el editor usan `doneAt = todayISO()` (ver ~línea 468 y ~3539), y `bumpDayDone(todayISO())`.
   Listo cuando:

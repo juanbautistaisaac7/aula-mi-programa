@@ -6,7 +6,26 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
-## Corrida 04:08–(en curso) (hora ARG) — A1, X1
+## Corrida 04:08–(en curso) (hora ARG) — A1, X1, A2
+
+### A2 · La tarea que hice anoche figura como hecha hoy
+
+**Plan:** un ajuste "Mi día termina a las…" (por defecto 04:00) y que todo lo que use "hoy" lo respete.
+
+**Decisiones:**
+- **Lo apliqué a `todayISO()` en general, no solo a completar tareas.** Lo pensé así: si a las 00:30 la vista Hoy ya mostrara el miércoles, las tareas del martes que estás terminando aparecerían como *atrasadas* y las del miércoles como pendientes; sería raro marcar algo "atrasado" y que cuente para el martes. Con un solo "hoy" todo es coherente: Hoy, completar, rachas, hábitos, estadísticas y el "hoy" del calendario. Es lo que hacen Things y TickTick ("el día empieza a las…"). Lo que depende de la **hora real** (recordatorios, "pasó tu parcial de las 18:00") sigue usando el reloj real, porque no pasa por `todayISO()`.
+- **Que se note:** pasada la medianoche, arriba dice "Miércoles 4 de noviembre · tu día sigue hasta las 04:00", para que no parezca un bug.
+- **Opciones de medianoche a 06:00** en un selector. Más tarde que 06:00 ya confunde con la mañana siguiente.
+- **"Completada el" editable** en el detalle de la tarea (solo aparece si está completada, o al cambiar el estado a Completada). Al cambiarla se mueve también el contador del día y el tiempo que se registró automáticamente al completarla, para que las estadísticas no queden contando el día viejo. No se puede poner una fecha futura.
+- El tiempo real que se pregunta al completar ahora se registra en el día en que contó la tarea (`doneAt`), no en el día del reloj.
+- Datos viejos: no hizo falta un paso de migración: `normalizeState` ya mezcla los ajustes con los valores por defecto, así que los datos de Bauti arrancan con 04:00 sin tocar nada más (hay test con el fixture).
+- El ajuste quedó en la tarjeta "Apariencia" de Configuración, al lado de "Primer día de la semana". No es apariencia; lo reubico cuando ordene Configuración en A4.
+
+**Salió bien:** los tests del ítem fallaron con el código viejo (5 de 6; el que pasaba es el caso de las 15:00, que no cambia) y pasan con el nuevo.
+**Salió mal / intentos fallidos:** en la primera captura el selector de Configuración salía blanco sobre fondo oscuro (los `select` sueltos no tienen estilo en esa vista). Le puse los mismos colores que los otros campos y lo hice de 40 px de alto.
+**Tests:** +6 (×2 = 12), con reloj simulado: martes marcada miércoles 00:10 → martes; 15:00 → miércoles; recurrente a las 00:10 → ocurrencia del martes; bordes del ajuste (medianoche, 01:00, justo 04:00); el ajuste persiste y los datos viejos arrancan en 04:00; editar "completada el" mueve contador y tiempo. `npm test`: 34/34 (68/68 con `--repeat-each 2`).
+**Capturas:** [Hoy a las 00:30 (desktop oscuro)](capturas/A2-hoy-0030-desktop-dark.png) · [Configuración (mobile oscuro)](capturas/A2-config-mobile-dark.png) · [Configuración (desktop claro)](capturas/A2-config-desktop-light.png) · [editor con "Completada el" (mobile claro)](capturas/A2-editor-mobile-light.png) · resto en `docs/capturas/A2-*`.
+**Para Bauti:** probá marcar algo a la 1 de la mañana: tiene que contar para el día anterior. Si preferís que el corte sea a otra hora, está en Configuración → "Mi día termina a las". Si alguna vez marcaste algo en el día equivocado, abrí la tarea y cambiá "Completada el".
 
 ### X1 · Que nada se pierda si cerrás la app justo después de un cambio
 
