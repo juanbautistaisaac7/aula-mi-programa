@@ -4,6 +4,8 @@ Registro de todo lo que hicieron los agentes: hora, qué intentaron, qué salió
 
 Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, sin memoria de las anteriores. Lo único que comparten es este archivo, `BACKLOG.md`, `CLAUDE.md` y el historial de git.
 
+---
+
 ## Corrida 08:06–08:40 (hora ARG) — X5, X6, X7 y cierre de la noche
 
 **Resumen de la corrida:** era la última corrida (arrancó después de las 08:00), así que hice cosas chicas y seguras y reservé tiempo para publicar en `main`. Encontré **un problema serio que dejó la corrida anterior**: `sw.js` estaba **vacío** (X6). Además arreglé los botones partidos del detalle del parcial en el celu (X5) y un bug de foco que hacía fallar un test de series 1 de cada 3 veces (X7). Tests: de 190 a 196 pasaron, 0 fallaron. Versión 2.27.0 → 2.28.0. Sin cambios de forma de datos.
