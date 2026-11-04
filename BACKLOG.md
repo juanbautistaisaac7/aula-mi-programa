@@ -148,6 +148,6 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
 
 (El agente agrega acá lo que encuentre necesario, con su porqué.)
 
-- [ ] **X1 · Que nada se pierda si cerrás la app justo después de un cambio**
+- [x] **X1 · Que nada se pierda si cerrás la app justo después de un cambio**
   Por qué: en la corrida de A1 el test de humo "crear una tarea… persiste" falló **una vez** (no se pudo reproducir en 40 repeticiones). La causa probable: `change()` guarda con 500 ms de demora y, si la página se recarga o se cierra antes, el guardado de `beforeunload` abre una transacción de IndexedDB que el navegador puede cortar. En el celu eso sería "creé una tarea, cerré la app y no estaba".
   Listo cuando: los cambios hechos con acciones explícitas (crear, completar, borrar, mover) se guardan sin esperar el debounce, o hay una garantía equivalente (por ejemplo, `pagehide` + copia sincrónica en localStorage que `loadState` prefiera si es más nueva, comparando `meta.lastSave`). Test: crear una tarea y recargar al instante, repetido 20 veces, nunca pierde la tarea.

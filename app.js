@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.7.0";
+const APP_VERSION = "2.8.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -143,6 +143,19 @@ async function persist() {
   if (savePending) { savePending = false; persist(); }
 }
 function change() { markDirty(); }
+/* Guardado sincrónico de último momento (al cerrar, recargar o mandar la app al fondo).
+   IndexedDB es asíncrono y el navegador puede cortar la transacción cuando mata la
+   página; localStorage es sincrónico y siempre llega. loadState usa la copia de
+   emergencia si es más nueva que la de IndexedDB (compara meta.lastSave). */
+function flushNow() {
+  if (!state) return;
+  try {
+    state.meta.lastSave = Date.now();
+    const j = JSON.stringify(state);
+    try { if (typeof localStorage !== "undefined") localStorage.setItem(EMERGENCY_KEY, j); } catch (e) {}
+    if (db) db.transaction("kv", "readwrite").objectStore("kv").put(j, "state");
+  } catch (e) {}
+}
 
 async function dailyBackup() {
   try {
@@ -295,6 +308,16 @@ async function loadState() {
   let raw = null;
   if (db) { try { raw = await idbGet("kv", "state"); } catch (e) {} }
   if (!raw && typeof localStorage !== "undefined") raw = localStorage.getItem("aula-state-fallback");
+  // Si la app se cerró antes de que IndexedDB terminara de guardar, la copia de
+  // emergencia (sincrónica) es más nueva: se usa esa.
+  try {
+    const em = typeof localStorage !== "undefined" ? localStorage.getItem(EMERGENCY_KEY) : null;
+    if (em && em !== raw) {
+      const e = JSON.parse(em), lastOf = x => (x && x.meta && Number(x.meta.lastSave)) || 0;
+      let cur = null; try { cur = raw ? JSON.parse(raw) : null; } catch (err) {}
+      if (validState(e) && (!validState(cur) || lastOf(e) > lastOf(cur))) raw = em;
+    }
+  } catch (e) {}
   if (raw) {
     let s = null;
     try { s = JSON.parse(raw); } catch (e) { console.warn("Estado dañado, intentando backups…"); }
@@ -3922,8 +3945,9 @@ async function init() {
   ui.dismissedAsk = new Set();
   setTimeout(checkPastEvals, 600);
   setInterval(checkPastEvals, 5 * 60 * 1000);
-  window.addEventListener("beforeunload", () => { try { const j = JSON.stringify(state); if (db) { const tx = db.transaction("kv", "readwrite"); tx.objectStore("kv").put(j, "state"); } localStorage.setItem(EMERGENCY_KEY, j); } catch (e) {} });
-  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") persist(); });
+  window.addEventListener("beforeunload", flushNow);
+  window.addEventListener("pagehide", flushNow); // en iOS/Android beforeunload no siempre llega
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") { flushNow(); persist(); } });
   if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
     navigator.serviceWorker.register("sw.js").catch(() => {});
   }

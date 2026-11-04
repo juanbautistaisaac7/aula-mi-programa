@@ -6,7 +6,22 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
-## Corrida 04:08–(en curso) (hora ARG) — A1
+## Corrida 04:08–(en curso) (hora ARG) — A1, X1
+
+### X1 · Que nada se pierda si cerrás la app justo después de un cambio
+
+**Plan:** lo saltee adelante de A2 a propósito: el backlog dice "trabajar en orden", pero la regla 1 es que los datos son sagrados y este es un bug que puede perder datos. Era chico.
+
+**Decisiones:**
+- **Guardado sincrónico de último momento (`flushNow`)** en `beforeunload`, `pagehide` (en el celu `beforeunload` muchas veces no llega) y al mandar la app al fondo. Escribe la copia de emergencia en localStorage (sincrónico: siempre llega) e intenta IndexedDB.
+- **`loadState` elige la copia más nueva**: si la de emergencia tiene `meta.lastSave` mayor que la de IndexedDB, usa esa. Antes, la de emergencia solo se usaba si IndexedDB estaba vacío o roto, así que aunque se hubiera guardado bien, se ignoraba.
+- Descarté sacar la demora de 500 ms del guardado: con muchos datos, serializar todo en cada tecla se nota, y el problema real era el cierre, no la demora.
+
+**Salió bien:** el test que simula que el navegador corta la escritura en IndexedDB falló antes del arreglo y pasa después.
+**Salió mal / intentos fallidos:** nada.
+**Tests:** +3 (×2 = 6): corte de IndexedDB al cerrar, 8 crear+recargar seguidos, y que una copia de emergencia *más vieja* no pise datos más nuevos. `npm test`: 22/22, y 88/88 con `--repeat-each 4`.
+**Capturas:** no hay cambio visible.
+**Para Bauti:** nada que hacer; es una red más abajo de la que ya había.
 
 ### A1 · Red de seguridad para los datos
 
