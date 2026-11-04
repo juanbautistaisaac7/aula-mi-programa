@@ -6,7 +6,25 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
-## Corrida 06:06–… (hora ARG) — C2a, …
+## Corrida 06:06–… (hora ARG) — C2a, C2b, …
+
+### C2b · Editar una sola, agregar y quitar ocurrencias
+
+**Plan:** completar C2 con lo que faltaba: tocar una sola tarea de la serie (+10 min sin tocar el resto), agregar tareas siguiendo el patrón o una fecha suelta, y quitar una puntual.
+
+**Decisiones:**
+- **Cada fila tiene "Editar"** a la derecha (separado de la casilla, para que tocar la fila siga eligiéndola). Se despliega ahí mismo: **−10 m / minutos / +10 m**, Fecha, Hora, "Abrir la tarea" (el editor completo) y "Quitar de la serie". Cada cambio se aplica al instante con su **Deshacer**, como en Recordatorios del iPhone; el panel queda abierto para seguir tocando.
+- **"Agregar tareas a la serie"** (plegado, con un +): "Más tareas, cada 3 días" (cuántas), "Hasta una fecha, cada 3 días" o "Una fecha suelta". Vista previa con las fechas exactas antes de agregar. No deja agregar una fecha que ya está. Las nuevas copian la última (título, materia, parcial, minutos, hora, prioridad) y quedan en la misma serie.
+- **El patrón se deduce de las fechas** (las series no guardan la regla con la que se crearon, y las viejas tampoco la tienen): mismo día del mes → cada mes; todas a la misma distancia → esa distancia ("todos los días", "cada semana", "cada 3 días"); si están *todos* los lun/mié/vie entre la primera y la última → esos días; si no (por ejemplo, moviste una a mano), la distancia más común. Descarté guardar la regla en los datos: obligaba a migrar y no servía para las series que ya tenés.
+- **Reemplacé "Extender hasta → Agregar días"**, que agregaba **un día tras otro** aunque la serie fuera cada 3 días (era un bug: extendías "Practicar cada 3 días" y te llenaba todos los días). Tuve que actualizar otra vez el test `series-identidad` ("extender una serie…") para usar el control nuevo; sigue verificando lo mismo (2 días más en la misma serie).
+- Si quitás tareas hasta que queda una sola, deja de ser serie y el editor se cierra (como antes).
+- Sin cambios de forma de datos.
+
+**Salió bien:** el caso "una fecha movida a mano" lo encontré escribiendo el test del patrón: mi primera heurística creía que eran "los mié, vie, sáb y dom". Ahora exige que estén todos esos días en el rango.
+**Salió mal / intentos fallidos:** (1) "cada mes" el 31 (oct 31 → dic 31) no se reconocía como mensual porque hay 61 días entre medio: corregido. (2) En un test, el deshacer de cambiar la fecha "no andaba": era el test, que disparaba el cambio dos veces (Playwright ya dispara `change` al llenar fechas). (3) En la captura había dos botones azules grandes uno abajo del otro; el de Agregar pasó a botón normal.
+**Tests:** +5 (9 corridas): editar una sola (+10, deshacer, minutos, hora y fecha); quitar una con deshacer; agregar siguiendo el patrón, hasta una fecha y suelta (incluido no repetir un día); deducción del patrón (diario, semanal, L-M-V, mensual el 31, fecha movida a mano); en el celu con el dedo. `npm test`: 158 pasaron, 0 fallaron.
+**Capturas:** [editar una (mobile claro)](capturas/C2b-una-mobile-light.png) · [agregar (mobile oscuro)](capturas/C2b-agregar-mobile-dark.png) · [agregar (desktop claro)](capturas/C2b-agregar-desktop-light.png)
+**Para Bauti:** Series → Gestionar → "Editar" en una fila → +10 m. Y "+ Agregar tareas a la serie" para sumar 2 más cada 3 días.
 
 ### C2a · Editor de serie: lista de ocurrencias y cambios masivos
 

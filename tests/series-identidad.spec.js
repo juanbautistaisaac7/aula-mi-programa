@@ -44,9 +44,11 @@ test("extender una serie suma días a la misma serie; duplicar una ocurrencia no
   });
   const key = await page.evaluate(() => buildSeries()[0].key);
   await page.evaluate(k => openSeriesModal(k), key);
-  await page.locator(".srmore summary").click(); // (C2a) extender quedó en "Más opciones"
+  // (C2b) "Extender hasta" ahora es "Agregar tareas a la serie" → Hasta una fecha, siguiendo el patrón
+  await page.locator(".sradd summary").click();
+  await page.selectOption("#sr_addmode", "until");
   await page.fill("#sr_until", "2026-11-08");
-  await page.getByRole("button", { name: "Agregar días" }).click();
+  await page.locator("#sr_addbtn").click();
   expect(await seriesTitles(page)).toEqual(["Leer:4"]);
   await page.evaluate(() => duplicateTask(state.tasks.find(t => t.title === "Leer").id));
   expect(await page.evaluate(() => state.tasks.find(t => t.title === "Leer (copia)").seriesId)).toBeFalsy();

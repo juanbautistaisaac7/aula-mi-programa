@@ -92,9 +92,9 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
   - Decidir y documentar si internamente todo se materializa en tareas individuales con `seriesId` (más simple para editar una sola) o si se mantiene `recur` para las infinitas. Recomendación: materializar las finitas; mantener un modelo simple para las "sin fin".
   - Tests de cada patrón y del preview (fechas exactas, con reloj simulado).
 
-- [ ] **C2 · Editar una serie con flexibilidad total** (depende de C1) *(partido en C2a y C2b por el agente: es grande para una corrida)*
+- [x] **C2 · Editar una serie con flexibilidad total** (depende de C1) *(partido en C2a y C2b por el agente: es grande para una corrida)*
   - [x] **C2a** · Lista de todas las ocurrencias (fecha, minutos, estado) con selección (varias / todas / todas las pendientes) y acciones masivas: sumar/restar/fijar tiempo, mover ±N días, cambiar hora, borrar. Vista previa antes de aplicar ("Vas a sumar 1 h 30 a 5 tareas") y deshacer. Test del caso exacto de Bauti.
-  - [ ] **C2b** · Editar una sola ocurrencia en la lista (+10 min sin tocar el resto), agregar ocurrencias (siguiendo el patrón o una fecha suelta) y quitar puntuales. Tests de extender, quitar, mover y borrar en desktop y mobile.
+  - [x] **C2b** · Editar una sola ocurrencia en la lista (+10 min sin tocar el resto), agregar ocurrencias (siguiendo el patrón o una fecha suelta) y quitar puntuales. Tests de extender, quitar, mover y borrar en desktop y mobile.
   Listo cuando:
   - El editor de serie muestra **todas las ocurrencias** en una lista o línea de tiempo visual (fecha, minutos, estado).
   - Se puede **seleccionar** varias (o todas, o "todas las pendientes") y aplicar: sumar o restar tiempo, fijar tiempo, mover fechas ±N días, cambiar hora, borrar.

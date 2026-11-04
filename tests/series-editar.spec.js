@@ -161,3 +161,119 @@ test("en el celu la lista se toca cómoda y nada se sale del ancho", async ({ pa
   await expect(page.locator("#sr_count")).toHaveText("1 elegida");
   expect(errors).toEqual([]);
 });
+
+// ---------------------------------------------------------------- C2b
+// (fill en inputs de fecha y hora ya dispara "change", como el selector del celu)
+const abrirFila = (page, i) => fila(page, i).getByRole("button", { name: /Editar solo/ }).click();
+
+test("editar una sola: +10 min, fecha y hora, sin tocar el resto; con deshacer", async ({ page }) => {
+  const errors = await openApp(page);
+  await crearSerieCada3(page);
+  await abrirDesdeSeries(page);
+  await abrirFila(page, 2);
+  await expect(page.locator(".occedit")).toHaveCount(1);
+  // abrir el editor de una fila no la elige ni la des-elige
+  await expect(page.locator("#sr_count")).toHaveText("5 elegidas");
+  await page.getByRole("button", { name: "Sumar 10 minutos" }).click();
+  expect(await minutos(page)).toEqual([60, 60, 70, 60, 60]);
+  await expect(fila(page, 2)).toContainText("1 h 10 m");
+  await expect(page.locator(".occedit")).toHaveCount(1); // sigue abierta para seguir tocando
+  await page.getByRole("button", { name: "Sumar 10 minutos" }).click();
+  expect(await minutos(page)).toEqual([60, 60, 80, 60, 60]);
+  await page.locator("#toast button", { hasText: "Deshacer" }).click();
+  expect(await minutos(page)).toEqual([60, 60, 70, 60, 60]);
+  await page.fill("#sr_onemin", "25"); await page.press("#sr_onemin", "Enter");
+  await page.locator("#sr_onemin").blur();
+  await expect.poll(() => minutos(page)).toEqual([60, 60, 25, 60, 60]);
+  await page.fill("#sr_onetime", "09:15");
+  expect(await page.evaluate(() => state.tasks.filter(t => t.title === "Practicar parciales" && t.time).map(t => t.date + " " + t.time))).toEqual(["2026-11-16 09:15"]);
+  await page.fill("#sr_onedate", "2026-11-17");
+  expect(await fechas(page)).toEqual(["2026-11-10", "2026-11-13", "2026-11-17", "2026-11-19", "2026-11-22"]);
+  await page.locator("#toast button", { hasText: "Deshacer" }).click();
+  expect(await fechas(page)).toEqual(["2026-11-10", "2026-11-13", "2026-11-16", "2026-11-19", "2026-11-22"]);
+  expect(errors).toEqual([]);
+});
+
+test("quitar una ocurrencia puntual, con deshacer", async ({ page }) => {
+  const errors = await openApp(page);
+  await crearSerieCada3(page);
+  await abrirDesdeSeries(page);
+  await abrirFila(page, 1);
+  await page.getByRole("button", { name: "Quitar de la serie" }).click();
+  await expect(page.locator("#sr_occ .occ")).toHaveCount(4);
+  expect(await fechas(page)).toEqual(["2026-11-10", "2026-11-16", "2026-11-19", "2026-11-22"]);
+  await expect(page.locator("#sr_count")).toHaveText("4 elegidas");
+  await page.locator("#toast button", { hasText: "Deshacer" }).click();
+  await expect(page.locator("#sr_occ .occ")).toHaveCount(5);
+  expect(await fechas(page)).toEqual(["2026-11-10", "2026-11-13", "2026-11-16", "2026-11-19", "2026-11-22"]);
+  expect(errors).toEqual([]);
+});
+
+test("agregar siguiendo el patrón (cada 3 días), hasta una fecha y una fecha suelta", async ({ page }) => {
+  const errors = await openApp(page);
+  await crearSerieCada3(page);
+  await abrirDesdeSeries(page);
+  await page.locator(".sradd summary").click();
+  await expect(page.locator("#sr_addmode option").first()).toHaveText("Más tareas, cada 3 días");
+  await page.fill("#sr_addn", "2");
+  await expect(page.locator("#sr_addpv")).toContainText("Vas a agregar 2 tareas de 1 h");
+  await expect(page.locator("#sr_addpv")).toContainText("mié 25 nov");
+  await expect(page.locator("#sr_addpv")).toContainText("sáb 28 nov");
+  await page.locator("#sr_addbtn").click();
+  await expect(page.locator("#sr_occ .occ")).toHaveCount(7);
+  expect((await fechas(page)).slice(5)).toEqual(["2026-11-25", "2026-11-28"]);
+  expect(await page.evaluate(() => new Set(state.tasks.filter(t => t.title === "Practicar parciales").map(t => t.seriesId)).size)).toBe(1);
+  await page.locator("#toast button", { hasText: "Deshacer" }).click();
+  await expect(page.locator("#sr_occ .occ")).toHaveCount(5);
+  // Hasta una fecha
+  await page.selectOption("#sr_addmode", "until");
+  await page.fill("#sr_until", "2026-11-30");
+  await expect(page.locator("#sr_addbtn")).toHaveText("Agregar 2 tareas");
+  // Una fecha suelta, que no puede repetir un día que ya está
+  await page.selectOption("#sr_addmode", "one");
+  await page.fill("#sr_addone", "2026-11-13");
+  await expect(page.locator("#sr_addpv")).toContainText("Ya hay una tarea de la serie el vie 13 nov");
+  await expect(page.locator("#sr_addbtn")).toBeDisabled();
+  await page.fill("#sr_addone", "2026-11-11");
+  await page.locator("#sr_addbtn").click();
+  expect(await fechas(page)).toEqual(["2026-11-10", "2026-11-11", "2026-11-13", "2026-11-16", "2026-11-19", "2026-11-22"]);
+  await expect(page.locator("#sr_occ .occ").nth(1)).toContainText("mié 11 nov");
+  expect(errors).toEqual([]);
+});
+
+test("el patrón se deduce bien de las fechas", async ({ page }) => {
+  const errors = await openApp(page);
+  const r = await page.evaluate(() => {
+    const P = ds => { const p = seriesPattern(ds); let d = ds[ds.length - 1]; const nx = []; for (let i = 0; i < 3; i++) { d = patternNext(p, d); nx.push(d); } return p.label + " → " + nx.join(","); };
+    return {
+      diario: P(["2026-11-02", "2026-11-03", "2026-11-04"]),
+      semanal: P(["2026-11-02", "2026-11-09"]),
+      lmv: P(["2026-11-02", "2026-11-04", "2026-11-06", "2026-11-09", "2026-11-11"]),
+      mensual31: P(["2026-10-31", "2026-12-31"]),
+      movidaAMano: P(["2026-11-01", "2026-11-04", "2026-11-07", "2026-11-11", "2026-11-13"])
+    };
+  });
+  expect(r).toEqual({
+    diario: "todos los días → 2026-11-05,2026-11-06,2026-11-07",
+    semanal: "cada semana → 2026-11-16,2026-11-23,2026-11-30",
+    lmv: "los lun, mié y vie → 2026-11-13,2026-11-16,2026-11-18",
+    mensual31: "cada mes → 2027-01-31,2027-03-31,2027-05-31",
+    movidaAMano: "cada 3 días → 2026-11-16,2026-11-19,2026-11-22"
+  });
+  expect(errors).toEqual([]);
+});
+
+test("en el celu: editar una sola con el dedo y los botones se tocan cómodos", async ({ page }, info) => {
+  test.skip(info.project.name !== "mobile", "solo mobile");
+  const errors = await openApp(page);
+  await crearSerieCada3(page);
+  await abrirDesdeSeries(page);
+  await fila(page, 0).getByRole("button", { name: /Editar solo/ }).tap();
+  const b = await page.getByRole("button", { name: "Sumar 10 minutos" }).boundingBox();
+  expect(b.height).toBeGreaterThanOrEqual(40);
+  await page.getByRole("button", { name: "Sumar 10 minutos" }).tap();
+  expect(await minutos(page)).toEqual([70, 60, 60, 60, 60]);
+  const over = await page.evaluate(() => { const bx = byId("modalbox"); return bx.scrollWidth - bx.clientWidth; });
+  expect(over).toBeLessThanOrEqual(0);
+  expect(errors).toEqual([]);
+});

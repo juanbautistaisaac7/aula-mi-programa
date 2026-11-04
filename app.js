@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.20.0";
+const APP_VERSION = "2.21.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -1707,7 +1707,11 @@ const SR_ACTS = [
 function openSeriesModal(key) {
   const s = seriesByKey(key); if (!s) { toast("La serie ya no existe"); return; }
   ui.srSel = new Set(s.pend.map(t => t.id)); // por defecto: las pendientes
-  if (ui.seriesKey !== key || !ui.srAct) { ui.srAct = "add"; ui.srMin = 90; ui.srDays = 1; ui.srTime = ""; }
+  if (ui.seriesKey !== key || !ui.srAct) {
+    ui.srAct = "add"; ui.srMin = 90; ui.srDays = 1; ui.srTime = "";
+    ui.srAddMode = "count"; ui.srAddN = 1; ui.srUntil = ""; ui.srAddOne = ""; ui.srAddOpen = false;
+  }
+  ui.srOpen = null;
   ui.seriesKey = key;
   openModal(seriesModalHTML(s), true, true);
   srPreview();
@@ -1730,12 +1734,26 @@ function seriesModalHTML(s) {
     const ids = new Set(s.tasks.map(t => t.id));
     ui.srSel = new Set([...ui.srSel].filter(id => ids.has(id))); // las borradas ya no cuentan
     const row = t => {
-      const done = t.status === "done", late = !done && t.date < today;
-      return `<label class="occ${done ? " done" : ""}" data-id="${escA(t.id)}">
-        <input type="checkbox" ${ui.srSel.has(t.id) ? "checked" : ""} onchange="srToggle('${escA(t.id)}',this.checked)">
+      const done = t.status === "done", late = !done && t.date < today, open = ui.srOpen === t.id;
+      let r = `<div class="occ${done ? " done" : ""}${open ? " open" : ""}" data-id="${escA(t.id)}">
+        <label class="occl"><input type="checkbox" ${ui.srSel.has(t.id) ? "checked" : ""} onchange="srToggle('${escA(t.id)}',this.checked)">
         <span class="occd">${fmtD(t.date)}${t.time ? ` <span class="ttime">${esc(t.time)}</span>` : ""}</span>
         <span class="occst">${done ? "✓ hecha" : late ? "atrasada" : t.date === today ? "hoy" : ""}</span>
-        <span class="occm">${fmtMin(t.estMin)}</span></label>`;
+        <span class="occm">${fmtMin(t.estMin)}</span></label>
+        <button type="button" class="occmore" aria-expanded="${open}" aria-label="Editar solo la del ${escA(fmtD(t.date))}" onclick="srEdit('${escA(t.id)}')">${open ? "Listo" : "Editar"}</button></div>`;
+      if (open) r += `<div class="occedit">
+        <div class="occstep"><span class="tiny">Solo esta</span>
+          <button type="button" class="btn sm" onclick="srOne('${escA(t.id)}','add',-10)" aria-label="Restar 10 minutos">−10 m</button>
+          <input id="sr_onemin" type="number" min="0" step="5" value="${t.estMin || 0}" aria-label="Minutos de esta" onchange="srOne('${escA(t.id)}','min',this.value)">
+          <button type="button" class="btn sm" onclick="srOne('${escA(t.id)}','add',10)" aria-label="Sumar 10 minutos">+10 m</button></div>
+        <div class="mrow">
+          <div><label for="sr_onedate">Fecha</label><input id="sr_onedate" type="date" value="${escA(t.date)}" onchange="srOne('${escA(t.id)}','date',this.value)"></div>
+          <div><label for="sr_onetime">Hora</label><input id="sr_onetime" type="time" value="${escA(t.time || "")}" onchange="srOne('${escA(t.id)}','time',this.value)"></div>
+        </div>
+        <div class="occacts"><button type="button" class="btn sm" onclick="closeModal();openTaskEditor('${escA(t.id)}')">Abrir la tarea</button>
+          <div class="grow"></div><button type="button" class="btn sm danger" onclick="srOne('${escA(t.id)}','del')">Quitar de la serie</button></div>
+      </div>`;
+      return r;
     };
     h += `<div class="srbar"><span class="tiny">Elegir:</span>
         <button type="button" class="btn sm" onclick="srSelect('all')">Todas</button>
@@ -1756,11 +1774,21 @@ function seriesModalHTML(s) {
         <div class="reppreview" id="sr_preview" aria-live="polite"></div>
         <button type="button" class="btn primary srapply" id="sr_apply" onclick="seriesBulkApply()">Aplicar</button>
       </div>`;
-    h += `<details class="srmore"><summary>Más opciones</summary>
+    const pat = seriesPattern(s.tasks.map(t => t.date));
+    h += `<details class="sradd"${ui.srAddOpen ? " open" : ""} ontoggle="ui.srAddOpen=this.open"><summary>Agregar tareas a la serie</summary>
       <div class="mrow">
-        <div><label for="sr_until">Extender hasta</label><input id="sr_until" type="date" value="${addDays(s.to, 7)}"></div>
-        <div style="display:flex;align-items:flex-end"><button class="btn" style="width:100%" onclick="seriesExtend()">Agregar días</button></div>
-      </div>`;
+        <div><label for="sr_addmode">Cómo</label><select id="sr_addmode" onchange="ui.srAddMode=this.value;srAddPreview()">
+          <option value="count"${ui.srAddMode === "count" ? " selected" : ""}>Más tareas, ${esc(pat.label)}</option>
+          <option value="until"${ui.srAddMode === "until" ? " selected" : ""}>Hasta una fecha, ${esc(pat.label)}</option>
+          <option value="one"${ui.srAddMode === "one" ? " selected" : ""}>Una fecha suelta</option></select></div>
+        <div class="srx" id="sr_addnwrap"><label for="sr_addn">Cuántas</label><input id="sr_addn" type="number" min="1" max="${REP_MAX}" value="${ui.srAddN}" oninput="ui.srAddN=this.value;srAddPreview()"></div>
+        <div class="srx" id="sr_untilwrap"><label for="sr_until">Hasta (inclusive)</label><input id="sr_until" type="date" value="${escA(ui.srUntil || addDays(s.to, 7))}" onchange="ui.srUntil=this.value;srAddPreview()"></div>
+        <div class="srx" id="sr_onewrap"><label for="sr_addone">Fecha</label><input id="sr_addone" type="date" value="${escA(ui.srAddOne || addDays(s.to, 1))}" onchange="ui.srAddOne=this.value;srAddPreview()"></div>
+      </div>
+      <div class="reppreview" id="sr_addpv" aria-live="polite"></div>
+      <button type="button" class="btn srapply" id="sr_addbtn" onclick="seriesAdd()">Agregar</button>
+    </details>`;
+    h += `<details class="srmore"><summary>Más opciones</summary>`;
   } else {
     h += `<details class="srmore" open><summary>Opciones</summary>`;
   }
@@ -1828,6 +1856,7 @@ function srPreview() {
   show("sr_timewrap", act === "time");
   const cnt = byId("sr_count"); if (cnt) cnt.textContent = ui.srSel.size + (ui.srSel.size === 1 ? " elegida" : " elegidas");
   document.querySelectorAll("#sr_occ .occ").forEach(l => l.classList.toggle("on", ui.srSel.has(l.dataset.id)));
+  srAddPreview();
   const p = srPlan(); if (!p) return;
   pv.classList.toggle("bad", !!p.error);
   btn.disabled = !!p.error;
@@ -1854,22 +1883,114 @@ function seriesBulkApply() {
   change(); render(); refreshSeriesModal();
   toast(p.past, () => { undo(); change(); render(); refreshSeriesModal(); });
 }
-function seriesExtend() {
-  const s = seriesByKey(ui.seriesKey); if (!s || s.kind === "recur") return;
-  const until = byId("sr_until").value;
-  if (!until || until <= s.to) { toast("Elegí una fecha posterior al " + fmtD(s.to)); return; }
-  const base = s.tasks[s.tasks.length - 1];
-  const ids = [];
-  let d = addDays(s.to, 1), n = 0;
-  while (d <= until && n < 365) {
-    ids.push(quickAddTask({
-      title: base.title, desc: base.desc, subjectId: base.subjectId, projectId: base.projectId,
-      evalId: base.evalId, date: d, estMin: base.estMin, type: base.type, prio: base.prio, tags: [...(base.tags || [])], seriesId: base.seriesId, time: base.time || null
-    }).id);
-    d = addDays(d, 1); n++;
+/* C2b · El patrón de una serie se deduce de sus fechas (las series no guardan
+   la regla): mensual si todas caen el mismo día del mes; si todas están a la
+   misma distancia, esa distancia; si son ciertos días de la semana, esos días;
+   si no, la distancia más común. Así funciona también con series viejas o
+   con alguna fecha movida a mano. */
+function seriesPattern(dates) {
+  const ds = [...dates].filter(Boolean).sort();
+  const gaps = [];
+  for (let i = 1; i < ds.length; i++) gaps.push(Math.round((dToDate(ds[i]) - dToDate(ds[i - 1])) / 864e5));
+  const pos = gaps.filter(g => g > 0);
+  if (!pos.length) return { kind: "gap", n: 1, label: "todos los días" };
+  const dom = new Set(ds.map(d => d.slice(8)));
+  if (dom.size === 1 && pos.every(g => g >= 28)) return { kind: "month", label: "cada mes" }; // el 31 se saltea los meses cortos (C1)
+  const gapLabel = n => n === 1 ? "todos los días" : n === 7 ? "cada semana" : n === 14 ? "cada 2 semanas" : "cada " + n + " días";
+  if (new Set(pos).size === 1) return { kind: "gap", n: pos[0], label: gapLabel(pos[0]) };
+  const wd = [...new Set(ds.map(d => dToDate(d).getDay()))];
+  // ciertos días de la semana: entre la primera y la última están TODOS esos días (si no, es otra cosa, por ejemplo una fecha movida a mano)
+  const span = Math.round((dToDate(ds[ds.length - 1]) - dToDate(ds[0])) / 864e5), have = new Set(ds);
+  let full = span >= 6;
+  for (let d = ds[0]; full && d <= ds[ds.length - 1]; d = addDays(d, 1)) if (wd.includes(dToDate(d).getDay()) && !have.has(d)) full = false;
+  if (wd.length >= 2 && wd.length <= 6 && full) {
+    const order = [1, 2, 3, 4, 5, 6, 0].filter(d => wd.includes(d)).map(d => DAYS[d]);
+    return { kind: "wd", days: wd, label: "los " + order.slice(0, -1).join(", ") + " y " + order[order.length - 1] };
   }
-  closeModal(); render();
-  toast(n + " días agregados hasta el " + fmtD(until), () => { state.tasks = state.tasks.filter(t => !ids.includes(t.id)); change(); render(); });
+  const cnt = {}; pos.forEach(g => cnt[g] = (cnt[g] || 0) + 1);
+  const n = +Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a] || a - b)[0];
+  return { kind: "gap", n, label: gapLabel(n) };
+}
+function patternNext(pat, d) {
+  if (pat.kind === "month") {
+    const x = dToDate(d), day = x.getDate();
+    for (let k = 1; k < 13; k++) { const y = new Date(x.getFullYear(), x.getMonth() + k, day); if (y.getDate() === day) return iso(y); }
+  }
+  if (pat.kind === "wd") { let y = addDays(d, 1); while (!pat.days.includes(dToDate(y).getDay())) y = addDays(y, 1); return y; }
+  return addDays(d, pat.n || 1);
+}
+function srAddPlan() {
+  const s = seriesByKey(ui.seriesKey); if (!s || s.kind === "recur") return null;
+  const have = new Set(s.tasks.map(t => t.date)), mode = ui.srAddMode, pat = seriesPattern(s.tasks.map(t => t.date));
+  let dates = [];
+  if (mode === "one") {
+    const d = ui.srAddOne || addDays(s.to, 1);
+    if (!d) return { error: "Elegí una fecha." };
+    if (have.has(d)) return { error: "Ya hay una tarea de la serie el " + fmtD(d) + "." };
+    dates = [d];
+  } else if (mode === "until") {
+    const until = ui.srUntil || addDays(s.to, 7);
+    if (!until || until <= s.to) return { error: "Elegí una fecha posterior a la última (" + fmtD(s.to) + ")." };
+    for (let d = patternNext(pat, s.to); d <= until && dates.length <= REP_MAX; d = patternNext(pat, d)) dates.push(d);
+    if (!dates.length) return { error: "Siguiendo el patrón (" + pat.label + ") no cae ninguna fecha hasta el " + fmtD(until) + "." };
+  } else {
+    const n = parseInt(ui.srAddN, 10);
+    if (!(n >= 1)) return { error: "Poné cuántas." };
+    if (n > REP_MAX) return { error: "Máximo " + REP_MAX + "." };
+    for (let d = s.to, i = 0; i < n; i++) { d = patternNext(pat, d); dates.push(d); }
+  }
+  if (dates.length > REP_MAX) return { error: "Son demasiadas (máximo " + REP_MAX + ")." };
+  return { s, dates, pat };
+}
+function srAddPreview() {
+  const pv = byId("sr_addpv"), btn = byId("sr_addbtn"); if (!pv) return;
+  const mode = ui.srAddMode, show = (id, on) => { const el = byId(id); if (el) el.style.display = on ? "" : "none"; };
+  show("sr_addnwrap", mode === "count"); show("sr_untilwrap", mode === "until"); show("sr_onewrap", mode === "one");
+  const p = srAddPlan(); if (!p) return;
+  pv.classList.toggle("bad", !!p.error); btn.disabled = !!p.error;
+  if (p.error) { pv.textContent = p.error; btn.textContent = "Agregar"; return; }
+  const n = p.dates.length, nn = n + " tarea" + (n === 1 ? "" : "s");
+  const list = p.dates.slice(0, 10).map(d => `<span class="repdate">${fmtD(d)}</span>`).join("") + (n > 10 ? `<span class="repdate more">y ${n - 10} más</span>` : "");
+  pv.innerHTML = `<b>Vas a agregar ${nn}</b> de ${fmtMin(p.s.tasks[p.s.tasks.length - 1].estMin)}: <div class="repdates">${list}</div>`;
+  btn.textContent = "Agregar " + nn;
+}
+function seriesAdd() {
+  const p = srAddPlan(); if (!p || p.error) { if (p) toast(p.error); return; }
+  const base = p.s.tasks[p.s.tasks.length - 1], ids = [];
+  for (const d of p.dates) ids.push(quickAddTask({
+    title: base.title, desc: base.desc, subjectId: base.subjectId, projectId: base.projectId,
+    evalId: base.evalId, date: d, estMin: base.estMin, type: base.type, prio: base.prio, tags: [...(base.tags || [])], seriesId: base.seriesId, time: base.time || null
+  }).id);
+  ui.srAddOne = ""; ui.srUntil = "";
+  render(); refreshSeriesModal();
+  toast((ids.length === 1 ? "Agregada 1 tarea" : "Agregadas " + ids.length + " tareas") + " a la serie",
+    () => { state.tasks = state.tasks.filter(t => !ids.includes(t.id)); change(); render(); refreshSeriesModal(); });
+}
+/* C2b · Editar una sola ocurrencia, sin tocar el resto. Cada cambio se aplica
+   al instante y tiene deshacer. */
+function srEdit(id) { ui.srOpen = ui.srOpen === id ? null : id; refreshSeriesModal(); }
+function srOne(id, what, v) {
+  const t = taskById(id); if (!t) return;
+  const snap = { estMin: t.estMin, date: t.date, time: t.time }, i = state.tasks.indexOf(t);
+  let msg;
+  if (what === "del") {
+    state.tasks.splice(i, 1); ui.srSel.delete(id); ui.srOpen = null;
+    change(); render(); refreshSeriesModal();
+    toast("Quitada la del " + fmtD(t.date), () => { state.tasks.splice(Math.min(i, state.tasks.length), 0, t); change(); render(); refreshSeriesModal(); });
+    return;
+  }
+  if (what === "add" || what === "min") {
+    const m = what === "add" ? Math.max(0, (t.estMin || 0) + v) : Math.max(0, Math.round(parseFloat(v)));
+    if (!(m >= 0)) { refreshSeriesModal(); return; }
+    t.estMin = m; msg = fmtD(t.date) + ": " + fmtMin(m);
+  } else if (what === "date") {
+    if (!v) { refreshSeriesModal(); return; }
+    t.date = v; msg = "Movida al " + fmtD(v);
+  } else if (what === "time") {
+    t.time = v && hmToMin(v) != null ? v : null; msg = fmtD(t.date) + (t.time ? " a las " + t.time : ": sin hora");
+  }
+  change(); render(); refreshSeriesModal();
+  toast(msg, () => { Object.assign(t, snap); change(); render(); refreshSeriesModal(); });
 }
 function seriesApplyMeta() {
   const s = seriesByKey(ui.seriesKey); if (!s) return;

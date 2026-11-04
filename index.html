@@ -189,11 +189,28 @@ body.selbar-on #main{padding-bottom:230px}
 .srbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:10px 0 8px}
 .srbar .btn{min-height:32px}
 .occlist{border:1px solid var(--line);border-radius:12px;overflow:auto;max-height:min(46vh,360px);background:var(--card)}
-.modal label.occ{display:flex;align-items:center;gap:12px;min-height:46px;padding:6px 14px;margin:0;border-bottom:1px solid var(--line2);cursor:pointer;text-transform:none;letter-spacing:0;font-size:.85rem;font-weight:500;color:var(--tx);transition:background-color .15s}
-.modal label.occ:last-child{border-bottom:none}
-.modal label.occ.on{background:var(--acc-soft)}
-.modal label.occ input{width:20px;height:20px;flex:none;margin:0;accent-color:var(--acc);padding:0}
-:root[data-theme="dark"] .modal label.occ input{color-scheme:dark}
+.occ{display:flex;align-items:stretch;border-bottom:1px solid var(--line2);transition:background-color .15s}
+.occ:last-child{border-bottom:none}
+.occ.on{background:var(--acc-soft)}
+.modal label.occl{flex:1;min-width:0;display:flex;align-items:center;gap:12px;min-height:46px;padding:6px 4px 6px 14px;margin:0;cursor:pointer;text-transform:none;letter-spacing:0;font-size:.85rem;font-weight:500;color:var(--tx)}
+.modal label.occl input{width:20px;height:20px;flex:none;margin:0;accent-color:var(--acc);padding:0}
+:root[data-theme="dark"] .modal label.occl input{color-scheme:dark}
+.occmore{flex:none;min-width:64px;background:none;border:none;border-left:1px solid var(--line2);color:var(--acc);font:inherit;font-size:.74rem;font-weight:600;cursor:pointer;padding:0 12px}
+.occmore:hover{background:var(--hover)}
+.occ.open{background:var(--card2)}
+.occedit{padding:4px 14px 12px;background:var(--card2);border-bottom:1px solid var(--line2)}
+.occstep{display:flex;align-items:center;gap:8px;padding-top:6px}
+.occstep .tiny{flex:1}
+.occstep .btn{min-height:40px;min-width:60px;font-variant-numeric:tabular-nums}
+.modal .occstep input{width:84px;text-align:center;min-height:40px}
+.occacts{display:flex;gap:8px;margin-top:10px;align-items:center}
+.occacts .btn{min-height:36px}
+.occacts .grow{flex:1}
+.sradd{margin-top:12px;border:1px solid var(--line);border-radius:12px;padding:0 14px}
+.sradd[open]{padding-bottom:12px}
+.sradd summary{cursor:pointer;font-size:.82rem;font-weight:600;color:var(--acc);min-height:44px;display:flex;align-items:center;gap:8px;list-style:none}
+.sradd summary::-webkit-details-marker{display:none}
+.sradd summary::before{content:"+";font-size:1.1rem;line-height:1;font-weight:700}
 .occ .occd{flex:1;min-width:0;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .occ .occst{font-size:.72rem;color:var(--tx3);white-space:nowrap}
 .occ.done .occst{color:var(--ok,#16a34a)}
@@ -209,8 +226,8 @@ body.selbar-on #main{padding-bottom:230px}
 .srmore summary::-webkit-details-marker{display:none}
 .srmore summary::before{content:"›";font-size:1.1rem;line-height:1;color:var(--tx3);transition:transform .18s}
 .srmore[open] summary::before{transform:rotate(90deg)}
-@media (prefers-reduced-motion:reduce){.modal label.occ,.srmore summary::before{transition:none}}
-@media(max-width:600px){.srbulk .mrow{flex-direction:column;gap:0}}
+@media (prefers-reduced-motion:reduce){.occ,.srmore summary::before{transition:none}}
+@media(max-width:600px){.srbulk .mrow,.sradd .mrow{flex-direction:column;gap:0}}
 .zonehint{margin:-6px 0 8px;color:var(--tx3)}
 .card h3 .sub{font-size:.72rem;font-weight:500;color:var(--tx3);text-transform:none}
 .dropzone{transition:box-shadow .18s,background-color .18s}
