@@ -6,7 +6,11 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
-## Corrida 06:06–… (hora ARG) — C2a, C2b, C3, X4, D1a
+## Corrida 06:06–06:39 (hora ARG) — C2a, C2b, C3, X4, D1a
+
+**Resumen de la corrida:** se terminó todo el bloque **C (series y repeticiones)**, que era lo que más te frustraba, más el calendario en el celu. 5 ítems cerrados: C2a (editor de serie con lista, selección y cambios masivos con vista previa), C2b (editar una sola, agregar siguiendo el patrón, quitar), C3 ("3 de 5" y la pregunta "¿solo esta / siguientes / todas?"), X4 (pulido que encontré en las capturas) y D1a (calendario estilo iOS en el celu; antes se salía de la pantalla). Partí **D1** en D1a/D1b: D1b (desktop) queda para la próxima corrida. Tests: de 140 a 174, todos en verde en cada commit. Versión: 2.19.1 → 2.23.0. Sin cambios de forma de datos (no hizo falta migrar). Un push falló una vez con "Internal Server Error" de GitHub; reintenté y anduvo.
+
+**Commits:** `1891576` C2a · `01eda9a` C2b · `0002984` C3 · `3a724e9` X4 · `cd8eb63` D1a · el de cierre.
 
 ### D1a · Calendario en el celu, estilo iOS
 
