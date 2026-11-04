@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.6.0";
+const APP_VERSION = "2.28.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -15,7 +15,16 @@ const MES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct
 const MESL = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
 function pad(n) { return String(n).padStart(2, "0"); }
 function iso(d) { return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
-function todayISO() { return iso(new Date()); }
+/* "Hoy" para la app. Antes de la hora en que termina tu día (Configuración →
+   "Mi día termina a las…", por defecto 04:00) sigue siendo el día anterior:
+   lo que marcás a las 00:30 cuenta para el día que estabas haciendo. Se aplica a
+   todo (vista Hoy, completar, rachas, estadísticas) para que no haya dos "hoy". */
+function dayEndMin() { const m = state && state.settings ? hmToMin(state.settings.dayEnd) : null; return m == null ? 0 : m; }
+function todayISO() {
+  const d = new Date(), m = dayEndMin();
+  if (m && d.getHours() * 60 + d.getMinutes() < m) d.setDate(d.getDate() - 1);
+  return iso(d);
+}
 function dToDate(s) { const [a, b, c] = s.split("-").map(Number); return new Date(a, b - 1, c); }
 function addDays(s, n) { const d = dToDate(s); d.setDate(d.getDate() + n); return iso(d); }
 function daysTo(s) { return Math.round((dToDate(s) - dToDate(todayISO())) / 864e5); }
@@ -29,6 +38,13 @@ function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
 function byId(id) { return document.getElementById(id); }
 function weekStartOf(dateStr, ws) { const d = dToDate(dateStr); const diff = (d.getDay() - ws + 7) % 7; d.setDate(d.getDate() - diff); return iso(d); }
 function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+/* Hora "HH:MM" según el formato elegido (24 h o 12 h). */
+function fmtTime(hm) {
+  const m = hmToMin(hm); if (m == null) return "";
+  if (!state || state.settings.hourFmt !== 12) return pad(Math.floor(m / 60)) + ":" + pad(m % 60);
+  const h = Math.floor(m / 60), h12 = h % 12 || 12;
+  return h12 + (m % 60 ? ":" + pad(m % 60) : "") + (h < 12 ? " a. m." : " p. m.");
+}
 function hmToMin(s) { const m = /^(\d{1,2}):(\d{2})$/.exec(s || ""); return m ? parseInt(m[1]) * 60 + parseInt(m[2]) : null; }
 
 /* ============================ ESTADO ============================ */
@@ -41,7 +57,8 @@ function defaultSettings() {
     theme: "auto", accent: "#4338ca", weekStart: 1,
     pomo: { f: 25, s: 5, l: 15, c: 4 },
     sounds: true, notif: false, hourFmt: 24, showDone: true,
-    upcomingDays: 7, tags: ["repaso", "importante", "entrega"]
+    upcomingDays: 7, tags: ["repaso", "importante", "entrega"], dayEnd: "04:00",
+    doneKeepDays: 7 // B5: la Lista completa oculta las hechas hace más de N días (0 = nunca)
   };
 }
 function baseState() {
@@ -143,6 +160,19 @@ async function persist() {
   if (savePending) { savePending = false; persist(); }
 }
 function change() { markDirty(); }
+/* Guardado sincrónico de último momento (al cerrar, recargar o mandar la app al fondo).
+   IndexedDB es asíncrono y el navegador puede cortar la transacción cuando mata la
+   página; localStorage es sincrónico y siempre llega. loadState usa la copia de
+   emergencia si es más nueva que la de IndexedDB (compara meta.lastSave). */
+function flushNow() {
+  if (!state) return;
+  try {
+    state.meta.lastSave = Date.now();
+    const j = JSON.stringify(state);
+    try { if (typeof localStorage !== "undefined") localStorage.setItem(EMERGENCY_KEY, j); } catch (e) {}
+    if (db) db.transaction("kv", "readwrite").objectStore("kv").put(j, "state");
+  } catch (e) {}
+}
 
 async function dailyBackup() {
   try {
@@ -176,6 +206,94 @@ function normalizeState(s) {
   s.dayLog = s.dayLog || {}; s.dayPlan = s.dayPlan || {}; s.meta = Object.assign(b.meta, s.meta || {});
   s.timer = Object.assign(b.timer, s.timer || {});
   s.v = 2;
+  return s;
+}
+
+/* ===================== MIGRACIONES VERSIONADAS =====================
+   state.meta.schema dice qué forma tienen los datos. Los guardados por la 2.6
+   o antes no lo tienen: cuentan como esquema 1.
+   Reglas para agregar un paso (ver CLAUDE.md):
+   - Cada paso lleva de (to - 1) a `to`, es idempotente y NUNCA borra campos ni datos.
+   - Antes de correr pasos, loadState guarda una copia del estado viejo en
+     "Copias de seguridad" (clave premig-…) para poder volver atrás.
+   - Cada paso agrega un test que carga tests/fixtures/estado-v2.6.json. */
+const SCHEMA_VERSION = 3;
+const MIGRATIONS = [
+  { to: 2, desc: "Esquema versionado (Aula 2.7)", run: () => {} },
+  { to: 3, desc: "Series explícitas con seriesId (Aula 2.10)", run: s => inferSeriesIds(s.tasks) }
+];
+/* A3 · Antes, cualquier par de tareas con el mismo título y materia se mostraba como
+   "serie". Ahora una serie es explícita (t.seriesId). Para los datos viejos se
+   reconstruye con una heurística conservadora. Las únicas formas de crear series
+   sin repetición eran "Todos los días (período)" y "Agregar días", y las dos crean
+   tareas DIARIAS con el mismo título, materia y fecha de creación. Entonces:
+   - Se agrupan tareas con fecha, no recurrentes, por materia + proyecto + título + día de creación.
+   - El grupo es serie si sus fechas son distintas y casi todas seguidas (paso de 1 día;
+     se toleran huecos de días borrados a mano). Si son solo 2, además tienen que tener
+     los mismos minutos (si no, no hay forma de distinguirlas de dos tareas sueltas).
+   - Las tareas agregadas después con "Agregar días" (otro día de creación) se suman a
+     la serie si empiezan justo al día siguiente de su última fecha.
+   - Lo demás queda como tarea suelta. Nunca se toca una tarea que ya tenga seriesId. */
+function inferSeriesIds(tasks) {
+  const norm = x => String(x || "").trim().toLowerCase();
+  const tkey = t => (t.subjectId || "") + "|" + (t.projectId || "") + "|" + norm(t.title);
+  const groups = new Map();
+  for (const t of tasks) {
+    if (t.recur || !t.date || t.seriesId) continue;
+    const k = tkey(t) + "|" + (t.createdAt || "");
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(t);
+  }
+  const runs = [];
+  for (const g of groups.values()) {
+    g.sort((a, b) => a.date.localeCompare(b.date));
+    let series = false;
+    if (g.length >= 2) {
+      const diffs = g.slice(1).map((t, i) => Math.round((dToDate(t.date) - dToDate(g[i].date)) / 864e5));
+      const ones = diffs.filter(d => d === 1).length;
+      series = diffs.every(d => d >= 1) && ones * 2 >= diffs.length && (g.length > 2 || (g[0].estMin || 0) === (g[1].estMin || 0));
+    }
+    runs.push({ k: tkey(g[0]), created: g[0].createdAt || "", tasks: g, series });
+  }
+  runs.sort((a, b) => a.tasks[0].date.localeCompare(b.tasks[0].date));
+  for (const a of runs) {
+    if (!a.series || a.merged) continue;
+    for (let found = true; found;) {
+      found = false;
+      const next = addDays(a.tasks[a.tasks.length - 1].date, 1);
+      for (const b of runs) {
+        if (b === a || b.merged || b.k !== a.k || b.created <= a.created) continue;
+        if ((b.series || b.tasks.length === 1) && b.tasks[0].date === next) {
+          a.tasks = a.tasks.concat(b.tasks); b.merged = true; found = true; break;
+        }
+      }
+    }
+    const sid = "sr-" + uid();
+    for (const t of a.tasks) t.seriesId = sid;
+  }
+}
+function schemaOf(s) { return (s && s.meta && Number(s.meta.schema)) || 1; }
+function needsMigration(s) { return schemaOf(s) < SCHEMA_VERSION; }
+/* Corre los pasos pendientes sobre un estado ya normalizado. Devuelve {from, to}. */
+function migrateState(s) {
+  const from = schemaOf(s);
+  for (const m of MIGRATIONS) {
+    if (schemaOf(s) < m.to) { m.run(s); s.meta.schema = m.to; }
+  }
+  return { from, to: schemaOf(s) };
+}
+/* Normaliza + migra, guardando antes una copia del JSON original tal cual estaba. */
+async function prepareLoaded(s, raw) {
+  s = normalizeState(s);
+  if (needsMigration(s)) {
+    const from = schemaOf(s);
+    const copy = { ts: Date.now(), label: "Antes de actualizar a Aula " + APP_VERSION, version: APP_VERSION, schema: from, data: raw };
+    try {
+      if (db) await idbPut("backups", "premig-v" + from + "-" + Date.now(), copy);
+      else if (typeof localStorage !== "undefined") localStorage.setItem("aula-premig-v" + from, raw);
+    } catch (e) { console.warn("No se pudo guardar la copia previa a la migración", e); }
+    migrateState(s);
+  }
   return s;
 }
 
@@ -258,24 +376,37 @@ async function loadState() {
   let raw = null;
   if (db) { try { raw = await idbGet("kv", "state"); } catch (e) {} }
   if (!raw && typeof localStorage !== "undefined") raw = localStorage.getItem("aula-state-fallback");
+  // Si la app se cerró antes de que IndexedDB terminara de guardar, la copia de
+  // emergencia (sincrónica) es más nueva: se usa esa.
+  try {
+    const em = typeof localStorage !== "undefined" ? localStorage.getItem(EMERGENCY_KEY) : null;
+    if (em && em !== raw) {
+      const e = JSON.parse(em), lastOf = x => (x && x.meta && Number(x.meta.lastSave)) || 0;
+      let cur = null; try { cur = raw ? JSON.parse(raw) : null; } catch (err) {}
+      if (validState(e) && (!validState(cur) || lastOf(e) > lastOf(cur))) raw = em;
+    }
+  } catch (e) {}
   if (raw) {
-    try { const s = JSON.parse(raw); if (validState(s)) { state = normalizeState(s); return; } } catch (e) { console.warn("Estado dañado, intentando backups…"); }
+    let s = null;
+    try { s = JSON.parse(raw); } catch (e) { console.warn("Estado dañado, intentando backups…"); }
+    if (validState(s)) { state = await prepareLoaded(s, raw); return; }
   }
   if (db) {
     try {
       const keys = (await idbKeys("backups")).sort().reverse();
       for (const k of keys) {
-        try { const b = await idbGet("backups", k); const s = JSON.parse(b.data); if (validState(s)) { state = normalizeState(s); toast("Datos recuperados desde una copia de seguridad"); return; } } catch (e) {}
+        try { const b = await idbGet("backups", k); const s = JSON.parse(b.data); if (validState(s)) { state = await prepareLoaded(s, b.data); toast("Datos recuperados desde una copia de seguridad"); return; } } catch (e) {}
       }
     } catch (e) {}
   }
   try {
     const em = typeof localStorage !== "undefined" ? localStorage.getItem(EMERGENCY_KEY) : null;
-    if (em) { const s = JSON.parse(em); if (validState(s)) { state = normalizeState(s); toast("Datos recuperados desde la copia de emergencia"); return; } }
+    if (em) { const s = JSON.parse(em); if (validState(s)) { state = await prepareLoaded(s, em); toast("Datos recuperados desde la copia de emergencia"); return; } }
   } catch (e) {}
   state = baseState();
   state.subjects = initialSubjects();
   try { if (typeof localStorage !== "undefined" && localStorage.getItem(OLD_LS_KEY) && migrateV1(state)) toast("Datos de la versión anterior migrados correctamente"); } catch (e) { console.warn("Fallo de migración", e); }
+  migrateState(state); // estado nuevo (o recién migrado de la v1): sin datos previos que respaldar
 }
 
 /* ============================ LOOKUPS ============================ */
@@ -320,58 +451,216 @@ function isDoneOn(t, date) { return t.recur ? !!(t.recurDone && t.recurDone[date
 function tasksOn(date) {
   return orderedTasks(state.tasks.filter(t => !t.archived && t.status !== "canc" && occursOn(t, date)));
 }
-/* Orden dentro del día: primero las que ordenaste a mano (campo ord),
-   después el resto por prioridad y duración. */
+/* Orden dentro del día (B1): primero las que tienen hora, por hora. Después las
+   sin hora: las que ordenaste a mano (campo ord) y el resto por prioridad y duración. */
 function orderedTasks(list) {
   return [...list].sort((a, b) => {
+    const at = hmToMin(a.time), bt = hmToMin(b.time);
+    if (at != null || bt != null) {
+      if (at == null) return 1;
+      if (bt == null) return -1;
+      if (at !== bt) return at - bt;
+    }
     const ao = (a.ord == null ? Infinity : a.ord), bo = (b.ord == null ? Infinity : b.ord);
     if (ao !== bo) return ao - bo;
     return (b.prio - a.prio) || ((a.estMin || 0) - (b.estMin || 0)) || String(a.createdAt || "").localeCompare(String(b.createdAt || ""));
   });
 }
-/* Reordenamiento por arrastre (escritorio) y botones ↑ ↓ (todos los dispositivos) */
-let dragId = null, dragAfter = false;
-function dragArm(el) { const p = el.closest && el.closest(".task"); if (p) p.draggable = true; }
-function dragDisarm(el) { const p = el.closest && el.closest(".task"); if (p) p.draggable = false; }
+/* ===================== MOVER Y ARRASTRAR TAREAS (B4) =====================
+   Un solo sistema con pointer events para mouse y dedo:
+   - Mouse: se agarra la manija ⣿ y se arrastra.
+   - Dedo: mantener apretada la fila (~0,4 s). Si movés el dedo, arrastrás; si
+     soltás sin mover, se abre "Mover a…". Si el dedo se mueve antes, es scroll.
+   Se puede soltar sobre cualquier sección con data-dropdate (Hoy, Mañana): si es
+   el mismo día cambia el orden (campo ord), si es otro día cambia la fecha. */
+const LONGPRESS_MS = 400;
+let drag = null;
 function clearDropMarks() {
   document.querySelectorAll(".task.dropbefore,.task.dropafter").forEach(x => x.classList.remove("dropbefore", "dropafter"));
+  document.querySelectorAll("[data-dropdate].over").forEach(x => x.classList.remove("over"));
 }
-function taskDragStart(ev, id) {
-  dragId = id; dragAfter = false;
-  try { ev.dataTransfer.effectAllowed = "move"; ev.dataTransfer.setData("text/plain", id); } catch (e) {}
-  const el = ev.currentTarget;
-  setTimeout(() => { if (el && el.classList) el.classList.add("dragging"); }, 0);
+function canMoveTask(t) { return !!t && !t.recur; }
+function touchUI() { try { return matchMedia("(hover:none)").matches; } catch (e) { return false; } }
+function dragPointerDown(ev) {
+  if (ev.button !== 0 || drag || ui.selMode || selSet().size) return;
+  const row = ev.target.closest && ev.target.closest("#view .task[data-id]");
+  if (!row || ev.target.closest(".cb,.tactions,button,a,input,select,textarea")) return;
+  const t = taskById(row.dataset.id);
+  if (!t || (!canMoveTask(t) && !row.dataset.date)) return; // las que se repiten solo se reordenan dentro del día
+  const handle = ev.target.closest(".drag[title]");
+  if (!handle && ev.pointerType === "mouse") return; // con mouse, el clic en la fila abre el editor
+  drag = { id: t.id, row, pid: ev.pointerId, x0: ev.clientX, y0: ev.clientY, x: ev.clientX, y: ev.clientY,
+    from: row.dataset.date || null, state: handle ? "armed" : "press", timer: null, ghost: null, target: null };
+  if (!handle) drag.timer = setTimeout(dragLift, LONGPRESS_MS);
+  window.addEventListener("pointermove", dragPointerMove, { passive: false });
+  window.addEventListener("pointerup", dragPointerUp);
+  window.addEventListener("pointercancel", dragCancel);
 }
-function taskDragEnd(ev) {
-  const el = ev.currentTarget;
-  if (el && el.classList) { el.classList.remove("dragging"); el.draggable = false; }
-  clearDropMarks(); dragId = null;
+function dragLift() {
+  if (!drag || drag.state !== "press") return;
+  drag.state = "lifted";
+  drag.row.classList.add("lifted");
+  try { if (navigator.vibrate) navigator.vibrate(8); } catch (e) {}
 }
-function taskDragOver(ev, id) {
-  if (!dragId || id === dragId) return;
-  ev.preventDefault();
-  try { ev.dataTransfer.dropEffect = "move"; } catch (e) {}
-  const el = ev.currentTarget, r = el.getBoundingClientRect();
-  dragAfter = (ev.clientY - r.top) > r.height / 2;
+function dragPointerMove(ev) {
+  if (!drag || ev.pointerId !== drag.pid) return;
+  drag.x = ev.clientX; drag.y = ev.clientY;
+  const dist = Math.hypot(ev.clientX - drag.x0, ev.clientY - drag.y0);
+  if (drag.state === "press") { if (dist > 10) dragCancel(); return; } // se movió antes: es scroll
+  if (drag.state === "armed" || drag.state === "lifted") {
+    if (dist < (drag.state === "armed" ? 4 : 6)) return;
+    dragBegin();
+  }
+  if (drag.state === "dragging") { ev.preventDefault(); dragUpdate(); }
+}
+function dragBegin() {
+  const r = drag.row.getBoundingClientRect();
+  const g = drag.row.cloneNode(true);
+  g.classList.remove("lifted", "sel"); g.classList.add("dragghost");
+  g.removeAttribute("data-id"); g.setAttribute("aria-hidden", "true");
+  g.style.width = r.width + "px"; g.style.left = r.left + "px"; g.style.top = r.top + "px";
+  document.body.appendChild(g);
+  drag.ghost = g; drag.dx = drag.x0 - r.left; drag.dy = drag.y0 - r.top;
+  drag.row.classList.remove("lifted"); drag.row.classList.add("dragging");
+  document.body.classList.add("is-dragging");
+  drag.state = "dragging";
+  dragAutoScroll();
+}
+function dragUpdate() {
+  const d = drag;
+  d.ghost.style.left = (d.x - d.dx) + "px"; d.ghost.style.top = (d.y - d.dy) + "px";
   clearDropMarks();
-  el.classList.add(dragAfter ? "dropafter" : "dropbefore");
+  d.target = null;
+  const el = document.elementFromPoint(d.x, d.y);
+  const zone = el && el.closest && el.closest("#view [data-dropdate]");
+  if (!zone) return;
+  zone.classList.add("over");
+  const row = el.closest(".task[data-id]");
+  let before = null, after = false;
+  if (row && zone.contains(row) && row !== d.row) {
+    const r = row.getBoundingClientRect();
+    after = (d.y - r.top) > r.height / 2;
+    before = row.dataset.id;
+    row.classList.add(after ? "dropafter" : "dropbefore");
+  }
+  d.target = { date: zone.dataset.dropdate, near: before, after };
 }
-function taskDragLeave(ev) { const el = ev.currentTarget; if (el && el.classList) el.classList.remove("dropbefore", "dropafter"); }
-function taskDrop(ev, targetId, date) {
-  ev.preventDefault(); ev.stopPropagation();
+function dragAutoScroll() {
+  if (!drag || drag.state !== "dragging") return;
+  const m = 70, y = drag.y, h = window.innerHeight;
+  const v = y < m ? -Math.ceil((m - y) / 5) : y > h - m ? Math.ceil((y - (h - m)) / 5) : 0;
+  if (v) { window.scrollBy(0, v); dragUpdate(); }
+  requestAnimationFrame(dragAutoScroll);
+}
+function dragEnd() {
+  window.removeEventListener("pointermove", dragPointerMove, { passive: false });
+  window.removeEventListener("pointerup", dragPointerUp);
+  window.removeEventListener("pointercancel", dragCancel);
+  if (!drag) return;
+  clearTimeout(drag.timer);
+  if (drag.ghost) drag.ghost.remove();
+  drag.row.classList.remove("lifted", "dragging");
+  document.body.classList.remove("is-dragging");
   clearDropMarks();
-  const src = dragId; dragId = null;
-  if (!src || src === targetId) return;
-  const ids = tasksOn(date).map(t => t.id);
-  const from = ids.indexOf(src);
-  if (from < 0) return;
-  ids.splice(from, 1);
-  let at = ids.indexOf(targetId);
-  if (at < 0) return;
-  applyOrder(ids, at + (dragAfter ? 1 : 0), src);
-  toast("Orden actualizado");
+  drag = null;
 }
+function dragCancel() { dragEnd(); }
+/* Después de mantener apretado o arrastrar, el navegador manda un "click": no tiene que abrir el editor. */
+function swallowNextClick() {
+  // En táctil el "tap" cae donde está el dedo: sobre la lista o sobre el fondo de la hoja
+  // recién abierta (que la cerraría). El "Deshacer" del aviso tiene que andar enseguida.
+  const kill = e => { if (e.target.closest && e.target.closest("#view,#sheetbg")) { e.stopPropagation(); e.preventDefault(); window.removeEventListener("click", kill, { capture: true }); } };
+  window.addEventListener("click", kill, { capture: true });
+  setTimeout(() => window.removeEventListener("click", kill, { capture: true }), 400);
+}
+function dragPointerUp(ev) {
+  if (!drag || ev.pointerId !== drag.pid) return;
+  const d = drag;
+  dragEnd();
+  if (d.state === "lifted") { swallowNextClick(); openMoveSheet(d.id); return; }
+  if (d.state !== "dragging") return;
+  swallowNextClick();
+  if (d.target) dropTask(d.id, d.from, d.target);
+}
+function dropTask(id, from, tg) {
+  const t = taskById(id); if (!t) return;
+  if (tg.date === from) {
+    if (t.time) { toast("Las tareas con hora se ordenan solas por hora"); return; }
+    if (!tg.near) return;
+    const ids = tasksOn(from).map(x => x.id);
+    const i = ids.indexOf(id); if (i < 0) return;
+    ids.splice(i, 1);
+    const at = ids.indexOf(tg.near); if (at < 0) return;
+    applyOrder(ids, at + (tg.after ? 1 : 0), id);
+    toast("Orden actualizado");
+    return;
+  }
+  if (!canMoveTask(t)) { toast("Las tareas que se repiten no se mueven de día"); return; }
+  moveTaskTo(id, tg.date, tg.near ? { near: tg.near, after: tg.after } : null);
+}
+/* Cambia el día de una tarea (no las que se repiten). Si viene `pos`, la ubica
+   antes/después de otra tarea de ese día; si no, al final. Siempre con deshacer. */
+function moveTaskTo(id, date, pos) {
+  const t = taskById(id);
+  if (!canMoveTask(t) || !date) return false;
+  if (t.date === date && !pos) return false;
+  const snap = state.tasks.filter(x => x === t || occursOn(x, date)).map(x => [x, x.date, x.ord, x.status]);
+  t.date = date;
+  if (t.status === "post") t.status = "pend";
+  t.ord = null;
+  if (pos && !t.time) {
+    const ids = tasksOn(date).map(x => x.id).filter(x => x !== id);
+    const at = ids.indexOf(pos.near);
+    if (at >= 0) { ids.splice(at + (pos.after ? 1 : 0), 0, id); ids.forEach((x, k) => { const y = taskById(x); if (y) y.ord = k; }); }
+  }
+  change(); render();
+  toast("Movida a " + dayName(date), () => {
+    for (const [x, dt, ord, st] of snap) { x.date = dt; x.ord = ord; x.status = st; }
+    change(); render();
+  });
+  return true;
+}
+/* "hoy", "mañana" o "jue 5 nov" */
+function dayName(d) {
+  const t = todayISO();
+  return d === t ? "hoy" : d === addDays(t, 1) ? "mañana" : fmtD(d);
+}
+function nextMonday(d) { const w = dToDate(d).getDay(); return addDays(d, ((8 - w) % 7) || 7); }
+function moveOptions() {
+  const t = todayISO();
+  return [["Hoy", t], ["Mañana", addDays(t, 1)], ["Pasado mañana", addDays(t, 2)], ["En 3 días", addDays(t, 3)],
+    ["Próximo lunes", nextMonday(t)], ["En 1 semana", addDays(t, 7)]];
+}
+/* Hoja "Mover a…": abajo en el celu (al alcance del pulgar), centrada en desktop. */
+function openMoveSheet(id) {
+  const t = taskById(id);
+  if (!canMoveTask(t)) { if (t) toast("Las tareas que se repiten no se mueven de día"); return; }
+  const bg = byId("sheetbg"), sh = byId("sheet");
+  const now = t.date ? "Ahora: " + dayName(t.date) + (t.date === todayISO() || t.date === addDays(todayISO(), 1) ? " · " + fmtD(t.date) : "") : t.due ? "Sin día · vence " + fmtD(t.due) : "Sin fecha";
+  const opts = moveOptions().filter(([n, d]) => !(n === "Hoy" && t.date === d));
+  sh.innerHTML = `<div class="sheetgrip" aria-hidden="true"></div>
+    <div class="sheethead"><div class="sheettitle">Mover “${esc(t.title.slice(0, 60))}”</div><div class="tiny">${esc(now)}</div></div>
+    <div class="sheetlist">
+      ${opts.map(([n, d]) => `<button class="sheetopt${t.date === d ? " cur" : ""}" ${t.date === d ? 'aria-current="date" disabled' : ""} onclick="closeMoveSheet();moveTaskTo('${t.id}','${d}')">
+        <span>${n}</span><span class="sheetdate">${t.date === d ? "✓ " : ""}${fmtD(d)}</span></button>`).join("")}
+      <button class="sheetopt" id="mv_pick" onclick="moveSheetPick()"><span>Elegir fecha…</span><span class="sheetdate">›</span></button>
+      <div class="sheetpick" id="mv_pickrow" hidden>
+        <input type="date" id="mv_date" value="${t.date || addDays(todayISO(), 1)}" aria-label="Fecha">
+        <button class="btn primary" onclick="const v=byId('mv_date').value;if(v){closeMoveSheet();moveTaskTo('${t.id}',v)}">Mover</button>
+      </div>
+    </div>
+    <button class="sheetopt sheetcancel" onclick="closeMoveSheet()">Cancelar</button>`;
+  bg.classList.add("open");
+  setTimeout(() => { const b = sh.querySelector(".sheetopt:not(.cur)"); if (b && matchMedia("(hover:hover)").matches) b.focus(); }, 30);
+}
+function moveSheetPick() {
+  const r = byId("mv_pickrow"); if (!r) return;
+  r.hidden = false; byId("mv_pick").hidden = true;
+  const i = byId("mv_date"); if (i) i.focus();
+}
+function closeMoveSheet() { const bg = byId("sheetbg"); if (bg) bg.classList.remove("open"); }
 function moveTaskOrder(id, dir, date) {
+  const mt = taskById(id); if (mt && mt.time) { toast("Las tareas con hora se ordenan solas por hora"); return; }
   const ids = tasksOn(date).map(t => t.id);
   const i = ids.indexOf(id), j = i + dir;
   if (i < 0 || j < 0 || j >= ids.length) return;
@@ -411,7 +700,6 @@ function minsBetween(d1, d2, filter) {
   for (const s of state.sessions) { if (s.date >= d1 && s.date <= d2 && (!filter || filter(s))) tot += s.min; }
   return tot;
 }
-function pomosBetween(d1, d2) { let n = 0; for (const s of state.sessions) if (s.date >= d1 && s.date <= d2) n += s.pomos || 0; return n; }
 function subjectRealMin(id) { return state.sessions.filter(s => s.subjectId === id).reduce((a, s) => a + s.min, 0); }
 function projectRealMin(id) { return state.sessions.filter(s => s.projectId === id).reduce((a, s) => a + s.min, 0); }
 function evalRealMin(id) { return state.sessions.filter(s => s.evalId === id).reduce((a, s) => a + s.min, 0); }
@@ -469,10 +757,21 @@ function toggleTask(id, date) {
   }
   change(); render();
 }
+/* Cambia el día en que cuenta una tarea hecha: mueve el contador del día y el
+   tiempo que se registró automáticamente al completarla. */
+function moveDoneDate(t, nd) {
+  const old = t.doneAt;
+  if (!nd || old === nd) return;
+  if (old && state.dayLog[old] && state.dayLog[old].tasksDone) state.dayLog[old].tasksDone--;
+  bumpDayDone(nd);
+  for (const s of state.sessions) if (s.taskId === t.id && s.auto && s.date === old) s.date = nd;
+  t.doneAt = nd;
+  change();
+}
 function bumpDayDone(d) { state.dayLog[d] = state.dayLog[d] || {}; state.dayLog[d].tasksDone = (state.dayLog[d].tasksDone || 0) + 1; }
 /* Al completar una tarea se pregunta cuánto llevó realmente: ese tiempo (no el estimado)
-   es el que suma a las estadísticas de la materia. Se descuenta lo ya cronometrado con
-   pomodoro/manual para no contar doble, y todo se revierte al desmarcar. */
+   es el que suma a las estadísticas de la materia. Se descuenta lo ya registrado
+   (a mano, o con el pomodoro en versiones viejas) para no contar doble, y todo se revierte al desmarcar. */
 function askDoneTime(taskId, date) {
   const t = taskById(taskId); if (!t) return;
   const already = t.recur ? 0 : (t.realMin || 0);
@@ -498,7 +797,7 @@ function resolveDoneTime(taskId, date, mode) {
     const min = mode === "est" ? (t.estMin || 0) : Math.max(0, parseInt((byId("dt_min") || {}).value) || 0);
     const already = t.recur ? 0 : (t.realMin || 0);
     const credit = Math.max(0, min - already);
-    if (credit > 0) addSession(credit, { taskId: t.id, date: t.recur ? (date || todayISO()) : todayISO(), auto: true, note: "Tarea completada (tiempo real)" });
+    if (credit > 0) addSession(credit, { taskId: t.id, date: t.recur ? (date || todayISO()) : (t.doneAt || todayISO()), auto: true, note: "Tarea completada (tiempo real)" });
     if (credit > 0 || already) toast("Registradas " + fmtMin(Math.max(min, already)) + " en la tarea");
     else toast("Tarea completada");
   } else toast("Tarea completada (sin tiempo registrado)");
@@ -514,15 +813,6 @@ function uncreditTaskDone(t, recurDate) {
   }
   change();
 }
-function postponeTask(id) {
-  const t = taskById(id); if (!t || t.recur) return;
-  if (t.date) t.date = addDays(t.date < todayISO() ? todayISO() : t.date, 1);
-  else if (t.due) t.due = addDays(t.due < todayISO() ? todayISO() : t.due, 1);
-  else t.date = addDays(todayISO(), 1);
-  t.status = t.status === "done" ? t.status : "post";
-  t.ord = null; // al cambiar de día vuelve al final de ese día
-  change(); render(); toast("Pospuesta para " + fmtD(t.date || t.due));
-}
 function assignToday(id) {
   const t = taskById(id); if (!t || t.recur) return;
   t.date = todayISO();
@@ -534,6 +824,7 @@ function duplicateTask(id) {
   const t = taskById(id); if (!t) return;
   const c = JSON.parse(JSON.stringify(t));
   c.id = uid(); c.title = t.title + " (copia)"; c.status = "pend"; c.doneAt = null; c.realMin = 0; c.pomos = 0; c.recurDone = {}; c.createdAt = todayISO();
+  delete c.seriesId; // la copia es una tarea suelta, no otra ocurrencia de la serie
   state.tasks.push(c); change(); render(); toast("Tarea duplicada");
 }
 function archiveTask(id) {
@@ -553,9 +844,10 @@ function quickAddTask(data) {
     id: uid(), title: data.title, desc: data.desc || "", subjectId: data.subjectId || null, projectId: data.projectId || null,
     evalId: data.evalId || null, planId: data.planId || null, date: data.date || null, due: data.due || null,
     estMin: data.estMin || 0, prio: data.prio == null ? 1 : data.prio, status: "pend", type: data.type || "estudio",
-    tags: data.tags || [], subtasks: [], notes: "", recur: data.recur || null, recurDone: {}, realMin: 0, pomos: 0,
+    tags: data.tags || [], subtasks: [], notes: "", recur: data.recur || null, recurDone: {}, realMin: 0, time: data.time || null,
     createdAt: todayISO(), doneAt: null, archived: false
   };
+  if (data.seriesId) t.seriesId = data.seriesId;
   state.tasks.push(t); change();
   return t;
 }
@@ -573,18 +865,13 @@ function pruneDayPlan() {
   for (const k of Object.keys(state.dayPlan || {})) if (k < lim) delete state.dayPlan[k];
 }
 function blockMinutes(b) { const a = hmToMin(b.from), c = hmToMin(b.to); return a != null && c != null ? Math.max(0, c - a) : 0; }
-function pomosInBlock(b) {
-  if (!b.pomo) return 0;
-  const P = state.settings.pomo;
-  return Math.max(0, Math.floor((blockMinutes(b) + P.s) / (P.f + P.s)));
-}
 function addStudyBlock() {
   const from = byId("sb_from").value, to = byId("sb_to").value;
   const f = hmToMin(from), t = hmToMin(to);
   if (f == null || t == null) { toast("Cargá hora de inicio y de fin"); return; }
   if (t <= f) { toast("La hora de fin debe ser posterior a la de inicio"); return; }
   const dp = state.dayPlan[todayISO()] = state.dayPlan[todayISO()] || { blocks: [] };
-  dp.blocks.push({ id: uid(), from, to, pomo: byId("sb_pomo").checked });
+  dp.blocks.push({ id: uid(), from, to });
   dp.blocks.sort((a, b) => hmToMin(a.from) - hmToMin(b.from));
   change(); render(); toast("Bloque agregado");
 }
@@ -597,54 +884,51 @@ function updateDistLeft(total) {
   let sum = 0;
   document.querySelectorAll(".dist-inp").forEach(i => { sum += parseInt(i.value) || 0; });
   const el = byId("distLeft"); if (!el) return;
-  if (sum > total) { el.textContent = "te pasás por " + (sum - total); el.style.color = "var(--warn)"; }
-  else { el.textContent = "quedan " + (total - sum); el.style.color = ""; }
+  if (sum > total) { el.textContent = "te pasás por " + fmtMin(sum - total); el.style.color = "var(--warn)"; }
+  else { el.textContent = "quedan " + fmtMin(total - sum); el.style.color = ""; }
 }
 function createDistTasks() {
-  const today = todayISO(), P = state.settings.pomo;
+  const today = todayISO();
   let created = 0;
   document.querySelectorAll(".dist-inp").forEach(inp => {
     const n = parseInt(inp.value) || 0;
     if (n > 0) {
-      quickAddTask({ title: "Sesión de estudio (" + n + " pomodoro" + (n > 1 ? "s" : "") + ")", subjectId: inp.dataset.sid, date: today, estMin: n * P.f, type: "estudio" });
+      quickAddTask({ title: "Sesión de estudio", subjectId: inp.dataset.sid, date: today, estMin: n, type: "estudio" });
       created++;
     }
   });
-  if (!created) { toast("Asigná al menos un pomodoro a una materia"); return; }
+  if (!created) { toast("Asigná minutos al menos a una materia"); return; }
   render(); toast(created + " tarea" + (created > 1 ? "s" : "") + " creada" + (created > 1 ? "s" : "") + " para hoy");
 }
 function studyTodayCard() {
   const today = todayISO();
   pruneDayPlan();
   const dp = state.dayPlan[today] = state.dayPlan[today] || { blocks: [] };
-  const P = state.settings.pomo;
   const rows = dp.blocks.map(b => {
-    const min = blockMinutes(b), n = pomosInBlock(b);
+    const min = blockMinutes(b);
     return `<div class="task" style="cursor:default">
       <span class="pill acc" style="min-width:104px;text-align:center">${esc(b.from)} – ${esc(b.to)}</span>
-      <div class="tinfo"><div class="tt">${fmtMin(min)}${b.pomo ? ` · con pomodoro: entran <b>${n}</b>` : " · sin pomodoro"}</div></div>
+      <div class="tinfo"><div class="tt">${fmtMin(min)}</div></div>
       <button class="btn sm ghost" title="Quitar bloque" onclick="delStudyBlock('${b.id}')">×</button></div>`;
   }).join("");
   const totMin = dp.blocks.reduce((a, b) => a + blockMinutes(b), 0);
-  const totPom = dp.blocks.reduce((a, b) => a + pomosInBlock(b), 0);
   let dist = "";
-  if (totPom > 0) {
+  if (totMin > 0) {
     dist = `<div class="hr"></div>
-    <p class="tiny" style="margin-bottom:6px">Distribuí los <b>${totPom}</b> pomodoros por materia y creá las tareas de hoy — <span id="distLeft">quedan ${totPom}</span></p>` +
+    <p class="tiny" style="margin-bottom:6px">Repartí los <b>${fmtMin(totMin)}</b> entre tus materias (en minutos) y creá las tareas de hoy — <span id="distLeft">quedan ${fmtMin(totMin)}</span></p>` +
     activeSubjects().map(s => `<div style="display:flex;align-items:center;gap:8px;margin:4px 0">
       <span class="tag" style="background:${s.color}1c;color:${s.color};min-width:52px;text-align:center">${esc(s.short)}</span>
       <span style="flex:1;font-size:.78rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.name)}</span>
-      <input type="number" class="dist-inp" data-sid="${s.id}" value="0" min="0" max="${totPom}" oninput="updateDistLeft(${totPom})" aria-label="Pomodoros para ${escA(s.name)}" style="width:64px;background:var(--card2);border:1px solid var(--line);border-radius:7px;padding:5px 7px"></div>`).join("") +
+      <input type="number" class="dist-inp" data-sid="${s.id}" value="0" min="0" step="15" max="${totMin}" oninput="updateDistLeft(${totMin})" aria-label="Minutos para ${escA(s.name)}" style="width:76px;background:var(--card2);border:1px solid var(--line);border-radius:7px;padding:5px 7px"></div>`).join("") +
     `<div style="display:flex;justify-content:flex-end;margin-top:8px"><button class="btn sm primary" onclick="createDistTasks()">Crear tareas para hoy</button></div>`;
   }
   return `<div class="card"><h3>Estudio de hoy<div class="grow"></div>
-    <span class="tiny">${totMin ? fmtMin(totMin) + " disponibles" + (totPom ? " · " + totPom + " pomodoros posibles" : "") : ""}</span></h3>
-    ${rows || '<p class="tiny" style="margin-bottom:6px">Cargá tus horarios de estudio de hoy. Podés agregar varios bloques (por ejemplo 14:00–17:00 y 20:00–22:00) y elegir en cuáles usás pomodoro.</p>'}
+    <span class="tiny">${totMin ? fmtMin(totMin) + " disponibles" : ""}</span></h3>
+    ${rows || '<p class="tiny" style="margin-bottom:6px">Cargá tus horarios de estudio de hoy. Podés agregar varios bloques (por ejemplo 14:00–17:00 y 20:00–22:00) .</p>'}
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
       <input type="time" id="sb_from" value="14:00" aria-label="Hora de inicio" style="background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:6px">
       <span class="tiny">a</span>
       <input type="time" id="sb_to" value="17:00" aria-label="Hora de fin" style="background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:6px">
-      <label style="display:flex;gap:5px;align-items:center;font-size:.76rem;color:var(--tx2);cursor:pointer"><input type="checkbox" id="sb_pomo" checked style="width:auto">con pomodoro (${P.f}/${P.s})</label>
       <button class="btn sm" onclick="addStudyBlock()">Agregar bloque</button>
     </div>${dist}</div>`;
 }
@@ -767,7 +1051,8 @@ function delTopic(evId, tpId) {
   const e = evalById(evId); if (!e) return;
   e.topics = e.topics.filter(x => x.id !== tpId); change(); render();
 }
-function evalPlanTasks(evId) { return state.tasks.filter(t => t.planId === evId && !t.archived); }
+/* Tareas de un parcial: las de su plan y las vinculadas a mano (B3). */
+function evalPlanTasks(evId) { return state.tasks.filter(t => (t.planId === evId || t.evalId === evId) && !t.archived); }
 function evalPrep(e) {
   const topics = e.topics || [];
   const tW = topics.length ? topics.reduce((a, t) => a + (t.state === "dom" ? 1 : t.state === "ent" ? .75 : t.state === "emp" ? .35 : 0), 0) / topics.length : null;
@@ -979,90 +1264,11 @@ function mdLite(src) {
   return out.join("").replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code style='background:var(--card2);padding:0 4px;border-radius:4px'>$1</code>");
 }
 
-/* ========================= POMODORO ========================= */
-function phaseDur(p) { const c = state.settings.pomo; return (p === "focus" ? c.f : p === "long" ? c.l : c.s) * 60; }
-function beep() {
-  if (!state.settings.sounds) return;
-  try {
-    const ctx = beep.ctx || (beep.ctx = new (window.AudioContext || window.webkitAudioContext)());
-    [0, .18, .36].forEach((d, i) => {
-      const o = ctx.createOscillator(), g = ctx.createGain();
-      o.connect(g); g.connect(ctx.destination); o.frequency.value = i === 2 ? 880 : 660; o.type = "sine";
-      g.gain.setValueAtTime(.2, ctx.currentTime + d); g.gain.exponentialRampToValueAtTime(.001, ctx.currentTime + d + .16);
-      o.start(ctx.currentTime + d); o.stop(ctx.currentTime + d + .17);
-    });
-  } catch (e) {}
-}
-function notify(msg) {
-  if (!state.settings.notif) return;
-  if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
-  try { new Notification("Aula", { body: msg }); } catch (e) {}
-}
-function startPomo(taskId) {
-  const T = state.timer;
-  if (taskId !== undefined) { T.taskId = taskId; const t = taskId && taskById(taskId); if (t) { T.subjectId = t.subjectId; T.projectId = t.projectId; } }
-  T.run = true; T.ends = Date.now() + T.left * 1000;
-  change(); renderPomoUI();
-}
-function pausePomo() { const T = state.timer; if (!T.run) return; T.run = false; T.left = Math.max(0, Math.round((T.ends - Date.now()) / 1000)); T.ends = null; change(); renderPomoUI(); }
-function resetPomo() { const T = state.timer; T.run = false; T.ends = null; T.phase = "focus"; T.cycle = 0; T.left = T.total = phaseDur("focus"); change(); renderPomoUI(); }
-function skipPomo() { endPhase(false); }
-function pomoSetLink(val) {
-  const T = state.timer;
-  T.taskId = null; T.subjectId = null; T.projectId = null;
-  if (val.startsWith("t:")) { T.taskId = val.slice(2); const t = taskById(T.taskId); if (t) { T.subjectId = t.subjectId; T.projectId = t.projectId; } }
-  else if (val.startsWith("s:")) T.subjectId = val.slice(2);
-  else if (val.startsWith("p:")) T.projectId = val.slice(2);
-  change();
-}
-function endPhase(credit) {
-  const T = state.timer;
-  if (T.phase === "focus") {
-    if (credit) {
-      addSession(state.settings.pomo.f, { pomos: 1, taskId: T.taskId, subjectId: T.subjectId, projectId: T.projectId });
-      toast("Pomodoro completado — descanso"); notify("Pomodoro completado. Tomate un descanso."); beep();
-    }
-    T.cycle++;
-    T.phase = (T.cycle % state.settings.pomo.c === 0) ? "long" : "short";
-    T.left = T.total = phaseDur(T.phase);
-    T.run = true; T.ends = Date.now() + T.left * 1000;
-  } else {
-    if (credit) { toast("Fin del descanso"); notify("Fin del descanso. Siguiente pomodoro."); beep(); }
-    T.phase = "focus"; T.left = T.total = phaseDur("focus");
-    T.run = false; T.ends = null;
-  }
-  change();
-  if (route.view === "pomodoro" || route.view === "home") render(); else renderPomoUI();
-}
-function pomoTick() {
-  const T = state.timer;
-  if (!T.run || !T.ends) return;
-  T.left = Math.max(0, Math.round((T.ends - Date.now()) / 1000));
-  if (T.left <= 0) { endPhase(true); return; }
-  updatePomoTime();
-}
-function fmtClock(sec) { return pad(Math.floor(sec / 60)) + ":" + pad(sec % 60); }
-function updatePomoTime() {
-  const T = state.timer, s = fmtClock(T.left);
-  const el = byId("ptime"); if (el) el.textContent = s;
-  const bar = byId("pfill"); if (bar) bar.style.width = (100 - T.left / T.total * 100) + "%";
-  const mp = byId("mp_time"); if (mp) mp.textContent = s;
-  document.title = T.run ? s + " · " + (T.phase === "focus" ? "Foco" : "Descanso") + " — Aula" : "Aula · Organizador académico";
-}
-function renderPomoUI() {
-  const T = state.timer, mp = byId("minipomo");
-  if (mp) {
-    const active = T.run || T.left !== T.total || T.phase !== "focus";
-    if (active && route.view !== "pomodoro") {
-      mp.classList.add("show");
-      mp.innerHTML = `<span class="ph" style="color:${T.phase === "focus" ? "var(--acc)" : "var(--ok)"}">${T.phase === "focus" ? "Foco" : "Descanso"}</span>
-        <span class="tm" id="mp_time">${fmtClock(T.left)}</span>
-        <span class="tiny">${T.run ? "en curso" : "en pausa"}</span>`;
-    } else mp.classList.remove("show");
-  }
-  if (route.view === "pomodoro") renderPomoView();
-  updatePomoTime();
-}
+/* ===================== TIEMPO ESTUDIADO (manual) =====================
+   El pomodoro se sacó en Aula 2.11 (A4). Las sesiones ya registradas se conservan
+   (state.sessions, con su campo pomos) y siguen sumando en estadísticas; los
+   campos viejos (settings.pomo, state.timer, t.pomos) quedan en los datos pero
+   no se muestran. El tiempo se carga a mano con "Registrar tiempo". */
 function logManualSession() {
   const min = parseInt(byId("ms_min").value) || 0;
   if (min <= 0) { toast("Ingresá los minutos"); return; }
@@ -1073,7 +1279,7 @@ function logManualSession() {
   else if (link.startsWith("p:")) o.projectId = link.slice(2);
   else if (link.startsWith("e:")) o.evalId = link.slice(2);
   addSession(min, o);
-  closeModal(); render(); toast("Sesión de " + fmtMin(min) + " registrada");
+  closeModal(); render(); toast(fmtMin(min) + " registrados");
 }
 
 /* ======================== NOTIFICACIONES ======================== */
@@ -1424,8 +1630,8 @@ function buildSeries() {
       map.set("r:" + t.id, { key: "r:" + t.id, kind: "recur", title: t.title, subjectId: t.subjectId, projectId: t.projectId, tasks: [t] });
       continue;
     }
-    if (!t.date) continue;
-    const k = "s:" + (t.subjectId || "") + "|" + (t.projectId || "") + "|" + String(t.title).trim().toLowerCase();
+    if (!t.date || !t.seriesId) continue; // solo series explícitas (A3)
+    const k = "s:" + t.seriesId;
     if (!map.has(k)) map.set(k, { key: k, kind: "group", title: t.title, subjectId: t.subjectId, projectId: t.projectId, tasks: [] });
     map.get(k).tasks.push(t);
   }
@@ -1453,131 +1659,356 @@ function seriesLabel(s) {
   const o = s.subjectId ? subjById(s.subjectId) : null, p = s.projectId ? projById(s.projectId) : null;
   return o ? { name: o.short, color: o.color, full: o.name } : p ? { name: p.name.slice(0, 8), color: "#64748b", full: p.name } : null;
 }
+/* C3 · La vista Series es una lista simple (estilo Ajustes del iPhone): cada
+   fila dice qué es, cada cuánto y cómo va; tocarla abre el editor de la serie. */
 function viewSeries() {
   const all = buildSeries();
   const act = all.filter(s => s.active), old = all.filter(s => !s.active);
-  let h = `<div class="vhead"><h2>Series y repeticiones</h2><span class="sub">tareas que se repiten día a día hasta una fecha</span>
-    <div class="grow"></div><button class="btn primary" onclick="openQuickTask()">Nueva serie</button></div>`;
-  const card = s => {
-    const lb = seriesLabel(s);
-    const daysLeft = s.kind === "recur" ? null : daysTo(s.to);
-    const pct = s.tasks.length ? Math.round(s.doneN / s.tasks.length * 100) : 0;
-    return `<div class="card" style="margin:0">
-      <h3 style="margin-bottom:6px">${esc(s.title)}<div class="grow"></div>
-        ${lb ? `<span class="tag" style="background:${lb.color}1c;color:${lb.color}">${esc(lb.name)}</span>` : ""}
-        ${s.kind === "recur" ? '<span class="pill acc">recurrente</span>' : ""}</h3>
-      <div class="tiny" style="margin-bottom:8px">
-        ${s.kind === "recur" ? "Se repite automáticamente" : `Del ${fmtD(s.from)} al ${fmtD(s.to)} · ${s.tasks.length} días`}
-        ${daysLeft !== null ? (daysLeft >= 0 ? ` · termina ${fmtRel(s.to)}` : " · ya terminó") : ""}
-      </div>
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><div class="pbar"><i style="width:${pct}%"></i></div><span class="tiny">${s.doneN}/${s.tasks.length}</span></div>
-      <div class="tiny">${s.mins.length === 1 ? hClock(s.mins[0]) + " cada día" : "entre " + hClock(s.mins[0]) + " y " + hClock(s.mins[s.mins.length - 1]) + " por día"} · <b>${hClock(s.pendMin)} pendientes</b>${s.next ? " · próxima " + fmtD(s.next.date) : ""}</div>
-      <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
-        <button class="btn sm primary" onclick="openSeriesModal('${escA(s.key)}')">Gestionar</button>
-        <button class="btn sm" onclick="selectSeries('${escA(s.key)}')">Seleccionar tareas</button>
-      </div></div>`;
+  const row = s => {
+    const lb = seriesLabel(s), recur = s.kind === "recur";
+    const how = recur ? recurLabel(s.tasks[0].recur) + ", sin fin" : seriesPattern(s.tasks.map(t => t.date)).label;
+    const prog = recur ? "" : ` · ${s.doneN}/${s.tasks.length} hechas`;
+    const next = recur ? "" : s.next ? ` · próxima ${fmtD(s.next.date)}` : s.active ? "" : ` · terminó ${fmtD(s.to)}`;
+    return `<button type="button" class="serrow" onclick="openSeriesModal('${escA(s.key)}')">
+      <span class="serdot" style="background:${lb ? lb.color : "var(--tx3)"}"></span>
+      <span class="sermain"><span class="sertitle">${esc(s.title)}</span>
+        <span class="tiny">${lb ? esc(lb.name) + " · " : ""}${esc(how)}${prog}${next}</span></span>
+      ${recur ? "" : `<span class="serpct" aria-hidden="true"><i style="width:${Math.round(s.doneN / s.tasks.length * 100)}%"></i></span>`}
+      <span class="serchev" aria-hidden="true">›</span></button>`;
   };
-  h += act.length ? `<div class="grid2">${act.map(card).join("")}</div>`
-    : `<div class="card"><div class="empty">No tenés series activas.<br>Creá una tarea con la opción “Todos los días (período)” y aparece acá para gestionarla entera.</div></div>`;
-  if (old.length) h += `<div class="card" style="margin-top:14px"><h3>Terminadas</h3><div class="grid2" style="margin-top:8px">${old.map(card).join("")}</div></div>`;
+  let h = `<div class="vhead"><h2>Series</h2><span class="sub">tareas que se repiten</span>
+    <div class="grow"></div><button class="btn primary" onclick="openQuickTask()">Nueva serie</button></div>`;
+  h += act.length ? `<div class="card serlist">${act.map(row).join("")}</div>`
+    : `<div class="card"><div class="empty">No tenés series activas.<br>Al crear una tarea, elegí “Repetir” y la serie aparece acá.</div></div>`;
+  if (old.length) h += `<details class="card sermore"><summary>Terminadas (${old.length})</summary><div class="serlist">${old.map(row).join("")}</div></details>`;
   return h;
 }
-function selectSeries(key) {
-  const s = seriesByKey(key); if (!s) return;
-  ui.sel = new Set(s.pend.map(t => t.id));
-  ui.selMode = true;
-  go("list");
-  setTimeout(selRefresh, 60);
-  toast(s.pend.length + " tareas de la serie seleccionadas");
+function recurLabel(r) {
+  r = r || {};
+  if (r.kind === "daily") return "todos los días";
+  if (r.kind === "weekly") return "cada semana";
+  if (r.kind === "monthly") return "cada mes";
+  if (r.kind === "interval") return "cada " + (r.n || 2) + " días";
+  if (r.kind === "days" && r.days && r.days.length) {
+    const o = [1, 2, 3, 4, 5, 6, 0].filter(d => r.days.includes(d)).map(d => DAYS[d]);
+    return o.length === 1 ? "los " + o[0] : "los " + o.slice(0, -1).join(", ") + " y " + o[o.length - 1];
+  }
+  return "se repite";
 }
+/* C3 · "3 de 5": posición de una tarea dentro de su serie. */
+function seriesPos(t) {
+  if (!t || !t.seriesId || t.recur) return null;
+  if (!ui.serMap) {
+    ui.serMap = new Map();
+    for (const x of state.tasks) {
+      if (!x.seriesId || x.recur || !x.date || x.archived || x.status === "canc") continue;
+      if (!ui.serMap.has(x.seriesId)) ui.serMap.set(x.seriesId, []);
+      ui.serMap.get(x.seriesId).push(x);
+    }
+    for (const v of ui.serMap.values()) v.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  }
+  const list = ui.serMap.get(t.seriesId) || [];
+  const i = list.indexOf(t);
+  return list.length >= 2 && i >= 0 ? { i: i + 1, n: list.length, key: "s:" + t.seriesId, list } : null;
+}
+/* C2a · Editor de serie: todas las ocurrencias en una lista, selección
+   (todas / pendientes / ninguna / a mano) y acciones masivas con vista previa
+   antes de aplicar y deshacer después. El modal queda abierto después de
+   aplicar, así se puede encadenar ("+1 h 30 a todas" y después "+10 min a una"). */
+const SR_ACTS = [
+  ["add", "Sumar tiempo"], ["sub", "Restar tiempo"], ["set", "Fijar tiempo"],
+  ["move", "Mover de día"], ["time", "Cambiar hora"], ["del", "Borrar"]
+];
 function openSeriesModal(key) {
   const s = seriesByKey(key); if (!s) { toast("La serie ya no existe"); return; }
-  const lb = seriesLabel(s);
-  const recur = s.kind === "recur";
-  ui.seriesKey = key;
-  let h = `<h3>${esc(s.title)}</h3>
-    <p class="tiny">${lb ? esc(lb.full) + " · " : ""}${recur ? "tarea recurrente" : `del ${fmtD(s.from)} al ${fmtD(s.to)} · ${s.tasks.length} días · ${s.doneN} completadas`}</p>`;
-  if (!recur) {
-    h += `<div class="card" style="margin:12px 0"><h3>Tiempo por día</h3>
-      <div class="mrow">
-        <div><label for="sr_op">Operación</label><select id="sr_op">
-          <option value="set">Fijar en</option><option value="add">Sumar</option><option value="sub">Restar</option><option value="mul">Multiplicar por</option></select></div>
-        <div><label for="sr_val">Minutos</label><input id="sr_val" type="number" value="60" step="5" min="0"></div>
-        <div><label for="sr_scope">Aplicar a</label><select id="sr_scope">
-          <option value="pend">Todas las pendientes</option>
-          <option value="last">Solo las últimas…</option>
-          <option value="all">Todas (incluidas las hechas)</option></select></div>
-      </div>
-      <div class="mrow"><div><label for="sr_lastn">Cuántas son “las últimas”</label><input id="sr_lastn" type="number" value="3" min="1" max="99"></div>
-      <div style="flex:2;display:flex;align-items:flex-end"><button class="btn primary" style="width:100%" onclick="seriesApplyTime()">Aplicar cambio de tiempo</button></div></div>
-      <p class="tiny" style="margin-top:6px">Ejemplo: “Fijar en 120, solo las últimas 3” carga más las vísperas del examen.</p></div>`;
-    h += `<div class="card" style="margin:12px 0"><h3>Extender o recortar</h3>
-      <div class="mrow">
-        <div><label for="sr_until">Extender hasta</label><input id="sr_until" type="date" value="${addDays(s.to, 7)}"></div>
-        <div style="display:flex;align-items:flex-end"><button class="btn" style="width:100%" onclick="seriesExtend()">Agregar días</button></div>
-      </div>
-      <div class="mrow" style="margin-top:8px">
-        <div><label for="sr_trim">Borrar pendientes desde</label><input id="sr_trim" type="date" value="${todayISO()}"></div>
-        <div style="display:flex;align-items:flex-end"><button class="btn danger" style="width:100%" onclick="seriesTrim()">Recortar</button></div>
-      </div></div>`;
+  ui.srSel = new Set(s.pend.map(t => t.id)); // por defecto: las pendientes
+  if (ui.seriesKey !== key || !ui.srAct) {
+    ui.srAct = "add"; ui.srMin = 90; ui.srDays = 1; ui.srTime = "";
+    ui.srAddMode = "count"; ui.srAddN = 1; ui.srUntil = ""; ui.srAddOne = ""; ui.srAddOpen = false;
   }
-  h += `<div class="card" style="margin:12px 0"><h3>Toda la serie</h3>
-    <label for="sr_title">Renombrar</label><input id="sr_title" value="${escA(s.title)}">
+  ui.srOpen = null;
+  ui.seriesKey = key;
+  openModal(seriesModalHTML(s), true, true);
+  srPreview();
+}
+function refreshSeriesModal() {
+  const box = byId("modalbox");
+  if (!byId("modalbg").classList.contains("open") || !box.querySelector("#sr_occ")) return;
+  const s = seriesByKey(ui.seriesKey);
+  if (!s) { closeModal(); return; }
+  const keepScroll = byId("sr_occ").scrollTop;
+  box.innerHTML = seriesModalHTML(s);
+  byId("sr_occ").scrollTop = keepScroll;
+  srPreview();
+}
+function seriesModalHTML(s) {
+  const lb = seriesLabel(s), recur = s.kind === "recur", today = todayISO();
+  let h = `<h3>${esc(s.title)}</h3>
+    <p class="tiny">${lb ? esc(lb.full) + " · " : ""}${recur ? esc(recurLabel(s.tasks[0].recur)) + ", sin fin · " + fmtMin(s.tasks[0].estMin) + " cada vez" : `${s.tasks.length} tareas · ${s.doneN} hechas · ${fmtMin(s.totMin)} en total`}</p>`;
+  if (!recur) {
+    const ids = new Set(s.tasks.map(t => t.id));
+    ui.srSel = new Set([...ui.srSel].filter(id => ids.has(id))); // las borradas ya no cuentan
+    const row = t => {
+      const done = t.status === "done", late = !done && t.date < today, open = ui.srOpen === t.id;
+      let r = `<div class="occ${done ? " done" : ""}${open ? " open" : ""}" data-id="${escA(t.id)}">
+        <label class="occl"><input type="checkbox" ${ui.srSel.has(t.id) ? "checked" : ""} onchange="srToggle('${escA(t.id)}',this.checked)">
+        <span class="occd">${fmtD(t.date)}${t.time ? ` <span class="ttime">${esc(t.time)}</span>` : ""}</span>
+        <span class="occst">${done ? "✓ hecha" : late ? "atrasada" : t.date === today ? "hoy" : ""}</span>
+        <span class="occm">${fmtMin(t.estMin)}</span></label>
+        <button type="button" class="occmore" aria-expanded="${open}" aria-label="Editar solo la del ${escA(fmtD(t.date))}" onclick="srEdit('${escA(t.id)}')">${open ? "Listo" : "Editar"}</button></div>`;
+      if (open) r += `<div class="occedit">
+        <div class="occstep"><span class="tiny">Solo esta</span>
+          <button type="button" class="btn sm" onclick="srOne('${escA(t.id)}','add',-10)" aria-label="Restar 10 minutos">−10 m</button>
+          <input id="sr_onemin" type="number" min="0" step="5" value="${t.estMin || 0}" aria-label="Minutos de esta" onchange="srOne('${escA(t.id)}','min',this.value)">
+          <button type="button" class="btn sm" onclick="srOne('${escA(t.id)}','add',10)" aria-label="Sumar 10 minutos">+10 m</button></div>
+        <div class="mrow">
+          <div><label for="sr_onedate">Fecha</label><input id="sr_onedate" type="date" value="${escA(t.date)}" onchange="srOne('${escA(t.id)}','date',this.value)"></div>
+          <div><label for="sr_onetime">Hora</label><input id="sr_onetime" type="time" value="${escA(t.time || "")}" onchange="srOne('${escA(t.id)}','time',this.value)"></div>
+        </div>
+        <div class="occacts"><button type="button" class="btn sm" onclick="closeModal();openTaskEditor('${escA(t.id)}')">Abrir la tarea</button>
+          <div class="grow"></div><button type="button" class="btn sm danger" onclick="srOne('${escA(t.id)}','del')">Quitar de la serie</button></div>
+      </div>`;
+      return r;
+    };
+    h += `<div class="srbar"><span class="tiny">Elegir:</span>
+        <button type="button" class="btn sm" onclick="srSelect('all')">Todas</button>
+        <button type="button" class="btn sm" onclick="srSelect('pend')">Pendientes</button>
+        <button type="button" class="btn sm" onclick="srSelect('none')">Ninguna</button>
+        <div class="grow"></div><span class="tiny" id="sr_count"></span></div>
+      <div class="occlist" id="sr_occ">${s.tasks.map(row).join("")}</div>
+      <div class="srbulk">
+        <div class="mrow">
+          <div><label for="sr_act">Qué hacer con las elegidas</label><select id="sr_act" onchange="ui.srAct=this.value;srPreview()">
+            ${SR_ACTS.map(([v, l]) => `<option value="${v}"${ui.srAct === v ? " selected" : ""}>${l}</option>`).join("")}</select></div>
+          <div class="srx" id="sr_minwrap"><label for="sr_min">Minutos</label><input id="sr_min" type="number" min="0" step="5" value="${ui.srMin}" oninput="ui.srMin=this.value;srPreview()"></div>
+          <div class="srx" id="sr_dayswrap"><label for="sr_days">Días (− antes, + después)</label><input id="sr_days" type="number" step="1" value="${ui.srDays}" oninput="ui.srDays=this.value;srPreview()"></div>
+          <div class="srx" id="sr_timewrap"><label for="sr_time">Hora (vacía = sin hora)</label><input id="sr_time" type="time" value="${escA(ui.srTime)}" oninput="ui.srTime=this.value;srPreview()"></div>
+        </div>
+        <div class="srchips srx" id="sr_minchips">${[10, 30, 60, 90, 120].map(m => `<button type="button" class="btn sm" onclick="srSetVal('sr_min',${m})">${fmtMin(m)}</button>`).join("")}</div>
+        <div class="srchips srx" id="sr_dayschips">${[-7, -1, 1, 2, 3, 7].map(d => `<button type="button" class="btn sm" onclick="srSetVal('sr_days',${d})">${d > 0 ? "+" : "−"}${Math.abs(d)} d</button>`).join("")}</div>
+        <div class="reppreview" id="sr_preview" aria-live="polite"></div>
+        <button type="button" class="btn primary srapply" id="sr_apply" onclick="seriesBulkApply()">Aplicar</button>
+      </div>`;
+    const pat = seriesPattern(s.tasks.map(t => t.date));
+    h += `<details class="sradd"${ui.srAddOpen ? " open" : ""} ontoggle="ui.srAddOpen=this.open"><summary>Agregar tareas a la serie</summary>
+      <div class="mrow">
+        <div><label for="sr_addmode">Cómo</label><select id="sr_addmode" onchange="ui.srAddMode=this.value;srAddPreview()">
+          <option value="count"${ui.srAddMode === "count" ? " selected" : ""}>Más tareas, ${esc(pat.label)}</option>
+          <option value="until"${ui.srAddMode === "until" ? " selected" : ""}>Hasta una fecha, ${esc(pat.label)}</option>
+          <option value="one"${ui.srAddMode === "one" ? " selected" : ""}>Una fecha suelta</option></select></div>
+        <div class="srx" id="sr_addnwrap"><label for="sr_addn">Cuántas</label><input id="sr_addn" type="number" min="1" max="${REP_MAX}" value="${ui.srAddN}" oninput="ui.srAddN=this.value;srAddPreview()"></div>
+        <div class="srx" id="sr_untilwrap"><label for="sr_until">Hasta (inclusive)</label><input id="sr_until" type="date" value="${escA(ui.srUntil || addDays(s.to, 7))}" onchange="ui.srUntil=this.value;srAddPreview()"></div>
+        <div class="srx" id="sr_onewrap"><label for="sr_addone">Fecha</label><input id="sr_addone" type="date" value="${escA(ui.srAddOne || addDays(s.to, 1))}" onchange="ui.srAddOne=this.value;srAddPreview()"></div>
+      </div>
+      <div class="reppreview" id="sr_addpv" aria-live="polite"></div>
+      <button type="button" class="btn srapply" id="sr_addbtn" onclick="seriesAdd()">Agregar</button>
+    </details>`;
+    h += `<details class="srmore"><summary>Más opciones</summary>`;
+  } else {
+    // sin fin es una sola tarea: sus minutos, hora y regla se cambian en su editor
+    h += `<div class="serbanner" style="margin-top:12px"><span>Minutos, hora y cada cuánto se repite</span>
+      <button type="button" class="btn sm" onclick="closeModal();openTaskEditor('${escA(s.tasks[0].id)}')">Editar la tarea</button></div>
+      <details class="srmore" open><summary>Nombre y materia</summary>`;
+  }
+  h += `<label for="sr_title">Renombrar</label><input id="sr_title" value="${escA(s.title)}">
     <label for="sr_link">Materia / proyecto</label><select id="sr_link">${linkOptions(s.subjectId ? "s:" + s.subjectId : s.projectId ? "p:" + s.projectId : "")}</select>
     <div class="mrow" style="margin-top:10px">
-      <div><label for="sr_prio">Prioridad</label><select id="sr_prio">${PRIO.map((p, i) => `<option value="${i}">${p}</option>`).join("")}</select></div>
-      <div style="display:flex;align-items:flex-end"><button class="btn primary" style="width:100%" onclick="seriesApplyMeta()">Guardar cambios</button></div>
-    </div></div>`;
+      <div><label for="sr_prio">Prioridad</label><select id="sr_prio">${PRIO.map((p, i) => `<option value="${i}"${(s.tasks[0].prio ?? 1) === i ? " selected" : ""}>${p}</option>`).join("")}</select></div>
+      <div style="display:flex;align-items:flex-end"><button class="btn" style="width:100%" onclick="seriesApplyMeta()">Guardar</button></div>
+    </div></details>`;
   h += `<div class="mfoot">
-    <button class="btn danger" onclick="seriesDelete(false)">Eliminar pendientes</button>
-    <button class="btn danger" onclick="seriesDelete(true)">Eliminar toda la serie</button>
+    <button class="btn danger" onclick="seriesDelete(true)">${recur ? "Eliminar" : "Eliminar toda la serie"}</button>
     <div class="grow"></div>
-    <button class="btn" onclick="closeModal()">Cerrar</button></div>`;
-  openModal(h, true);
+    <button class="btn" onclick="closeModal()">Listo</button></div>`;
+  return h;
 }
-function seriesApplyTime() {
+function srToggle(id, on) { if (on) ui.srSel.add(id); else ui.srSel.delete(id); srPreview(); }
+function srSelect(which) {
   const s = seriesByKey(ui.seriesKey); if (!s) return;
-  const op = byId("sr_op").value, val = parseFloat(byId("sr_val").value) || 0;
-  const scope = byId("sr_scope").value, lastN = Math.max(1, parseInt(byId("sr_lastn").value) || 1);
-  let targets = scope === "all" ? s.tasks : s.pend;
-  if (scope === "last") targets = s.pend.slice(-lastN);
-  if (!targets.length) { toast("No hay tareas para cambiar"); return; }
-  targets.forEach(t => {
-    const cur = t.estMin || 0;
-    t.estMin = Math.max(0, Math.round(op === "set" ? val : op === "add" ? cur + val : op === "sub" ? cur - val : cur * val));
+  ui.srSel = new Set(which === "all" ? s.tasks.map(t => t.id) : which === "pend" ? s.pend.map(t => t.id) : []);
+  document.querySelectorAll("#sr_occ .occ").forEach(l => { l.querySelector("input").checked = ui.srSel.has(l.dataset.id); });
+  srPreview();
+}
+function srSetVal(id, v) { const el = byId(id); if (!el) return; el.value = v; el.dispatchEvent(new Event("input")); }
+/* Calcula qué va a pasar con la selección actual, sin tocar nada. */
+function srPlan() {
+  const s = seriesByKey(ui.seriesKey); if (!s || s.kind === "recur") return null;
+  const act = ui.srAct, targets = s.tasks.filter(t => ui.srSel.has(t.id));
+  const n = targets.length, nn = n + " tarea" + (n === 1 ? "" : "s");
+  if (!n) return { error: "Elegí al menos una tarea de la lista." };
+  const min = Math.round(parseFloat(ui.srMin)), days = parseInt(ui.srDays, 10);
+  if (["add", "sub", "set"].includes(act) && !(min >= 0)) return { error: "Poné cuántos minutos." };
+  if (["add", "sub"].includes(act) && min === 0) return { error: "Poné cuántos minutos." };
+  if (act === "move" && !days) return { error: "Poné cuántos días (por ejemplo 2 o −1)." };
+  if (act === "time" && ui.srTime && hmToMin(ui.srTime) == null) return { error: "La hora no es válida." };
+  const changes = targets.map(t => {
+    const c = { t, from: "", to: "" };
+    if (act === "add" || act === "sub" || act === "set") {
+      const v = act === "set" ? min : Math.max(0, (t.estMin || 0) + (act === "add" ? min : -min));
+      c.from = fmtMin(t.estMin); c.to = fmtMin(v); c.apply = () => { t.estMin = v; };
+    } else if (act === "move") {
+      const d = addDays(t.date, days);
+      c.from = fmtD(t.date); c.to = fmtD(d); c.apply = () => { t.date = d; };
+    } else if (act === "time") {
+      const v = ui.srTime || null;
+      c.from = t.time || "sin hora"; c.to = v || "sin hora"; c.apply = () => { t.time = v; };
+    } else { c.from = fmtD(t.date); }
+    return c;
   });
-  change(); closeModal(); render();
-  toast("Tiempo actualizado en " + targets.length + " día" + (targets.length > 1 ? "s" : "") + " de la serie");
+  const what = act === "add" ? `sumar ${fmtMin(min)} a ${nn}` : act === "sub" ? `restar ${fmtMin(min)} a ${nn}`
+    : act === "set" ? `dejar ${nn} en ${fmtMin(min)}` : act === "move" ? `mover ${nn} ${Math.abs(days)} día${Math.abs(days) === 1 ? "" : "s"} ${days > 0 ? "más tarde" : "antes"}`
+    : act === "time" ? (ui.srTime ? `poner ${nn} a las ${ui.srTime}` : `sacarle la hora a ${nn}`) : `borrar ${nn}`;
+  const btn = act === "add" ? `Sumar ${fmtMin(min)}` : act === "sub" ? `Restar ${fmtMin(min)}` : act === "set" ? `Fijar en ${fmtMin(min)}`
+    : act === "move" ? "Mover" : act === "time" ? "Cambiar hora" : "Borrar";
+  const past = act === "add" ? `Sumaste ${fmtMin(min)} a ${nn}` : act === "sub" ? `Restaste ${fmtMin(min)} a ${nn}`
+    : act === "set" ? `${n === 1 ? "Quedó" : "Quedaron"} ${nn} en ${fmtMin(min)}` : act === "move" ? `${n === 1 ? "Movida" : "Movidas"} ${nn}`
+    : act === "time" ? `Hora cambiada en ${nn}` : `${n === 1 ? "Borrada" : "Borradas"} ${nn}`;
+  return { s, act, targets, changes, what, past, btn: btn + (act === "move" || act === "del" ? " " : " a ") + nn, n };
 }
-function seriesExtend() {
-  const s = seriesByKey(ui.seriesKey); if (!s || s.kind === "recur") return;
-  const until = byId("sr_until").value;
-  if (!until || until <= s.to) { toast("Elegí una fecha posterior al " + fmtD(s.to)); return; }
-  const base = s.tasks[s.tasks.length - 1];
-  const ids = [];
-  let d = addDays(s.to, 1), n = 0;
-  while (d <= until && n < 365) {
-    ids.push(quickAddTask({
-      title: base.title, desc: base.desc, subjectId: base.subjectId, projectId: base.projectId,
-      evalId: base.evalId, date: d, estMin: base.estMin, type: base.type, prio: base.prio, tags: [...(base.tags || [])]
-    }).id);
-    d = addDays(d, 1); n++;
-  }
-  closeModal(); render();
-  toast(n + " días agregados hasta el " + fmtD(until), () => { state.tasks = state.tasks.filter(t => !ids.includes(t.id)); change(); render(); });
+function srPreview() {
+  const pv = byId("sr_preview"), btn = byId("sr_apply"); if (!pv) return;
+  const act = ui.srAct, show = (id, on) => { const el = byId(id); if (el) el.style.display = on ? "" : "none"; };
+  const isMin = ["add", "sub", "set"].includes(act);
+  show("sr_minwrap", isMin); show("sr_minchips", isMin);
+  show("sr_dayswrap", act === "move"); show("sr_dayschips", act === "move");
+  show("sr_timewrap", act === "time");
+  const cnt = byId("sr_count"); if (cnt) cnt.textContent = ui.srSel.size + (ui.srSel.size === 1 ? " elegida" : " elegidas");
+  document.querySelectorAll("#sr_occ .occ").forEach(l => l.classList.toggle("on", ui.srSel.has(l.dataset.id)));
+  srAddPreview();
+  const p = srPlan(); if (!p) return;
+  pv.classList.toggle("bad", !!p.error);
+  btn.disabled = !!p.error;
+  btn.classList.toggle("danger", !p.error && p.act === "del");
+  btn.classList.toggle("primary", !!p.error || p.act !== "del");
+  if (p.error) { pv.textContent = p.error; btn.textContent = "Aplicar"; return; }
+  const list = p.changes.slice(0, 8).map(c => `<span class="repdate">${p.act === "move" || p.act === "del" ? "" : fmtD(c.t.date) + ": "}${esc(c.from)}${p.act === "del" ? "" : " → <b>" + esc(c.to) + "</b>"}</span>`).join("")
+    + (p.changes.length > 8 ? `<span class="repdate more">y ${p.changes.length - 8} más</span>` : "");
+  pv.innerHTML = `<b>Vas a ${esc(p.what)}</b>${p.act === "del" ? " (podés deshacer)" : ""}: <div class="repdates">${list}</div>`;
+  btn.textContent = p.btn;
 }
-function seriesTrim() {
-  const s = seriesByKey(ui.seriesKey); if (!s || s.kind === "recur") return;
-  const from = byId("sr_trim").value;
-  if (!from) { toast("Elegí una fecha"); return; }
-  const victims = s.pend.filter(t => t.date >= from);
-  if (!victims.length) { toast("No hay tareas pendientes desde esa fecha"); return; }
-  doubleDelete(victims.length + " tareas de la serie desde el " + fmtD(from), () => {
-    const snap = victims.map(t => ({ t, i: state.tasks.indexOf(t) })).filter(x => x.i >= 0).sort((a, b) => b.i - a.i);
+function seriesBulkApply() {
+  const p = srPlan(); if (!p || p.error) { if (p) toast(p.error); return; }
+  let undo;
+  if (p.act === "del") {
+    const snap = p.targets.map(t => ({ t, i: state.tasks.indexOf(t) })).filter(x => x.i >= 0).sort((a, b) => b.i - a.i);
     snap.forEach(x => state.tasks.splice(x.i, 1));
-    change(); closeModal(); render();
-    toast(snap.length + " tareas eliminadas", () => { [...snap].reverse().forEach(x => state.tasks.splice(Math.min(x.i, state.tasks.length), 0, x.t)); change(); render(); });
-  });
+    undo = () => { [...snap].reverse().forEach(x => state.tasks.splice(Math.min(x.i, state.tasks.length), 0, x.t)); };
+  } else {
+    const snap = p.targets.map(t => ({ t, estMin: t.estMin, date: t.date, time: t.time }));
+    p.changes.forEach(c => c.apply());
+    undo = () => { snap.forEach(x => { x.t.estMin = x.estMin; x.t.date = x.date; x.t.time = x.time; }); };
+  }
+  change(); render(); refreshSeriesModal();
+  toast(p.past, () => { undo(); change(); render(); refreshSeriesModal(); });
+}
+/* C2b · El patrón de una serie se deduce de sus fechas (las series no guardan
+   la regla): mensual si todas caen el mismo día del mes; si todas están a la
+   misma distancia, esa distancia; si son ciertos días de la semana, esos días;
+   si no, la distancia más común. Así funciona también con series viejas o
+   con alguna fecha movida a mano. */
+function seriesPattern(dates) {
+  const ds = [...dates].filter(Boolean).sort();
+  const gaps = [];
+  for (let i = 1; i < ds.length; i++) gaps.push(Math.round((dToDate(ds[i]) - dToDate(ds[i - 1])) / 864e5));
+  const pos = gaps.filter(g => g > 0);
+  if (!pos.length) return { kind: "gap", n: 1, label: "todos los días" };
+  const dom = new Set(ds.map(d => d.slice(8)));
+  if (dom.size === 1 && pos.every(g => g >= 28)) return { kind: "month", label: "cada mes" }; // el 31 se saltea los meses cortos (C1)
+  const gapLabel = n => n === 1 ? "todos los días" : n === 7 ? "cada semana" : n === 14 ? "cada 2 semanas" : "cada " + n + " días";
+  if (new Set(pos).size === 1) return { kind: "gap", n: pos[0], label: gapLabel(pos[0]) };
+  const wd = [...new Set(ds.map(d => dToDate(d).getDay()))];
+  // ciertos días de la semana: entre la primera y la última están TODOS esos días (si no, es otra cosa, por ejemplo una fecha movida a mano)
+  const span = Math.round((dToDate(ds[ds.length - 1]) - dToDate(ds[0])) / 864e5), have = new Set(ds);
+  let full = span >= 6;
+  for (let d = ds[0]; full && d <= ds[ds.length - 1]; d = addDays(d, 1)) if (wd.includes(dToDate(d).getDay()) && !have.has(d)) full = false;
+  if (wd.length >= 2 && wd.length <= 6 && full) {
+    const order = [1, 2, 3, 4, 5, 6, 0].filter(d => wd.includes(d)).map(d => DAYS[d]);
+    return { kind: "wd", days: wd, label: "los " + order.slice(0, -1).join(", ") + " y " + order[order.length - 1] };
+  }
+  const cnt = {}; pos.forEach(g => cnt[g] = (cnt[g] || 0) + 1);
+  const n = +Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a] || a - b)[0];
+  return { kind: "gap", n, label: gapLabel(n) };
+}
+function patternNext(pat, d) {
+  if (pat.kind === "month") {
+    const x = dToDate(d), day = x.getDate();
+    for (let k = 1; k < 13; k++) { const y = new Date(x.getFullYear(), x.getMonth() + k, day); if (y.getDate() === day) return iso(y); }
+  }
+  if (pat.kind === "wd") { let y = addDays(d, 1); while (!pat.days.includes(dToDate(y).getDay())) y = addDays(y, 1); return y; }
+  return addDays(d, pat.n || 1);
+}
+function srAddPlan() {
+  const s = seriesByKey(ui.seriesKey); if (!s || s.kind === "recur") return null;
+  const have = new Set(s.tasks.map(t => t.date)), mode = ui.srAddMode, pat = seriesPattern(s.tasks.map(t => t.date));
+  let dates = [];
+  if (mode === "one") {
+    const d = ui.srAddOne || addDays(s.to, 1);
+    if (!d) return { error: "Elegí una fecha." };
+    if (have.has(d)) return { error: "Ya hay una tarea de la serie el " + fmtD(d) + "." };
+    dates = [d];
+  } else if (mode === "until") {
+    const until = ui.srUntil || addDays(s.to, 7);
+    if (!until || until <= s.to) return { error: "Elegí una fecha posterior a la última (" + fmtD(s.to) + ")." };
+    for (let d = patternNext(pat, s.to); d <= until && dates.length <= REP_MAX; d = patternNext(pat, d)) dates.push(d);
+    if (!dates.length) return { error: "Siguiendo el patrón (" + pat.label + ") no cae ninguna fecha hasta el " + fmtD(until) + "." };
+  } else {
+    const n = parseInt(ui.srAddN, 10);
+    if (!(n >= 1)) return { error: "Poné cuántas." };
+    if (n > REP_MAX) return { error: "Máximo " + REP_MAX + "." };
+    for (let d = s.to, i = 0; i < n; i++) { d = patternNext(pat, d); dates.push(d); }
+  }
+  if (dates.length > REP_MAX) return { error: "Son demasiadas (máximo " + REP_MAX + ")." };
+  return { s, dates, pat };
+}
+function srAddPreview() {
+  const pv = byId("sr_addpv"), btn = byId("sr_addbtn"); if (!pv) return;
+  const mode = ui.srAddMode, show = (id, on) => { const el = byId(id); if (el) el.style.display = on ? "" : "none"; };
+  show("sr_addnwrap", mode === "count"); show("sr_untilwrap", mode === "until"); show("sr_onewrap", mode === "one");
+  const p = srAddPlan(); if (!p) return;
+  pv.classList.toggle("bad", !!p.error); btn.disabled = !!p.error;
+  if (p.error) { pv.textContent = p.error; btn.textContent = "Agregar"; return; }
+  const n = p.dates.length, nn = n + " tarea" + (n === 1 ? "" : "s");
+  const list = p.dates.slice(0, 10).map(d => `<span class="repdate">${fmtD(d)}</span>`).join("") + (n > 10 ? `<span class="repdate more">y ${n - 10} más</span>` : "");
+  pv.innerHTML = `<b>Vas a agregar ${nn}</b> de ${fmtMin(p.s.tasks[p.s.tasks.length - 1].estMin)}: <div class="repdates">${list}</div>`;
+  btn.textContent = "Agregar " + nn;
+}
+function seriesAdd() {
+  const p = srAddPlan(); if (!p || p.error) { if (p) toast(p.error); return; }
+  const base = p.s.tasks[p.s.tasks.length - 1], ids = [];
+  for (const d of p.dates) ids.push(quickAddTask({
+    title: base.title, desc: base.desc, subjectId: base.subjectId, projectId: base.projectId,
+    evalId: base.evalId, date: d, estMin: base.estMin, type: base.type, prio: base.prio, tags: [...(base.tags || [])], seriesId: base.seriesId, time: base.time || null
+  }).id);
+  ui.srAddOne = ""; ui.srUntil = "";
+  render(); refreshSeriesModal();
+  toast((ids.length === 1 ? "Agregada 1 tarea" : "Agregadas " + ids.length + " tareas") + " a la serie",
+    () => { state.tasks = state.tasks.filter(t => !ids.includes(t.id)); change(); render(); refreshSeriesModal(); });
+}
+/* C2b · Editar una sola ocurrencia, sin tocar el resto. Cada cambio se aplica
+   al instante y tiene deshacer. */
+function srEdit(id) { ui.srOpen = ui.srOpen === id ? null : id; refreshSeriesModal(); }
+function srOne(id, what, v) {
+  const t = taskById(id); if (!t) return;
+  const snap = { estMin: t.estMin, date: t.date, time: t.time }, i = state.tasks.indexOf(t);
+  let msg;
+  if (what === "del") {
+    state.tasks.splice(i, 1); ui.srSel.delete(id); ui.srOpen = null;
+    change(); render(); refreshSeriesModal();
+    toast("Quitada la del " + fmtD(t.date), () => { state.tasks.splice(Math.min(i, state.tasks.length), 0, t); change(); render(); refreshSeriesModal(); });
+    return;
+  }
+  if (what === "add" || what === "min") {
+    const m = what === "add" ? Math.max(0, (t.estMin || 0) + v) : Math.max(0, Math.round(parseFloat(v)));
+    if (!(m >= 0)) { refreshSeriesModal(); return; }
+    t.estMin = m; msg = fmtD(t.date) + ": " + fmtMin(m);
+  } else if (what === "date") {
+    if (!v) { refreshSeriesModal(); return; }
+    t.date = v; msg = "Movida al " + fmtD(v);
+  } else if (what === "time") {
+    t.time = v && hmToMin(v) != null ? v : null; msg = fmtD(t.date) + (t.time ? " a las " + t.time : ": sin hora");
+  }
+  change(); render(); refreshSeriesModal();
+  toast(msg, () => { Object.assign(t, snap); change(); render(); refreshSeriesModal(); });
 }
 function seriesApplyMeta() {
   const s = seriesByKey(ui.seriesKey); if (!s) return;
@@ -1608,9 +2039,9 @@ function seriesDelete(all) {
 /* ========================= ROUTER / SIDEBAR ========================= */
 const VIEWS = [
   ["home", "Inicio"], ["today", "Hoy"], ["calendar", "Calendario"], ["week", "Semana"],
-  ["subjects", "Materias"], ["evals", "Parciales y finales"], ["projects", "Proyectos"], ["series", "Series y repeticiones"],
-  ["plans", "Planes de estudio"], ["notes", "Notas"], ["pomodoro", "Pomodoro"], ["habits", "Hábitos"],
-  ["stats", "Estadísticas"], ["history", "Historial"], ["backups", "Copias de seguridad"], ["config", "Configuración"]
+  ["subjects", "Materias"], ["evals", "Parciales y finales"], ["projects", "Proyectos"], ["series", "Series"],
+  ["plans", "Planes de estudio"], ["notes", "Notas"], ["habits", "Hábitos"],
+  ["stats", "Progreso"], ["history", "Historial"], ["backups", "Copias de seguridad"], ["config", "Configuración"]
 ];
 function go(view, id) { location.hash = "#/" + view + (id ? "/" + id : ""); }
 function parseHash() {
@@ -1625,20 +2056,29 @@ function toggleSidebar(force) {
   byId("sbBackdrop").style.display = open && small ? "block" : "none";
   try { localStorage.setItem("aula-sb", open ? "1" : "0"); } catch (e) {}
 }
+/* Menú lateral (A4b): tres grupos según para qué entrás a la app, y Configuración
+   aparte. Historial y Copias de seguridad viven dentro de Configuración (se usan
+   poco). Las vistas que no están en el menú marcan a su "padre". */
+const NAV = [
+  ["Planificar", ["home", "today", "week", "calendar", "list"]],
+  ["Facultad", ["subjects", "evals", "projects"]],
+  ["Estudio", ["series", "plans", "notes", "habits", "stats"]]
+];
+const NAV_PARENT = { subject: "subjects", eval: "evals", project: "projects", history: "config", backups: "config" };
 function renderSidebar() {
   const sb = byId("sidebar");
-  const item = (v, label) => `<a href="#/${v}" class="${route.view === v || (v === "subjects" && route.view === "subject") || (v === "evals" && route.view === "eval") || (v === "projects" && route.view === "project") ? "on" : ""}">${label}</a>`;
-  sb.innerHTML =
-    '<div class="sec">Planificar</div>' + VIEWS.slice(0, 4).map(v => item(v[0], v[1])).join("") +
-    item("list", "Lista completa") +
-    '<div class="sec">Organizar</div>' + VIEWS.slice(4, 9).map(v => item(v[0], v[1])).join("") +
-    '<div class="sec">Estudiar</div>' + VIEWS.slice(9, 12).map(v => item(v[0], v[1])).join("") +
-    '<div class="sec">Sistema</div>' + VIEWS.slice(12).map(v => item(v[0], v[1])).join("") +
+  const cur = NAV_PARENT[route.view] || route.view;
+  const label = v => v === "list" ? "Lista completa" : (VIEWS.find(x => x[0] === v) || [v, v])[1];
+  const item = v => `<a href="#/${v}" class="${cur === v ? "on" : ""}">${label(v)}</a>`;
+  sb.innerHTML = NAV.map(([sec, vs]) => `<div class="sec">${sec}</div>` + vs.map(item).join("")).join("") +
+    '<div class="hr" style="margin:10px 6px"></div>' + item("config") +
     '<div style="padding:14px 10px" class="tiny">Aula v' + APP_VERSION + "</div>";
 }
+const backToConfig = `<button class="backlink" onclick="go('config')">‹ Configuración</button>`;
 function renderTop() {
-  const d = new Date();
-  const el = byId("topDate"); if (el) el.textContent = capitalize(DAYSL[d.getDay()]) + " " + d.getDate() + " de " + MESL[d.getMonth()];
+  const today = todayISO(), d = dToDate(today);
+  const late = today !== iso(new Date()); // pasada la medianoche, antes de que termine tu día
+  const el = byId("topDate"); if (el) el.textContent = capitalize(DAYSL[d.getDay()]) + " " + d.getDate() + " de " + MESL[d.getMonth()] + (late ? " · tu día sigue hasta las " + state.settings.dayEnd : "");
   const ne = byId("nextEv");
   if (ne) {
     const evs = upcomingEvals(60);
@@ -1651,19 +2091,18 @@ function renderTop() {
 function render() {
   parseHash();
   ui.selList = [];           // orden visual de las filas, para el Shift+clic
+  ui.serMap = null;          // posiciones "3 de 5" de las series (C3), se arma una vez por render
   renderSidebar(); renderTop();
   const v = byId("view");
   const map = {
     home: viewHome, today: viewToday, calendar: viewCalendar, week: viewWeek, list: viewList,
     subjects: viewSubjects, subject: viewSubjectDetail, evals: viewEvals, eval: viewEvalDetail,
     projects: viewProjects, project: viewProjectDetail, plans: viewPlans, notes: viewNotes, series: viewSeries,
-    pomodoro: viewPomodoro, habits: viewHabits, stats: viewStats, history: viewHistory,
+    habits: viewHabits, stats: viewStats, history: viewHistory,
     backups: viewBackups, config: viewConfig
   };
   v.innerHTML = (map[route.view] || viewHome)();
   if (route.view === "backups") fillBackupsList();
-  if (route.view === "pomodoro") renderPomoView();
-  renderPomoUI();
   renderSelBar();
 }
 
@@ -1678,22 +2117,23 @@ function taskRow(t, opts = {}) {
     (t.due && !t.date ? `<span class="mins">vence ${fmtD(t.due)}</span>` : "");
   const late = !t.recur && t.status !== "done" && ((t.date && t.date < todayISO()) || (!t.date && t.due && t.due < todayISO()));
   const canToday = !t.recur && !done && t.date !== todayISO();
-  const srt = !!opts.sortable;
-  const dnd = srt ? ` ondragstart="taskDragStart(event,'${t.id}')" ondragend="taskDragEnd(event)" ondragover="taskDragOver(event,'${t.id}')" ondragleave="taskDragLeave(event)" ondrop="taskDrop(event,'${t.id}','${date}')"` : "";
+  const srt = !!opts.sortable && !t.time; // las que tienen hora no se reordenan a mano
+  const dd = opts.sortable || opts.date ? ` data-date="${date}"` : !t.recur && t.date ? ` data-date="${t.date}"` : "";
   if (!opts.noSel) { ui.selList = ui.selList || []; ui.selList.push(t.id); }
-  return `<div class="task ${done ? "done" : ""} ${isSel(t.id) ? "sel" : ""}" data-id="${t.id}"${dnd} onclick="taskClick(event,'${t.id}')">
-    ${srt ? `<span class="drag" title="Arrastrá para cambiar el orden del día" aria-hidden="true"
-      onclick="event.stopPropagation()" onmousedown="dragArm(this)" onmouseup="dragDisarm(this)" ontouchstart="dragArm(this)">⣿</span>` : ""}
+  return `<div class="task ${done ? "done" : ""} ${isSel(t.id) ? "sel" : ""}" data-id="${t.id}"${dd} onclick="taskClick(event,'${t.id}')">
+    ${srt ? `<span class="drag" title="Arrastrá para ordenar o pasar a otro día" aria-hidden="true" onclick="event.stopPropagation()">⣿</span>` : opts.sortable ? '<span class="drag" aria-hidden="true" style="visibility:hidden">⣿</span>' : ""}
     <div class="cb ${done ? "on" : ""}" role="checkbox" aria-checked="${done}" tabindex="0" title="${done ? "Desmarcar" : "Completar"}"
       onclick="event.stopPropagation();toggleTask('${t.id}','${date}')"
       onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();toggleTask('${t.id}','${date}')}">${done ? "✓" : ""}</div>
     <div class="tinfo">
-      <div class="tt">${esc(t.title)}${late ? ' <span class="pill bad">atrasada</span>' : ""}${t.status === "prog" ? ' <span class="pill acc">en progreso</span>' : ""}${t.status === "post" ? ' <span class="pill warn">pospuesta</span>' : ""}</div>
+      <div class="tt">${t.time ? `<span class="ttime">${esc(fmtTime(t.time))}</span>` : ""}${esc(t.title)}${late ? ' <span class="pill bad">atrasada</span>' : ""}${t.status === "prog" ? ' <span class="pill acc">en progreso</span>' : ""}${t.status === "post" ? ' <span class="pill warn">pospuesta</span>' : ""}</div>
       <div class="tmeta">
         ${o ? `<span class="tag" style="background:${o.color}1c;color:${o.color};border:1px solid ${o.color}40">${esc(o.name)}</span>` : ""}
         ${t.estMin ? `<span class="mins">${fmtMin(t.estMin)}</span>` : ""}
         ${t.prio === 2 ? '<span class="prio2">! alta</span>' : t.prio === 0 ? '<span class="prio0">baja</span>' : ""}
         ${dateBit} ${sub}
+        ${(sp => sp ? `<span class="tiny serpos" title="Parte de una serie: ${sp.i} de ${sp.n}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 2l4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/></svg>${sp.i}/${sp.n}</span>` : "")(seriesPos(t))}
+        ${t.comments && t.comments.length ? `<span class="tiny cmtcount" title="${t.comments.length} comentario${t.comments.length > 1 ? "s" : ""}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg>${t.comments.length}</span>` : ""}
         ${ev && opts.showEval !== false ? `<span class="tiny">→ ${esc(ev.name.slice(0, 26))}</span>` : ""}
         ${(t.tags || []).map(x => `<span class="tiny">#${esc(x)}</span>`).join(" ")}
       </div>
@@ -1701,15 +2141,13 @@ function taskRow(t, opts = {}) {
     <div class="tactions" onclick="event.stopPropagation()">
       ${srt ? `<button title="Subir en el orden del día" onclick="moveTaskOrder('${t.id}',-1,'${date}')">↑</button>
       <button title="Bajar en el orden del día" onclick="moveTaskOrder('${t.id}',1,'${date}')">↓</button>` : ""}
-      <button title="Empezar pomodoro" onclick="startFromTask('${t.id}')">▸</button>
       ${canToday ? `<button title="Asignar a hoy" onclick="assignToday('${t.id}')">Hoy</button>` : ""}
-      ${!t.recur ? `<button title="Posponer para mañana" onclick="postponeTask('${t.id}')">+1d</button>` : ""}
+      ${!t.recur ? `<button title="Mover a otro día" onclick="openMoveSheet('${t.id}')">Mover…</button>` : ""}
       <button title="Editar" onclick="openTaskEditor('${t.id}')">Editar</button>
       <button title="Eliminar definitivamente" style="color:var(--bad)" onclick="deleteTask('${t.id}')">×</button>
     </div>
   </div>`;
 }
-function startFromTask(id) { startPomo(id); go("pomodoro"); }
 
 /* ============================ VISTA: INICIO ============================ */
 function viewHome() {
@@ -1725,7 +2163,7 @@ function viewHome() {
   const habitsToday = state.habits.filter(h => habitDueOn(h, today));
 
   let h = `<div class="vhead"><h2>${saludo()}</h2><span class="sub">${fmtDFull(today)}</span><div class="grow"></div>
-    <button class="btn" onclick="go('pomodoro')">Empezar a estudiar</button>
+    <button class="btn" onclick="openManualSession()">Registrar tiempo</button>
     <button class="btn primary" onclick="openQuick()">Agregar</button></div>`;
 
   h += `<div class="grid3" style="margin-bottom:12px">
@@ -1762,7 +2200,7 @@ function viewHome() {
     h += "</div>";
   }
 
-  h += `<div class="card"><h3>Para hoy<div class="grow"></div><span class="tiny">${dayTasks.length ? fmtMin(dayTasks.reduce((a, t) => a + (t.estMin || 0), 0)) + " en total" : ""}</span></h3>`;
+  h += `<div class="card dropzone" data-dropdate="${today}"><h3>Para hoy<div class="grow"></div><span class="tiny">${dayTasks.length ? fmtMin(dayTasks.reduce((a, t) => a + (t.estMin || 0), 0)) + " en total" : ""}</span></h3>`;
   h += dayTasks.length ? dayTasks.map(t => taskRow(t, { sortable: true })).join("") : `<div class="empty">Nada programado para hoy. Agregá una tarea o revisá las flexibles.</div>`;
   h += "</div>";
 
@@ -1808,7 +2246,7 @@ function suggestNow(dayTasks, od, flex, evs) {
     items.push(`<b>${esc(next.name)}</b> es ${daysTo(next.date) === 0 ? "hoy" : daysTo(next.date) === 1 ? "mañana" : "en " + daysTo(next.date) + " días"}${pend.length ? ": quedan " + pend.length + " tareas de su plan (" + fmtMin(pend.reduce((a, t) => a + (t.estMin || 0), 0)) + ")" : ""}.`);
   }
   const first = dayTasks.filter(t => !isDoneOn(t, todayISO())).sort((a, b) => b.prio - a.prio)[0];
-  if (first) items.push(`Siguiente sugerida: <b>${esc(first.title)}</b>${first.estMin ? " (" + fmtMin(first.estMin) + ")" : ""}. <button class="btn sm" onclick="event.stopPropagation();startFromTask('${first.id}')">Empezar pomodoro</button>`);
+  if (first) items.push(`Siguiente sugerida: <b>${esc(first.title)}</b>${first.estMin ? " (" + fmtMin(first.estMin) + ")" : ""}. <button class="btn sm" onclick="event.stopPropagation();openTaskEditor('${first.id}')">Abrir</button>`);
   else if (flex.length) items.push(`Hoy está libre: podés adelantar <b>${esc(flex[0].title)}</b> (vence ${fmtD(flex[0].due)}).`);
   return items.length ? items.map(x => `<p class="muted" style="margin:4px 0">${x}</p>`).join("") : null;
 }
@@ -1828,11 +2266,12 @@ function viewToday() {
     <button class="btn ${ui.selMode ? "primary" : ""}" onclick="toggleSelMode()" title="Elegir varias tareas (o usá Ctrl+clic y Shift+clic)">Seleccionar</button>
     <button class="btn primary" onclick="openQuickTask('${today}')">Nueva tarea para hoy</button></div>`;
   if (od.length) h += `<div class="card"><h3>Atrasadas</h3>${od.map(t => taskRow(t, { showDate: true })).join("")}</div>`;
-  h += `<div class="card"><h3>Programadas para hoy<div class="grow"></div><span class="tiny">arrastrá ⣿ para ordenar tu día</span></h3>${dayTasks.length ? dayTasks.map(t => taskRow(t, { sortable: true })).join("") : '<div class="empty">Sin tareas programadas.</div>'}</div>`;
+  const hint = touchUI() ? "mantené apretada una tarea para moverla" : "arrastrá ⣿ para ordenar o pasar a mañana";
+  h += `<div class="card dropzone" data-dropdate="${today}"><h3>Programadas para hoy</h3><p class="tiny zonehint">${hint}</p>${dayTasks.length ? dayTasks.map(t => taskRow(t, { sortable: true })).join("") : '<div class="empty">Sin tareas programadas.</div>'}</div>`;
   if (flex.length) h += `<div class="card"><h3>Flexibles (vencen pronto)</h3>${flex.map(t => taskRow(t, { showDate: true })).join("")}</div>`;
   const tom = addDays(today, 1);
   const tomTasks = tasksOn(tom);
-  if (tomTasks.length) h += `<div class="card"><h3>Mañana<div class="grow"></div><span class="tiny">podés marcarlas hechas si las adelantaste</span></h3>${tomTasks.map(t => taskRow(t, { date: tom, showDate: true, sortable: true })).join("")}</div>`;
+  h += `<div class="card dropzone" data-dropdate="${tom}"><h3>Mañana<span class="sub">${fmtD(tom)}</span><div class="grow"></div>${tomTasks.length ? `<span class="tiny">${fmtMin(tomTasks.reduce((a, t) => a + (t.estMin || 0), 0))}</span>` : ""}</h3>${tomTasks.length ? tomTasks.map(t => taskRow(t, { date: tom, sortable: true })).join("") : `<div class="empty">Nada para mañana todavía. ${touchUI() ? "Mantené apretada una tarea y arrastrala hasta acá." : "Arrastrá una tarea hasta acá."}</div>`}</div>`;
   return h;
 }
 
@@ -1852,8 +2291,8 @@ function viewWeek() {
     const min = ts.filter(t => !isDoneOn(t, d)).reduce((a, t) => a + (t.estMin || 0), 0);
     h += `<div class="wday ${d === today ? "today" : ""}">
       <h5>${DAYS[dToDate(d).getDay()]} ${dToDate(d).getDate()}<span class="tiny">${min ? fmtMin(min) : ""}</span></h5>
-      ${evs.map(e => `<div class="wtask" style="background:var(--bad-soft);color:var(--bad);font-weight:700" onclick="go('eval','${e.id}')">${esc(e.name.slice(0, 30))}</div>`).join("")}
-      ${ts.map(t => { const o = ownerOf(t); return `<div class="wtask ${isDoneOn(t, d) ? "done" : ""}" onclick="openTaskEditor('${t.id}')"><span class="dotc" style="background:${o ? o.color : "var(--tx3)"}"></span>${esc(t.title.slice(0, 34))}</div>`; }).join("")}
+      ${evs.map(e => `<div class="wtask" style="background:var(--bad-soft);color:var(--bad);font-weight:700" onclick="go('eval','${e.id}')">${e.time ? `<span class="ttime">${esc(fmtTime(e.time))}</span>` : ""}${esc(e.name.slice(0, 30))}</div>`).join("")}
+      ${ts.map(t => { const o = ownerOf(t); return `<div class="wtask ${isDoneOn(t, d) ? "done" : ""}" onclick="openTaskEditor('${t.id}')"><span class="dotc" style="background:${o ? o.color : "var(--tx3)"}"></span>${t.time ? `<span class="ttime">${esc(fmtTime(t.time))}</span>` : ""}${esc(t.title.slice(0, 34))}</div>`; }).join("")}
       <button class="btn sm ghost" style="width:100%;margin-top:4px" onclick="openQuickTask('${d}')">+ tarea</button>
     </div>`;
   }
@@ -1869,12 +2308,14 @@ function viewCalendar() {
   const ws = state.settings.weekStart;
   const startOffset = (first.getDay() - ws + 7) % 7;
   const gridStart = new Date(Y, M - 1, 1 - startOffset);
-  const prev = iso(new Date(Y, M - 2, 1)).slice(0, 7), next = iso(new Date(Y, M, 1)).slice(0, 7);
-  let h = `<div class="vhead"><h2>Calendario</h2><span class="sub">${capitalize(MESL[M - 1])} ${Y}</span><div class="grow"></div>
-    <button class="btn sm" onclick="ui.calMonth='${prev}';render()">‹</button>
-    <button class="btn sm" onclick="ui.calMonth='${today.slice(0, 7)}';render()">Hoy</button>
-    <button class="btn sm" onclick="ui.calMonth='${next}';render()">›</button></div>`;
-  h += '<div class="cal">';
+  // D1 · día elegido (en el celu se ve su lista abajo); por defecto hoy, o el 1 si mirás otro mes
+  if (!ui.calDay || ui.calDay.slice(0, 7) !== ui.calMonth) ui.calDay = today.slice(0, 7) === ui.calMonth ? today : ui.calMonth + "-01";
+  const sel = ui.calDay;
+  let h = `<div class="vhead calhead"><h2>Calendario</h2><span class="sub">${capitalize(MESL[M - 1])} ${Y}</span><div class="grow"></div>
+    <button class="btn sm calnav" aria-label="Mes anterior" onclick="calShift(-1)">‹</button>
+    <button class="btn sm calnav" onclick="ui.calMonth='${today.slice(0, 7)}';ui.calDay='${today}';render()">Hoy</button>
+    <button class="btn sm calnav" aria-label="Mes siguiente" onclick="calShift(1)">›</button></div>`;
+  h += `<div class="cal" ontouchstart="calSwipe(event,0)" ontouchend="calSwipe(event,1)">`;
   for (let i = 0; i < 7; i++) h += `<div class="dow">${DAYS[(ws + i) % 7]}</div>`;
   for (let i = 0; i < 42; i++) {
     const d = new Date(gridStart); d.setDate(gridStart.getDate() + i);
@@ -1883,24 +2324,60 @@ function viewCalendar() {
     const ts = tasksOn(dISO);
     const evs = state.evals.filter(e => e.date === dISO);
     const habs = state.habits.filter(hb => habitDueOn(hb, dISO) && hb.checks && hb.checks[dISO]);
+    // D1b · en desktop entran 3 renglones por celda: parciales primero (hasta 2), después tareas; el resto, "+N más"
     const items = [];
-    for (const e of evs) items.push(`<div class="ev" style="background:var(--bad-soft);color:var(--bad)" onclick="event.stopPropagation();go('eval','${e.id}')" title="${escA(e.name)}">${esc(e.name)}</div>`);
-    for (const t of ts.slice(0, evs.length ? 2 : 3)) {
+    const evShow = evs.slice(0, 2), tShow = ts.slice(0, Math.max(0, 3 - evShow.length));
+    for (const e of evShow) items.push(`<div class="ev exam" onclick="event.stopPropagation();go('eval','${e.id}')" title="${escA(e.name)}">${e.time ? `<b>${esc(fmtTime(e.time))}</b> ` : ""}${esc(e.name)}</div>`);
+    for (const t of tShow) {
       const o = ownerOf(t);
-      items.push(`<div class="ev" style="background:${o ? o.color + "1c" : "var(--card2)"};color:${o ? o.color : "var(--tx2)"};${isDoneOn(t, dISO) ? "text-decoration:line-through;opacity:.6" : ""}" onclick="event.stopPropagation();openTaskEditor('${t.id}')" title="${escA(t.title)}">${esc(t.title)}</div>`);
+      items.push(`<div class="ev" style="background:${o ? o.color + "1c" : "var(--card2)"};color:${o ? o.color : "var(--tx2)"};${isDoneOn(t, dISO) ? "text-decoration:line-through;opacity:.6" : ""}" onclick="event.stopPropagation();openTaskEditor('${t.id}')" title="${escA(t.title)}">${t.time ? `<b>${esc(fmtTime(t.time))}</b> ` : ""}${esc(t.title)}</div>`);
     }
-    const moreN = ts.length - (evs.length ? 2 : 3);
-    if (moreN > 0) items.push(`<div class="more">+${moreN} más</div>`);
-    if (habs.length) items.push(`<div class="more" style="color:var(--ok)">${habs.length} hábito${habs.length > 1 ? "s" : ""} ✓</div>`);
+    const moreN = evs.length + ts.length - evShow.length - tShow.length;
+    // "+N más" y los hábitos comparten un renglón para que todas las celdas midan lo mismo
+    if (moreN > 0 || habs.length) items.push(`<div class="cfoot">${moreN > 0 ? `<span class="more" title="Ver todo el ${escA(fmtD(dISO))}">+${moreN} más</span>` : ""}${habs.length ? `<span class="more" style="color:var(--ok)">${habs.length} hábito${habs.length > 1 ? "s" : ""} ✓</span>` : ""}</div>`);
     const dayMin = ts.reduce((a, t) => a + (t.estMin || 0), 0);
-    h += `<div class="day ${inMonth ? "" : "out"} ${dISO === today ? "today" : ""}" onclick="openDayPreview('${dISO}')" title="Ver el resumen del ${escA(fmtD(dISO))}">
-      <div class="dnum">${d.getDate()}${dayMin ? `<span class="dmin">${hClock(dayMin)}</span>` : ""}</div>${items.join("")}</div>`;
+    // D1 · en el celu: puntos de colores (parcial en rojo primero, después las tareas por materia)
+    const dots = evs.map(() => `<i style="background:var(--bad)"></i>`).concat(ts.map(t => { const o = ownerOf(t); return `<i style="background:${o ? o.color : "var(--tx3)"}${isDoneOn(t, dISO) ? ";opacity:.35" : ""}"></i>`; })).slice(0, 4).join("");
+    h += `<div class="day ${inMonth ? "" : "out"} ${dISO === today ? "today" : ""} ${dISO === sel ? "selday" : ""} ${evs.length ? "hasev" : ""}" data-date="${dISO}" onclick="calTap('${dISO}')" title="Ver el resumen del ${escA(fmtD(dISO))}">
+      <div class="dnum"><span class="dn">${d.getDate()}</span>${dayMin ? `<span class="dmin">${fmtMin(dayMin)}</span>` : ""}<button class="calplus" aria-label="Nueva tarea el ${escA(fmtD(dISO))}" title="Nueva tarea el ${escA(fmtD(dISO))}" onclick="event.stopPropagation();openQuickTask('${dISO}')">+</button></div>${items.join("")}<div class="cdots">${dots}</div></div>`;
   }
-  h += "</div><p class='tiny' style='margin-top:8px'>Clic en un día para ver su resumen (materias, horas por materia y total) · clic en un evento para abrirlo.</p>";
+  h += "</div><p class='tiny calhint' style='margin-top:8px'>Clic en un día para ver su resumen · clic en una tarea o parcial para abrirlo · pasá por encima de un día y tocá + para crear una tarea ahí.</p>";
+  h += calDayList(sel);
   return h;
 }
 
+/* D1 · En el celu (como Calendario de iOS) tocar un día lo elige y muestra su
+   lista abajo; en desktop abre el resumen del día como antes. */
+const calIsPhone = () => window.matchMedia("(max-width:720px)").matches;
+function calTap(d) {
+  if (!calIsPhone()) { openDayPreview(d); return; }
+  ui.calDay = d; ui.calMonth = d.slice(0, 7); render();
+}
+function calShift(n) {
+  const [Y, M] = ui.calMonth.split("-").map(Number);
+  ui.calMonth = iso(new Date(Y, M - 1 + n, 1)).slice(0, 7); ui.calDay = null; render();
+}
+function calSwipe(e, end) {
+  const p = e.changedTouches && e.changedTouches[0]; if (!p) return;
+  if (!end) { ui.calTouch = { x: p.clientX, y: p.clientY }; return; }
+  const s = ui.calTouch; ui.calTouch = null; if (!s) return;
+  const dx = p.clientX - s.x, dy = p.clientY - s.y;
+  if (Math.abs(dx) > 60 && Math.abs(dy) < Math.abs(dx) * 0.6) calShift(dx < 0 ? 1 : -1);
+}
+function calDayList(d) {
+  const ts = tasksOn(d), evs = state.evals.filter(e => e.date === d);
+  const evRow = e => `<div class="task calev" onclick="go('eval','${e.id}')"><span class="calevdot"></span><div class="tinfo"><div class="tt">${e.time ? `<span class="ttime">${esc(fmtTime(e.time))}</span>` : ""}${esc(e.name)}</div><div class="tmeta"><span class="tiny">parcial / final</span></div></div></div>`;
+  const tot = ts.reduce((a, t) => a + (t.estMin || 0), 0);
+  return `<div class="card calday" id="calday">
+    <h3>${capitalize(fmtD(d))}${d === todayISO() ? ' <span class="sub">hoy</span>' : ""}<div class="grow"></div>${tot ? `<span class="tiny">${fmtMin(tot)}</span>` : ""}</h3>
+    ${evs.map(evRow).join("")}${ts.map(t => taskRow(t, { date: d, noSel: true })).join("")}
+    ${!evs.length && !ts.length ? '<div class="empty" style="padding:14px 0">Nada para este día.</div>' : ""}
+    <button class="btn calnew" onclick="openQuickTask('${d}')">+ Tarea para el ${esc(fmtD(d))}</button></div>`;
+}
+
 /* ========================== VISTA: LISTA ========================== */
+/* Día en que se completó. Datos viejos pueden no tener doneAt: se usa su fecha. */
+function doneDay(t) { return t.doneAt || t.date || t.due || t.createdAt || ""; }
 function viewList() {
   const f = ui.listFilters;
   const opts = (obj, sel) => Object.entries(obj).map(([k, v]) => `<option value="${k}" ${sel === k ? "selected" : ""}>${v}</option>`).join("");
@@ -1915,6 +2392,15 @@ function viewList() {
   if (f.from) list = list.filter(t => (t.date || t.due || "9999") >= f.from);
   if (f.to) list = list.filter(t => (t.date || t.due || "0000") <= f.to);
   if (!state.settings.showDone && !f.status) list = list.filter(t => t.status !== "done");
+  // B5 · las hechas hace mucho se ocultan solas (no se borran: siguen en Historial y estadísticas)
+  const keep = state.settings.doneKeepDays | 0;
+  let oldDone = 0;
+  if (state.settings.showDone && keep > 0 && !f.status) {
+    const cut = addDays(todayISO(), -keep);
+    const isOld = t => t.status === "done" && doneDay(t) < cut;
+    oldDone = list.filter(isOld).length;
+    if (!ui.showOldDone) list = list.filter(t => !isOld(t));
+  }
   list.sort((a, b) => ((a.date || a.due || "9999") + a.title).localeCompare((b.date || b.due || "9999") + b.title));
   const totMin = list.filter(t => t.status !== "done").reduce((a, t) => a + (t.estMin || 0), 0);
   let h = `<div class="vhead"><h2>Lista completa</h2><span class="sub">${list.length} tareas · ${fmtMin(totMin)} pendientes</span>
@@ -1935,6 +2421,8 @@ function viewList() {
     <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--tx2)"><input type="checkbox" style="width:auto" ${f.archived === "1" ? "checked" : ""} onchange="ui.listFilters.archived=this.checked?'1':'';render()">archivadas</label>
     <button class="btn sm ghost" onclick="ui.listFilters={};render()">Limpiar filtros</button></div>`;
   h += `<div class="card">${list.length ? list.map(t => taskRow(t, { showDate: true })).join("") : '<div class="empty">No hay tareas con estos filtros.</div>'}</div>`;
+  if (oldDone) h += `<p class="oldDone tiny">${ui.showOldDone ? `Mostrando ${oldDone} hecha${oldDone > 1 ? "s" : ""} hace más de ${keep} días.` : `${oldDone} tarea${oldDone > 1 ? "s" : ""} hecha${oldDone > 1 ? "s" : ""} hace más de ${keep} días no se muestra${oldDone > 1 ? "n" : ""}.`}
+    <button class="btn sm ghost" onclick="ui.showOldDone=!ui.showOldDone;render()">${ui.showOldDone ? "Ocultar hechas antiguas" : "Mostrar hechas antiguas"}</button></p>`;
   return h;
 }
 
@@ -1991,7 +2479,7 @@ function viewSubjectDetail() {
     <button class="btn sm primary" onclick="openQuickTask(null,'${s.id}')">Nueva tarea</button></div>`;
   h += `<div class="grid3" style="margin-bottom:12px">
     <div class="card" style="margin:0"><div class="statnum">${pct}%</div><div class="statlab">${done.length}/${ts.length} tareas completadas</div><div class="pbar" style="margin-top:6px"><i style="width:${pct}%"></i></div></div>
-    <div class="card" style="margin:0"><div class="statnum">${fmtMin(real)}</div><div class="statlab">horas estudiadas (pomodoro + tareas hechas) · ${fmtMin(weekMin)} esta semana</div></div>
+    <div class="card" style="margin:0"><div class="statnum">${fmtMin(real)}</div><div class="statlab">horas estudiadas · ${fmtMin(weekMin)} esta semana</div></div>
     <div class="card" style="margin:0"><div class="statnum">${fmtMin(est)}</div><div class="statlab">estimado total ${real && est ? "· real/est " + Math.round(real / est * 100) + "%" : ""}</div></div>
   </div>`;
   if (nextEv) {
@@ -2050,19 +2538,26 @@ function viewEvalDetail() {
     ${o ? `<span class="tag" style="background:${o.color}1c;color:${o.color}">${esc(o.short)}</span>` : ""}
     ${p ? `<a href="#/project/${p.id}" class="tiny">${esc(p.name)}</a>` : ""}
     <div class="grow"></div>
-    <button class="btn sm" onclick="openNoteEditor(null,'e:${e.id}')">Nota</button>
+    <div class="vacts"><button class="btn sm" onclick="openNoteEditor(null,'e:${e.id}')">Nota</button>
     <button class="btn sm" onclick="openEvalEditor('${e.id}')">Editar</button>
-    <button class="btn sm danger" onclick="deleteEval('${e.id}')">Eliminar</button></div>`;
-  h += `<div class="grid3" style="margin-bottom:12px">
-    <div class="card" style="margin:0"><div class="statnum" style="color:${n <= 2 ? "var(--bad)" : "var(--tx)"}">${n < 0 ? "—" : n}</div><div class="statlab">${n < 0 ? "ya pasó (" + fmtD(e.date) + ")" : n === 0 ? "ES HOY · " + fmtD(e.date) : "días restantes · " + fmtD(e.date) + (e.time ? " " + esc(e.time) : "")}</div></div>
-    <div class="card" style="margin:0"><div class="statnum">${prep === null ? "—" : prep + "%"}</div><div class="statlab">nivel de preparación</div>${prep !== null ? `<div class="pbar" style="margin-top:6px"><i style="width:${prep}%;background:${prep < 40 ? "var(--bad)" : prep < 70 ? "var(--warn)" : "var(--ok)"}"></i></div>` : ""}</div>
-    <div class="card" style="margin:0"><div class="statnum">${fmtMin(real)}</div><div class="statlab">estudiado · ${fmtMin(pendMin)} pendiente estimado</div></div>
-  </div>`;
-  h += `<div class="grid3" style="margin-bottom:12px">
-    <div class="card" style="margin:0"><div class="statnum">${topicsDone}/${e.topics.length}</div><div class="statlab">temas entendidos o dominados</div></div>
-    <div class="card" style="margin:0"><div class="statnum">${planDone.length}/${plan.length}</div><div class="statlab">tareas del plan${planLate.length ? ` · <span style="color:var(--bad)">${planLate.length} atrasadas</span>` : ""}</div></div>
-    <div class="card" style="margin:0"><div class="statnum">${simul}</div><div class="statlab">simulacros / parciales hechos</div></div>
-  </div>`;
+    <button class="btn sm danger" onclick="deleteEval('${e.id}')">Eliminar</button></div></div>`;
+  // X3 · un número grande arriba (días que faltan + preparación) y el resto en una fila compacta
+  const pc = prep === null ? "var(--tx3)" : prep < 40 ? "var(--bad)" : prep < 70 ? "var(--warn)" : "var(--ok)";
+  const when = esc(fmtD(e.date)) + (e.time ? " · " + esc(fmtTime(e.time)) : "");
+  h += `<div class="card evhero">
+    <div class="evleft">${n < 0 ? `<div class="evdays" style="color:var(--tx3)">—</div><div class="evdl">ya pasó · ${when}</div>`
+      : n === 0 ? `<div class="evdays" style="color:var(--bad)">Hoy</div><div class="evdl">${when}</div>`
+      : `<div class="evdays" style="color:${n <= 2 ? "var(--bad)" : "var(--tx)"}">${n}</div><div class="evdl">${n === 1 ? "día" : "días"} · ${when}</div>`}</div>
+    <div class="evright"><div class="evdl">preparación</div><div class="evprep" style="color:${pc}">${prep === null ? "—" : prep + "%"}</div>
+      ${prep !== null ? `<div class="pbar"><i style="width:${prep}%;background:${pc}"></i></div>` : `<div class="evdl">cargá temas o un plan</div>`}</div>
+  </div>
+  <div class="card evstats">
+    <div class="evstat"><span class="evsn">${fmtMin(real)}</span><span class="evsl">estudiado</span></div>
+    <div class="evstat"><span class="evsn">${topicsDone}/${e.topics.length}</span><span class="evsl">temas</span></div>
+    <div class="evstat"><span class="evsn">${planDone.length}/${plan.length}</span><span class="evsl">tareas${planLate.length ? ` · <b style="color:var(--bad)">${planLate.length} atras.</b>` : ""}</span></div>
+    <div class="evstat"><span class="evsn">${simul}</span><span class="evsl">simulacros</span></div>
+  </div>
+  ${pendMin ? `<p class="tiny" style="margin:-4px 2px 12px">Te quedan ${fmtMin(pendMin)} estimados de tareas pendientes.</p>` : ""}`;
   if (e.mode || e.place || e.targetGrade || e.grade !== "" || e.obs) {
     h += `<div class="card"><h3>Datos</h3><div class="muted" style="line-height:1.7">
       ${e.mode ? "Modalidad: <b>" + esc(e.mode) + "</b><br>" : ""}
@@ -2080,13 +2575,14 @@ function viewEvalDetail() {
         ${[["nv", "No visto"], ["emp", "Empezado"], ["ent", "Entendido"], ["dom", "Dominado"]].map(([k, v]) => `<option value="${k}" ${tp.state === k ? "selected" : ""}>${v}</option>`).join("")}
       </select>
       <button class="btn sm ghost" title="Eliminar tema" onclick="delTopic('${e.id}','${tp.id}')">×</button></div>`).join("");
-  h += `<div class="mrow" style="margin-top:8px">
-      <div style="flex:2"><input id="tp_new" placeholder="Nuevo tema…" style="width:100%;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:8px"></div>
+  h += `<div class="mrow tpadd" style="margin-top:8px">
+      <div class="tpname" style="flex:2"><input id="tp_new" placeholder="Nuevo tema…" style="width:100%;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:8px"></div>
       <div><select id="tp_diff" style="width:100%;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:8px"><option value="1">Fácil</option><option value="2" selected>Media</option><option value="3">Difícil</option></select></div>
       <div><input id="tp_min" type="number" value="90" min="10" step="10" title="Minutos estimados" style="width:100%;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:8px"></div>
       <button class="btn" onclick="addTopic('${e.id}')">Agregar</button></div></div>`;
-  h += `<div class="card"><h3>Plan de estudio<div class="grow"></div>
-    ${plan.length ? `<button class="btn sm" onclick="replanPending('${e.id}')">Replanificar pendientes</button>` : ""}
+  h += `<div class="card"><h3 class="evplanh"><span class="evplant">Tareas y plan de estudio</span><div class="grow"></div>
+    <button class="btn sm" onclick="openQuickTaskForEval('${e.id}')">+ Tarea</button>
+    ${plan.length ? `<button class="btn sm" title="Replanificar las tareas pendientes" onclick="replanPending('${e.id}')">Replanificar</button>` : ""}
     <button class="btn sm primary" onclick="openPlanWizard('${e.id}')">${plan.length ? "Regenerar plan" : "Generar plan"}</button></h3>`;
   if (plan.length) {
     let cur = "";
@@ -2205,47 +2701,6 @@ function viewNotes() {
     <button class="btn primary" onclick="openNoteEditor()">Nueva nota</button></div>`;
   h += list.length ? `<div class="grid2">${list.map(noteCard).join("")}</div>` : '<div class="card"><div class="empty">Sin notas todavía.</div></div>';
   return h;
-}
-
-/* ======================== VISTA: POMODORO ======================== */
-function pomoLinkOptions(sel) {
-  const today = todayISO();
-  const cand = state.tasks.filter(t => !t.archived && t.status !== "done" && t.status !== "canc" && (occursOn(t, today) || (t.due && !t.date) || t.status === "prog")).slice(0, 30);
-  let h = `<option value="">Sesión libre (sin vínculo)</option><optgroup label="Tareas">`;
-  h += cand.map(t => `<option value="t:${t.id}" ${sel === "t:" + t.id ? "selected" : ""}>${esc(t.title.slice(0, 48))}</option>`).join("");
-  h += `</optgroup><optgroup label="Materias">` + activeSubjects().map(s => `<option value="s:${s.id}" ${sel === "s:" + s.id ? "selected" : ""}>${esc(s.name)}</option>`).join("");
-  h += `</optgroup><optgroup label="Proyectos">` + state.projects.filter(p => p.status !== "arch" && p.status !== "done").map(p => `<option value="p:${p.id}" ${sel === "p:" + p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("") + "</optgroup>";
-  return h;
-}
-function viewPomodoro() { return `<div class="vhead"><h2>Pomodoro</h2><div class="grow"></div>
-    <button class="btn" onclick="openManualSession()">Registrar sesión manual</button></div><div id="pomowrap"></div>`; }
-function renderPomoView() {
-  const w = byId("pomowrap"); if (!w) return;
-  const T = state.timer;
-  const today = todayISO();
-  const todayMin = minsBetween(today, today), todayPomos = pomosBetween(today, today);
-  const sel = T.taskId ? "t:" + T.taskId : T.subjectId ? "s:" + T.subjectId : T.projectId ? "p:" + T.projectId : "";
-  const linked = T.taskId ? taskById(T.taskId) : null;
-  const dots = Array.from({ length: state.settings.pomo.c }, (_, i) => i < (T.cycle % state.settings.pomo.c) || (T.cycle > 0 && T.cycle % state.settings.pomo.c === 0 && T.phase === "long") ? "●" : "○").join(" ");
-  w.innerHTML = `<div class="card pomobig">
-    <div class="phase ${T.phase === "focus" ? "" : "break"}">${T.phase === "focus" ? "Foco" : T.phase === "long" ? "Descanso largo" : "Descanso"}</div>
-    <div class="ptime" id="ptime">${fmtClock(T.left)}</div>
-    <div class="pring"><i id="pfill" style="width:${100 - T.left / T.total * 100}%"></i></div>
-    <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
-      ${T.run ? `<button class="btn" onclick="pausePomo()">Pausar</button>` : `<button class="btn primary" onclick="startPomo()">${T.left === T.total ? "Iniciar" : "Continuar"}</button>`}
-      <button class="btn" onclick="skipPomo()">Saltar fase</button>
-      <button class="btn" onclick="resetPomo()">Reiniciar</button>
-      <button class="btn" onclick="openPomoCfg()">Ajustes</button></div>
-    <div class="dots">${dots}</div>
-    <label style="display:block;font-size:.66rem;color:var(--tx2);margin:16px 0 4px;text-transform:uppercase;letter-spacing:.06em;font-weight:700;text-align:left">Trabajando en</label>
-    <select onchange="pomoSetLink(this.value)" style="width:100%;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:8px;font-size:.8rem" aria-label="Vincular sesión">${pomoLinkOptions(sel)}</select>
-    ${linked ? `<p class="tiny" style="margin-top:8px;text-align:left">${fmtMin(linked.realMin || 0)} acumulados en esta tarea · ${linked.pomos || 0} pomodoros</p>` : ""}
-  </div>
-  <div class="grid3" style="max-width:640px;margin:0 auto">
-    <div class="card" style="margin:0"><div class="statnum">${todayPomos}</div><div class="statlab">pomodoros hoy</div></div>
-    <div class="card" style="margin:0"><div class="statnum">${fmtMin(todayMin)}</div><div class="statlab">estudiado hoy</div></div>
-    <div class="card" style="margin:0"><div class="statnum">${state.settings.pomo.f}/${state.settings.pomo.s}</div><div class="statlab">min foco / descanso</div></div>
-  </div>`;
 }
 
 /* ========================= VISTA: HÁBITOS ========================= */
@@ -2693,14 +3148,99 @@ function chartRing(pct, C, size, color, label, sub) {
 }
 
 /* ========================== VISTA COMPLETA ========================== */
+/* ============================ D2 · PROGRESO ============================
+   Pocos gráficos, cada uno responde una pregunta real de un estudiante:
+   ¿cuánto estudié esta semana? ¿voy al día? ¿llego a los parciales?
+   ¿a qué materia le dedico tiempo? ¿soy constante? Lo viejo queda en
+   "Estadísticas detalladas" (#/stats/detalle). */
+const EV_CLOSED = ["rendido", "aprob", "desaprob"];
+function progressData() {
+  const today = todayISO(), ws = state.settings.weekStart;
+  const byDate = {};
+  for (const s of state.sessions) byDate[s.date] = (byDate[s.date] || 0) + (s.min || 0);
+  const w0 = weekStartOf(today, ws), lw0 = addDays(w0, -7);
+  const idx = Math.round((dToDate(today) - dToDate(w0)) / 864e5);
+  const days = [];
+  for (let i = 0; i < 7; i++) { const d = addDays(w0, i); days.push({ d, min: byDate[d] || 0, future: d > today, today: d === today }); }
+  let lastSame = 0, lastFull = 0;
+  for (let i = 0; i < 7; i++) { const m = byDate[addDays(lw0, i)] || 0; lastFull += m; if (i <= idx) lastSame += m; }
+  const week = { days, min: days.filter(x => !x.future).reduce((a, x) => a + x.min, 0), lastSame, lastFull };
+  // ¿voy al día? atrasadas + tareas de esta semana (hasta hoy) hechas
+  const od = overdueTasks();
+  let planned = 0, done = 0;
+  for (let i = 0; i <= idx; i++) { const d = addDays(w0, i); for (const t of tasksOn(d)) { planned++; if (isDoneOn(t, d)) done++; } }
+  // parciales por delante
+  const exams = state.evals.filter(e => e.date >= today && !EV_CLOSED.includes(e.status))
+    .sort((a, b) => a.date < b.date ? -1 : 1).slice(0, 4)
+    .map(e => ({ e, days: daysTo(e.date), prep: evalPrep(e), min: evalRealMin(e.id) }));
+  // por materia: últimos 14 días, con su próximo parcial
+  const from14 = addDays(today, -13);
+  const subjects = activeSubjects().map(s => {
+    const min = state.sessions.filter(x => x.subjectId === s.id && x.date >= from14 && x.date <= today).reduce((a, x) => a + (x.min || 0), 0);
+    const ne = state.evals.filter(e => e.subjectId === s.id && e.date >= today && !EV_CLOSED.includes(e.status)).sort((a, b) => a.date < b.date ? -1 : 1)[0];
+    return { s, min, next: ne || null, nextDays: ne ? daysTo(ne.date) : null };
+  }).filter(x => x.min > 0 || (x.next && x.nextDays <= 30))
+    .sort((a, b) => (a.nextDays ?? 999) - (b.nextDays ?? 999) || b.min - a.min);
+  // constancia
+  let streak = 0; { let d = today; if (!byDate[d]) d = addDays(d, -1); while (byDate[d]) { streak++; d = addDays(d, -1); } }
+  const last28 = []; for (let i = 27; i >= 0; i--) last28.push(!!byDate[addDays(today, -i)]);
+  return { week, overdue: od.length, overdueMin: od.reduce((a, t) => a + (t.estMin || 0), 0), planned, done, exams, subjects, streak, last28 };
+}
 function viewStats() {
+  if (route.id === "detalle") return viewStatsDetail();
+  const p = progressData();
+  const pctCol = v => v == null ? "var(--tx3)" : v < 40 ? "var(--bad)" : v < 70 ? "var(--warn)" : "var(--ok)";
+  let h = `<div class="vhead"><h2>Progreso</h2><span class="sub">${esc(capitalize(fmtD(todayISO())))}</span></div><div class="pg">`;
+  // 1 · esta semana
+  const W = p.week, diff = W.min - W.lastSame, maxD = Math.max(60, ...W.days.map(x => x.min));
+  const sub = !W.min ? "Todavía no registraste tiempo esta semana."
+    : !W.lastSame ? "La semana pasada a esta altura no tenías nada registrado."
+    : diff === 0 ? "Igual que a esta altura de la semana pasada."
+    : `<b style="color:${diff > 0 ? "var(--ok)" : "var(--warn)"}">${fmtMin(Math.abs(diff))} ${diff > 0 ? "más" : "menos"}</b> que a esta altura de la semana pasada.`;
+  h += `<section class="card pg-card pg-week"><div class="pg-q">¿Cuánto estudié esta semana?</div>
+    <div class="pg-big">${fmtMin(W.min)}</div><div class="pg-sub">${sub}</div>
+    <div class="pg-bars">${W.days.map((x, i) => `<div class="pg-bcol${x.today ? " today" : ""}${x.future ? " fut" : ""}" title="${escA(fmtD(x.d))}: ${fmtMin(x.min)}">
+      <div class="pg-btrack"><i style="height:${x.min ? Math.max(4, Math.round(x.min / maxD * 100)) : 0}%;animation-delay:${i * 30}ms"></i></div>
+      <span>${"DLMXJVS"[dToDate(x.d).getDay()]}</span></div>`).join("")}</div></section>`;
+  // 2 · ¿voy al día?
+  h += `<section class="card pg-card pg-late"><div class="pg-q">¿Voy al día?</div>
+    ${p.overdue ? `<div class="pg-big" style="color:var(--bad)">${p.overdue}</div><div class="pg-sub">tarea${p.overdue > 1 ? "s" : ""} atrasada${p.overdue > 1 ? "s" : ""}${p.overdueMin ? ` · ${fmtMin(p.overdueMin)} de trabajo` : ""}</div>
+      <button class="btn sm" onclick="go('today')">Ver atrasadas</button>`
+    : `<div class="pg-big" style="color:var(--ok)">Al día</div><div class="pg-sub">No tenés tareas atrasadas.</div>`}
+    ${p.planned ? `<div class="pg-mini"><div class="pg-row"><span>Tareas hechas esta semana</span><b>${p.done} de ${p.planned}</b></div>
+      <div class="pbar"><i style="width:${Math.round(p.done / p.planned * 100)}%;background:var(--ok)"></i></div></div>` : ""}</section>`;
+  // 3 · parciales
+  h += `<section class="card pg-card pg-exams"><div class="pg-q">¿Llego a los parciales?</div>
+    ${p.exams.length ? p.exams.map(x => { const o = ownerOf(x.e); return `<div class="pg-exam" onclick="go('eval','${x.e.id}')">
+      <div class="pg-days" style="color:${x.days <= 7 ? "var(--bad)" : "var(--tx)"}"><b>${x.days === 0 ? "Hoy" : x.days}</b>${x.days ? ` <span>${x.days === 1 ? "día" : "días"}</span>` : ""}</div>
+      <div class="pg-einfo"><div class="pg-ename">${o ? `<i class="pg-sdot" style="background:${o.color}"></i>` : ""}${esc(x.e.name)}</div>
+        <div class="pg-row tiny"><span>${x.prep == null ? "sin temas ni plan para medir" : `preparado ${x.prep}%`}</span><span>${x.min ? fmtMin(x.min) + " estudiado" : ""}</span></div>
+        ${x.prep != null ? `<div class="pbar"><i style="width:${x.prep}%;background:${pctCol(x.prep)}"></i></div>` : ""}</div></div>`; }).join("")
+    : `<div class="pg-sub">No tenés parciales por delante.</div>`}</section>`;
+  // 4 · por materia
+  const maxS = Math.max(1, ...p.subjects.map(x => x.min));
+  h += `<section class="card pg-card pg-subs"><div class="pg-q">¿A qué le dedico tiempo? <span class="tiny">últimos 14 días</span></div>
+    ${p.subjects.length ? p.subjects.map(x => `<div class="pg-srow" onclick="go('subject','${x.s.id}')">
+      <div class="pg-row"><span class="pg-sname"><i class="pg-sdot" style="background:${x.s.color}"></i>${esc(x.s.name)}</span><b>${x.min ? fmtMin(x.min) : "—"}</b></div>
+      <div class="pg-strack"><i style="width:${Math.round(x.min / maxS * 100)}%;background:${x.s.color}"></i></div>
+      ${x.next ? `<div class="tiny" style="color:${x.nextDays <= 14 && x.min < 120 ? "var(--warn)" : "var(--tx3)"}">${esc(x.next.name)} en ${x.nextDays} día${x.nextDays === 1 ? "" : "s"}${x.nextDays <= 14 && x.min < 120 ? " · le estás dando poco" : ""}</div>` : ""}</div>`).join("")
+    : `<div class="pg-sub">Cuando registres tiempo de estudio, acá vas a ver cuánto le das a cada materia.</div>`}</section>`;
+  // 5 · constancia
+  h += `<section class="card pg-card pg-streak"><div class="pg-q">¿Soy constante?</div>
+    <div class="pg-big">${p.streak} día${p.streak === 1 ? "" : "s"}</div><div class="pg-sub">${p.streak ? "seguidos estudiando" : "Hoy es buen día para arrancar una racha."}</div>
+    <div class="pg-dots" aria-label="Últimos 28 días">${p.last28.map((on, i) => `<i class="pg-dot${on ? " on" : ""}${i === 27 ? " now" : ""}"></i>`).join("")}</div>
+    <div class="pg-row tiny"><span>hace 4 semanas</span><span>hoy</span></div></section>`;
+  h += `</div><p style="margin-top:14px"><a class="tiny" href="#/stats/detalle">Estadísticas detalladas, informe y CSV ›</a></p>`;
+  return h;
+}
+function viewStatsDetail() {
   const R = getStatsRange();
   const st = computeStats(R);
   const C = chartColors();
   const dTot = st.total - st.prevTotal;
   const tab = (k, l) => `<button class="btn sm ${(ui.statsRange || "month") === k ? "primary" : ""}" onclick="setStatsRange('${k}')">${l}</button>`;
 
-  let h = `<div class="vhead"><h2>Estadísticas</h2><span class="sub">${esc(R.label)}</span><div class="grow"></div>
+  let h = `<div class="vhead"><button class="btn sm ghost" onclick="go('stats')" aria-label="Volver a Progreso">‹</button><h2>Estadísticas detalladas</h2><span class="sub">${esc(R.label)}</span><div class="grow"></div>
     <button class="btn primary" onclick="openPosterModal()">Descargar informe</button>
     <button class="btn ghost" onclick="exportRangeCSV()" title="Planilla con el resumen de este período">CSV</button></div>`;
 
@@ -2716,17 +3256,9 @@ function viewStats() {
   const kpi = (v, l, extra) => `<div class="card"><div class="statnum">${v}</div><div class="statlab">${l}</div>${extra || ""}</div>`;
   h += `<div class="statgrid">
     ${kpi(hClock(st.total), "total estudiado" + (st.prevTotal ? ` · <span style="color:${dTot >= 0 ? "var(--ok)" : "var(--bad)"}">${dTot >= 0 ? "▲" : "▼"} ${hClock(Math.abs(dTot))} vs período anterior</span>` : ""))}
-    ${kpi(hClock(st.avgCalendar), "promedio por día (todos los días)")}
-    ${kpi(hClock(st.avgActive), "promedio por día activo")}
-    ${kpi(hClock(st.median), "mediana diaria")}
-    ${kpi(st.best.d ? hClock(st.best.m) : "—", st.best.d ? "mejor día · " + fmtD(st.best.d) : "mejor día")}
     ${kpi(st.activeDays + "<span style='font-size:1rem;color:var(--tx3)'>/" + st.elapsed.length + "</span>", "días con actividad (" + st.coverage + "% de constancia)")}
-    ${kpi(st.streak, "racha actual · mejor: " + st.bestStreak + " días")}
-    ${kpi(st.pomos, "pomodoros · " + st.sess.length + " sesiones")}
-    ${kpi(hClock(st.sessionAvg), "duración media por sesión")}
+    ${kpi(st.best.d ? hClock(st.best.m) : "—", st.best.d ? "mejor día · " + fmtD(st.best.d) : "mejor día")}
     ${kpi(st.doneR.length, "tareas completadas" + (st.prevDone ? ` · ${st.doneR.length >= st.prevDone ? "▲" : "▼"} ${Math.abs(st.doneR.length - st.prevDone)} vs anterior` : ""))}
-    ${kpi(st.withLim ? Math.round(st.onTime / st.withLim * 100) + "%" : "—", "completadas en fecha (" + st.onTime + "/" + st.withLim + ")")}
-    ${kpi(st.overdue, st.overdue ? `tareas atrasadas <span style="color:var(--bad)">a resolver</span>` : "tareas atrasadas · estás al día")}
   </div>`;
 
   /* --- Evolución --- */
@@ -2735,7 +3267,7 @@ function viewStats() {
     ${chartTimeline(st, C, 880, 250)}</div>`;
 
   /* --- Ritmo: día de semana + franja horaria --- */
-  const dowItems = st.dow.map((x, i) => ({ label: DAYS[i], full: DAYSL[i], v: x.n ? Math.round(x.min / x.n) : 0, hi: i === new Date().getDay() }));
+  const dowItems = st.dow.map((x, i) => ({ label: DAYS[i], full: DAYSL[i], v: x.n ? Math.round(x.min / x.n) : 0, hi: i === dToDate(todayISO()).getDay() }));
   const bestDow = dowItems.reduce((a, b) => b.v > a.v ? b : a, dowItems[0]);
   h += `<div class="grid2">
     <div class="card" style="margin:0"><h3>Promedio por día de la semana<div class="grow"></div><span class="tiny">mejor: ${esc(bestDow.full)}</span></h3>
@@ -2746,7 +3278,7 @@ function viewStats() {
     h += `<div class="card" style="margin:0"><h3>¿A qué hora estudiás?<div class="grow"></div><span class="tiny">pico: ${peak}:00 hs</span></h3>
       ${chartBars(hrItems, C, 430, 200, {})}</div>`;
   } else {
-    h += `<div class="card" style="margin:0"><h3>¿A qué hora estudiás?</h3><div class="empty">Se completa con las sesiones de pomodoro y las manuales que registres de acá en adelante.</div></div>`;
+    h += `<div class="card" style="margin:0"><h3>¿A qué hora estudiás?</h3><div class="empty">Se completa con el tiempo que registres de acá en adelante.</div></div>`;
   }
   h += `</div>`;
 
@@ -2756,21 +3288,9 @@ function viewStats() {
     ...st.projs.map(x => ({ label: x.p.name, short: x.p.name.slice(0, 6), v: x.min, color: C.tx3 }))
   ];
   if (distItems.length) {
-    h += `<div class="grid2">
-      <div class="card" style="margin:0"><h3>Distribución del tiempo</h3>${chartDonut(distItems, C, 440, 210, { center: hClock(st.total), sub: R.short.toLowerCase() })}</div>
-      <div class="card" style="margin:0"><h3>Horas por materia</h3>
-        ${chartHBars(distItems.slice(0, 9).map(x => ({ label: x.short, color: x.color, v: x.v, full: x.label + " · " + fmtMin(x.v) })), C, 430, Math.max(80, distItems.slice(0, 9).length * 28 + 14))}</div>
-    </div>`;
+    h += `<div class="card"><h3>Horas por materia</h3>
+      ${chartHBars(distItems.slice(0, 9).map(x => ({ label: x.short, color: x.color, v: x.v, full: x.label + " · " + fmtMin(x.v) })), C, 860, Math.max(80, distItems.slice(0, 9).length * 28 + 14))}</div>`;
   }
-
-  /* --- Composición del tiempo --- */
-  const compParts = [
-    { label: "Pomodoro", v: st.comp.pomo, color: C.acc },
-    { label: "Tareas completadas", v: st.comp.auto, color: C.ok },
-    { label: "Manual", v: st.comp.manual, color: C.warn },
-    { label: "Otras", v: st.comp.otro, color: C.tx3 }
-  ].filter(p => p.v > 0);
-  if (compParts.length) h += `<div class="card"><h3>¿De dónde vienen las horas?<div class="grow"></div><span class="tiny">cómo se registró cada minuto</span></h3>${chartStack(compParts, C, 860, 54)}</div>`;
 
   /* --- Precisión de estimación --- */
   if (st.timed.length) {
@@ -2789,19 +3309,6 @@ function viewStats() {
     h += `</div>`;
   }
 
-  /* --- Tareas --- */
-  const typeItems = Object.entries(st.byType).sort((a, b) => b[1] - a[1]).map(([k, v], i) => ({ label: TASK_TYPES[k] || k, v, color: SUBJ_COLORS[i % SUBJ_COLORS.length] }));
-  h += `<div class="grid2">
-    <div class="card" style="margin:0"><h3>Tareas del período<div class="grow"></div><span class="tiny">${st.createdR.length} creadas · ${st.doneR.length} completadas</span></h3>
-      <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
-        <div style="width:112px">${chartRing(st.createdR.length ? clamp(st.doneR.length / Math.max(st.createdR.length, 1) * 100, 0, 100) : 0, C, 112, C.acc, (st.createdR.length ? Math.round(st.doneR.length / st.createdR.length * 100) : 0) + "%", "cerradas")}</div>
-        <div style="flex:1;min-width:150px" class="tiny">
-          ${Object.entries(st.statusCount).filter(([, v]) => v > 0).map(([k, v]) => `<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--line2)"><span>${TASK_STATUS[k]}</span><b>${v}</b></div>`).join("")}
-        </div></div></div>
-    <div class="card" style="margin:0"><h3>Qué tipo de trabajo hiciste</h3>
-      ${typeItems.length ? chartHBars(typeItems.map(x => ({ label: x.label.length > 12 ? x.label.slice(0, 11) + "…" : x.label, v: x.v, color: x.color, vLabel: x.v + (x.v === 1 ? " tarea" : " tareas"), full: x.label + ": " + x.v })), C, 430, Math.max(70, typeItems.length * 26 + 12), { labelW: 100 }) : '<div class="empty">Sin tareas completadas en este período.</div>'}</div>
-  </div>`;
-
   /* --- Notas y evaluaciones --- */
   if (st.graded.length) {
     const apr = st.graded.filter(x => x.g >= 4).length;
@@ -2809,37 +3316,9 @@ function viewStats() {
       <span class="tiny">promedio ${st.gradeAvg} · ${apr}/${st.graded.length} aprobadas</span></h3>${chartGrades(st.graded.slice(-14), C, 860, 190)}</div>`;
   }
 
-  /* --- Hábitos --- */
-  const hb = st.habits.filter(x => x.due > 0);
-  if (hb.length) {
-    h += `<div class="card"><h3>Cumplimiento de hábitos<div class="grow"></div><span class="tiny">en ${esc(R.label.toLowerCase())}</span></h3>
-      ${chartHBars(hb.map(x => ({ label: x.h.name.length > 14 ? x.h.name.slice(0, 13) + "…" : x.h.name, v: x.pct, color: x.pct >= 80 ? C.ok : x.pct >= 50 ? C.warn : C.bad, vLabel: x.pct + "% (" + x.ok + "/" + x.due + ")", full: x.h.name })), C, 860, Math.max(70, hb.length * 28 + 12), { labelW: 120 })}</div>`;
-  }
-
   /* --- Mapa de calor --- */
   h += `<div class="card"><h3>Mapa de actividad<div class="grow"></div><span class="tiny">último año · cada cuadrito es un día</span></h3>
     <div style="overflow-x:auto">${chartHeat(C, 800, 130, todayISO(), 53)}</div></div>`;
-
-  /* --- Ranking de materias (tabla) --- */
-  if (st.subs.length) {
-    h += `<div class="card"><h3>Detalle por materia</h3>
-      <div style="overflow-x:auto"><table class="stt">
-      <thead><tr><th>Materia</th><th style="text-align:right">Horas</th><th style="text-align:right">% del total</th>
-        <th style="text-align:right">Sesiones</th><th style="text-align:right">Completadas</th>
-        <th style="text-align:right">Pendientes</th><th style="text-align:right">Prom./día activo</th></tr></thead><tbody>`;
-    for (const x of st.subs) {
-      const dAct = new Set(st.sess.filter(s => s.subjectId === x.s.id).map(s => s.date)).size;
-      h += `<tr style="cursor:pointer" onclick="go('subject','${x.s.id}')">
-        <td><span class="tag" style="background:${x.s.color}1c;color:${x.s.color}">${esc(x.s.short)}</span> ${esc(x.s.name)}</td>
-        <td style="text-align:right;font-variant-numeric:tabular-nums"><b>${hClock(x.min)}</b></td>
-        <td style="text-align:right;color:var(--tx3)">${st.total ? Math.round(x.min / st.total * 100) : 0}%</td>
-        <td style="text-align:right;color:var(--tx3)">${x.sessions}</td>
-        <td style="text-align:right;color:var(--ok)">${x.done}</td>
-        <td style="text-align:right;color:${x.pend ? "var(--warn)" : "var(--tx3)"}">${x.pend}</td>
-        <td style="text-align:right;color:var(--tx3)">${dAct ? hClock(x.min / dAct) : "—"}</td></tr>`;
-    }
-    h += `</tbody></table></div></div>`;
-  }
 
   /* --- Conclusiones automáticas --- */
   const ins = buildInsights(st, C);
@@ -2849,7 +3328,7 @@ function viewStats() {
 
 function buildInsights(st, C) {
   const out = [];
-  if (!st.total) return ["Todavía no hay tiempo registrado en este período. Usá el pomodoro, registrá una sesión manual o completá tareas cargando cuánto te llevaron."];
+  if (!st.total) return ["Todavía no hay tiempo registrado en este período. Registrá tiempo o completá tareas cargando cuánto te llevaron."];
   out.push(`Estudiaste <b>${hClock(st.total)}</b> en ${st.activeDays} de ${st.elapsed.length} días (${st.coverage}% de constancia), con un promedio de <b>${hClock(st.avgActive)}</b> los días que te sentaste a estudiar.`);
   const bd = st.dow.map((x, i) => ({ i, avg: x.n ? x.min / x.n : 0 })).sort((a, b) => b.avg - a.avg);
   if (bd[0].avg > 0) {
@@ -2954,7 +3433,7 @@ function buildStatsPoster() {
   g += txt(M + 26, 118, "Aula · generado el " + fmtDFull(todayISO()), 10.5, "#ffffff", "start");
   g += txt(W - M - 26, 78, hClock(st.total), 34, "#ffffff", "end", 800);
   g += txt(W - M - 26, 100, "tiempo total estudiado", 11, "#ffffff", "end");
-  g += txt(W - M - 26, 118, st.activeDays + " días activos · " + st.pomos + " pomodoros", 10.5, "#ffffff", "end");
+  g += txt(W - M - 26, 118, st.activeDays + " días activos · " + st.sess.length + " sesiones", 10.5, "#ffffff", "end");
 
   /* Tira de KPIs */
   const kpis = [
@@ -3007,7 +3486,7 @@ function buildStatsPoster() {
   g += panel(M, y, cL, 236, "Horas por materia");
   if (distItems.length) g += nest(M + 10, y + 36, cL - 20, 190, chartHBars(distItems.slice(0, 9).map(x => ({ label: x.short, color: x.color, v: x.v, full: x.label })), C, 560, Math.max(120, Math.min(9, distItems.length) * 22 + 12)));
   const compParts = [
-    { label: "Pomodoro", v: st.comp.pomo, color: C.acc },
+    { label: "Temporizador", v: st.comp.pomo, color: C.acc },
     { label: "Tareas", v: st.comp.auto, color: C.ok },
     { label: "Manual", v: st.comp.manual, color: C.warn },
     { label: "Otras", v: st.comp.otro, color: C.tx3 }
@@ -3095,7 +3574,7 @@ function exportRangeCSV() {
   ["Promedio por dia activo (min)", Math.round(st.avgActive)], ["Mediana diaria (min)", st.median],
   ["Mejor dia", st.best.d || "-"], ["Mejor dia (min)", st.best.m], ["Dias del periodo", st.elapsed.length],
   ["Dias con actividad", st.activeDays], ["Constancia (%)", st.coverage], ["Racha actual", st.streak],
-  ["Mejor racha", st.bestStreak], ["Pomodoros", st.pomos], ["Sesiones", st.sess.length],
+  ["Mejor racha", st.bestStreak], ["Sesiones", st.sess.length],
   ["Duracion media sesion (min)", Math.round(st.sessionAvg)], ["Tareas completadas", st.doneR.length],
   ["Tareas creadas", st.createdR.length], ["Completadas en fecha", st.onTime], ["Con fecha limite", st.withLim],
   ["Tiempo estimado (min)", st.estSum], ["Tiempo real (min)", st.realSum],
@@ -3135,7 +3614,7 @@ function viewHistory() {
   const done = state.tasks.filter(t => t.status === "done" && t.doneAt).sort((a, b) => b.doneAt.localeCompare(a.doneAt));
   const sess = [...state.sessions].sort((a, b) => b.ts - a.ts).slice(0, 40);
   const arch = state.tasks.filter(t => t.archived);
-  let h = `<div class="vhead"><h2>Historial</h2></div>`;
+  let h = `${backToConfig}<div class="vhead"><h2>Historial</h2></div>`;
   h += `<div class="card"><h3>Tareas completadas (${done.length})</h3>`;
   let cur = "";
   for (const t of done.slice(0, 60)) {
@@ -3148,7 +3627,7 @@ function viewHistory() {
   h += sess.length ? sess.map(s => {
     const sub = s.subjectId && subjById(s.subjectId), t = s.taskId && taskById(s.taskId), p = s.projectId && projById(s.projectId);
     return `<div class="task" style="cursor:default"><span class="pill">${fmtD(s.date)}</span>
-      <div class="tinfo"><div class="tt">${fmtMin(s.min)}${s.pomos ? " · " + s.pomos + " pomodoro" + (s.pomos > 1 ? "s" : "") : ""}${s.manual ? " · manual" : ""}${s.auto ? " · por tarea completada" : ""}</div>
+      <div class="tinfo"><div class="tt">${fmtMin(s.min)}${s.manual ? " · manual" : ""}${s.auto ? " · por tarea completada" : ""}</div>
       <div class="tmeta">${sub ? `<span class="tag" style="background:${sub.color}1c;color:${sub.color}">${esc(sub.short)}</span>` : ""}${t ? `<span class="tiny">${esc(t.title.slice(0, 44))}</span>` : ""}${p ? `<span class="tiny">${esc(p.name.slice(0, 30))}</span>` : ""}${s.note ? `<span class="tiny">${esc(s.note.slice(0, 40))}</span>` : ""}</div></div></div>`;
   }).join("") : '<div class="empty">Sin sesiones registradas.</div>';
   h += "</div>";
@@ -3160,14 +3639,14 @@ function viewHistory() {
 
 /* ==================== VISTA: COPIAS DE SEGURIDAD ==================== */
 function viewBackups() {
-  return `<div class="vhead"><h2>Copias de seguridad</h2><div class="grow"></div>
+  return `${backToConfig}<div class="vhead"><h2>Copias de seguridad</h2><div class="grow"></div>
     <button class="btn" onclick="manualBackup()">Crear copia ahora</button>
     <button class="btn primary" onclick="exportJSON()">Exportar JSON</button></div>
   <div class="card"><h3>Importar datos</h3>
     <p class="muted" style="margin-bottom:10px">Elegí un archivo JSON exportado desde Aula (o desde la versión anterior). Antes de aplicar se valida el contenido y podés elegir fusionar o reemplazar.</p>
     <input type="file" id="impfile" accept=".json,application/json" onchange="importJSON(event)" style="font-size:.8rem" aria-label="Importar archivo JSON"></div>
   <div class="card"><h3>Copias locales automáticas</h3>
-    <p class="tiny" style="margin-bottom:8px">Se crea una por día al abrir la aplicación (se conservan las últimas 10, más 10 manuales). Se guardan en este navegador.</p>
+    <p class="tiny" style="margin-bottom:8px">Se crea una por día al abrir la aplicación (se conservan las últimas 10, más 10 manuales) y otra antes de cada actualización que cambia la forma de tus datos. Se guardan en este navegador.</p>
     <div id="bklist"><div class="empty">Cargando…</div></div></div>
   <div class="card"><h3>Estado del almacenamiento</h3>
     <p class="muted">Almacenamiento principal: <b>${db ? "IndexedDB (activo)" : "localStorage (IndexedDB no disponible)"}</b> · Copia de emergencia en localStorage: activa.</p></div>`;
@@ -3197,7 +3676,7 @@ async function restoreBackup(key) {
         const b = await idbGet("backups", key);
         const s = JSON.parse(b.data);
         if (!validState(s)) { toast("La copia está dañada"); return; }
-        state = normalizeState(s); change(); render(); toast("Copia restaurada");
+        state = normalizeState(s); migrateState(state); change(); render(); toast("Copia restaurada");
       } catch (e) { toast("No se pudo restaurar"); }
     }
   });
@@ -3216,7 +3695,7 @@ function importJSON(ev) {
     if (isV1) {
       askConfirm({
         title: "Archivo de la versión anterior", body: "Este archivo es de la app anterior. Se migrará su contenido y se agregará al estado actual.", okLabel: "Migrar e importar",
-        onOk: () => { try { localStorage.setItem(OLD_LS_KEY, JSON.stringify(s)); } catch (e) {} const tmp = normalizeState(baseState()); tmp.subjects = state.subjects.length ? JSON.parse(JSON.stringify(state.subjects)) : initialSubjects(); if (migrateV1(tmp)) { mergeStates(state, tmp); change(); render(); toast("Datos de la versión anterior importados"); } else toast("No se pudo migrar el archivo"); }
+        onOk: () => { try { localStorage.setItem(OLD_LS_KEY, JSON.stringify(s)); } catch (e) {} const tmp = normalizeState(baseState()); tmp.subjects = state.subjects.length ? JSON.parse(JSON.stringify(state.subjects)) : initialSubjects(); if (migrateV1(tmp)) { migrateState(tmp); mergeStates(state, tmp); change(); render(); toast("Datos de la versión anterior importados"); } else toast("No se pudo migrar el archivo"); }
       });
       ev.target.value = ""; return;
     }
@@ -3229,12 +3708,12 @@ function importJSON(ev) {
       <div class="mfoot"><button class="btn" onclick="closeConfirm()">Cancelar</button>
       <button class="btn" id="impMerge">Fusionar</button>
       <button class="btn danger" id="impReplace">Reemplazar todo</button></div>`;
-    byId("impMerge").onclick = () => { mergeStates(state, normalizeState(s)); closeConfirm(); change(); render(); toast("Datos fusionados"); };
+    byId("impMerge").onclick = () => { const src = normalizeState(s); migrateState(src); mergeStates(state, src); closeConfirm(); change(); render(); toast("Datos fusionados"); };
     byId("impReplace").onclick = () => {
       closeConfirm();
       askConfirm({
         title: "Reemplazar todo", body: "Se descartará el estado actual y se usará el del archivo. Esta acción no se puede deshacer (se guarda una copia previa).", okLabel: "Reemplazar", danger: true,
-        onOk: async () => { try { if (db) await idbPut("backups", "pre-import-" + Date.now(), { ts: Date.now(), label: "Antes de importar", data: JSON.stringify(state) }); } catch (e) {} state = normalizeState(s); change(); render(); toast("Datos reemplazados"); }
+        onOk: async () => { try { if (db) await idbPut("backups", "pre-import-" + Date.now(), { ts: Date.now(), label: "Antes de importar", data: JSON.stringify(state) }); } catch (e) {} state = normalizeState(s); migrateState(state); change(); render(); toast("Datos reemplazados"); }
       });
     };
   };
@@ -3262,29 +3741,29 @@ function viewConfig() {
       ${SUBJ_COLORS.slice(0, 8).map(c => `<button title="${c}" style="width:26px;height:26px;border-radius:8px;background:${c};border:2px solid ${st.accent === c ? "var(--tx)" : "transparent"};cursor:pointer" onclick="setAccent('${c}')" aria-label="Color ${c}"></button>`).join("")}
       <input type="color" value="${st.accent}" onchange="setAccent(this.value)" title="Color personalizado" style="width:34px;height:26px;border:none;background:none;cursor:pointer;padding:0">
     </div>
-    <label class="tiny" style="font-weight:700">Primer día de la semana</label>
-    <div style="display:flex;gap:8px;margin-top:6px">
-      <button class="btn sm ${st.weekStart === 1 ? "primary" : ""}" onclick="state.settings.weekStart=1;change();render()">Lunes</button>
-      <button class="btn sm ${st.weekStart === 0 ? "primary" : ""}" onclick="state.settings.weekStart=0;change();render()">Domingo</button></div>
-  </div>
-  <div class="card" style="margin:0"><h3>Pomodoro</h3>
-    <div class="mrow"><div><label class="tiny" style="font-weight:700">Foco (min)</label><input id="cfg_f" type="number" min="5" max="120" value="${st.pomo.f}" style="width:100%;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:7px"></div>
-    <div><label class="tiny" style="font-weight:700">Descanso</label><input id="cfg_s" type="number" min="1" max="45" value="${st.pomo.s}" style="width:100%;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:7px"></div></div>
-    <div class="mrow" style="margin-top:8px"><div><label class="tiny" style="font-weight:700">Descanso largo</label><input id="cfg_l" type="number" min="5" max="90" value="${st.pomo.l}" style="width:100%;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:7px"></div>
-    <div><label class="tiny" style="font-weight:700">Ciclos p/ largo</label><input id="cfg_c" type="number" min="2" max="10" value="${st.pomo.c}" style="width:100%;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:7px"></div></div>
-    <button class="btn sm" style="margin-top:10px" onclick="savePomoCfgFromConfig()">Guardar duraciones</button>
-    <div class="hr"></div>
-    <label style="display:flex;gap:8px;align-items:center;font-size:.8rem;cursor:pointer"><input type="checkbox" style="width:auto" ${chk(st.sounds)} onchange="state.settings.sounds=this.checked;change()">Sonidos al terminar cada fase</label>
   </div>
   <div class="card" style="margin:0"><h3>Notificaciones</h3>
-    <label style="display:flex;gap:8px;align-items:center;font-size:.8rem;cursor:pointer"><input type="checkbox" style="width:auto" ${chk(st.notif)} onchange="toggleNotif(this.checked)">Notificaciones locales (pomodoro, vencimientos, parciales)</label>
+    <label style="display:flex;gap:8px;align-items:center;font-size:.8rem;cursor:pointer"><input type="checkbox" style="width:auto" ${chk(st.notif)} onchange="toggleNotif(this.checked)">Notificaciones locales (vencimientos y parciales)</label>
     <p class="tiny" style="margin-top:8px">El permiso del navegador se pide recién al activar esta opción.</p>
     <div class="hr"></div>
     <label class="tiny" style="font-weight:700">Días considerados “próximos”</label>
     <input type="number" min="1" max="30" value="${st.upcomingDays}" onchange="state.settings.upcomingDays=parseInt(this.value)||7;change();render()" style="width:90px;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:7px;margin-top:4px" aria-label="Días próximos">
   </div>
   <div class="card" style="margin:0"><h3>Preferencias</h3>
+    <label class="tiny" style="font-weight:700;display:block">Primer día de la semana</label>
+    <div style="display:flex;gap:8px;margin-top:6px">
+      <button class="btn sm ${st.weekStart === 1 ? "primary" : ""}" onclick="state.settings.weekStart=1;change();render()">Lunes</button>
+      <button class="btn sm ${st.weekStart === 0 ? "primary" : ""}" onclick="state.settings.weekStart=0;change();render()">Domingo</button></div>
+    <label class="tiny" style="font-weight:700;display:block;margin-top:12px" for="cfg_dayend">Mi día termina a las</label>
+    <select id="cfg_dayend" style="margin-top:6px;width:100%;max-width:220px;min-height:40px;background:var(--card2);color:var(--tx);border:1px solid var(--line);border-radius:8px;padding:7px" onchange="state.settings.dayEnd=this.value;change();render()">
+      ${["00:00", "01:00", "02:00", "03:00", "04:00", "05:00", "06:00"].map(h => `<option value="${h}" ${st.dayEnd === h ? "selected" : ""}>${h === "00:00" ? "Medianoche" : h}</option>`).join("")}</select>
+    <p class="tiny" style="margin-top:6px">Lo que marques antes de esa hora cuenta para el día anterior. Ideal si estudiás hasta tarde.</p>
+    <div class="hr"></div>
     <label style="display:flex;gap:8px;align-items:center;font-size:.8rem;cursor:pointer"><input type="checkbox" style="width:auto" ${chk(st.showDone)} onchange="state.settings.showDone=this.checked;change();render()">Mostrar tareas completadas en la lista</label>
+    <label class="tiny" style="font-weight:700;display:block;margin-top:12px" for="cfg_donekeep">Sacar de la lista las hechas hace más de</label>
+    <select id="cfg_donekeep" style="margin-top:6px;width:100%;max-width:220px;min-height:40px;background:var(--card2);color:var(--tx);border:1px solid var(--line);border-radius:8px;padding:7px" onchange="state.settings.doneKeepDays=parseInt(this.value)||0;change();render()">
+      ${[3, 5, 7, 10, 14, 30, 0].map(n => `<option value="${n}" ${(st.doneKeepDays | 0) === n ? "selected" : ""}>${n ? n + " días" : "Nunca"}</option>`).join("")}</select>
+    <p class="tiny" style="margin-top:6px">No se borran: siguen en Historial y en Estadísticas.</p>
     <div class="hr"></div>
     <label class="tiny" style="font-weight:700">Formato horario</label>
     <div style="display:flex;gap:8px;margin-top:6px">
@@ -3299,25 +3778,17 @@ function viewConfig() {
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button class="btn sm" onclick="exportJSON()">Exportar JSON</button>
       <button class="btn sm" onclick="go('backups')">Copias de seguridad</button>
+      <button class="btn sm" onclick="go('history')">Historial</button>
       <button class="btn sm" onclick="exportCSV()">Exportar estadísticas CSV</button>
       <button class="btn sm danger" onclick="resetApp()">Reiniciar aplicación</button></div>
     <div class="hr"></div>
-    <p class="tiny">Versión ${APP_VERSION} · ${state.meta.migratedV1 ? "Datos migrados de la versión anterior el " + (state.meta.migratedAt || "").slice(0, 10) : "Instalación nueva"} · Guardado principal: ${db ? "IndexedDB" : "localStorage"}</p>
+    <p class="tiny">Versión ${APP_VERSION} (datos v${schemaOf(state)}) · ${state.meta.migratedV1 ? "Datos migrados de la versión anterior el " + (state.meta.migratedAt || "").slice(0, 10) : "Instalación nueva"} · Guardado principal: ${db ? "IndexedDB" : "localStorage"}</p>
     <button class="btn sm ghost" style="margin-top:6px" onclick="showShortcuts()">Ver atajos de teclado</button>
     <span id="installSlot"></span>
   </div>
   </div>`;
 }
 function addTag() { const i = byId("newTag"); const v = (i.value || "").trim().toLowerCase().replace(/^#/, ""); if (!v) return; if (!state.settings.tags.includes(v)) state.settings.tags.push(v); i.value = ""; change(); render(); }
-function savePomoCfgFromConfig() {
-  const p = state.settings.pomo;
-  p.f = clamp(parseInt(byId("cfg_f").value) || p.f, 5, 120);
-  p.s = clamp(parseInt(byId("cfg_s").value) || p.s, 1, 45);
-  p.l = clamp(parseInt(byId("cfg_l").value) || p.l, 5, 90);
-  p.c = clamp(parseInt(byId("cfg_c").value) || p.c, 2, 10);
-  if (!state.timer.run) { state.timer.left = state.timer.total = phaseDur(state.timer.phase); }
-  change(); renderPomoUI(); toast("Duraciones guardadas");
-}
 function toggleNotif(on) {
   if (!on) { state.settings.notif = false; change(); return; }
   if (typeof Notification === "undefined") { toast("Este navegador no soporta notificaciones"); render(); return; }
@@ -3358,34 +3829,71 @@ function resetApp() {
     second: { title: "¿Estás completamente seguro?", body: "Esta acción es definitiva. Antes se creará una última copia de seguridad local por si te arrepentís (en Copias de seguridad).", okLabel: "Sí, borrar todo" },
     onOk: async () => {
       try { if (db) await idbPut("backups", "pre-reset-" + Date.now(), { ts: Date.now(), label: "Antes de reiniciar", data: JSON.stringify(state) }); } catch (e) {}
-      state = baseState(); state.subjects = initialSubjects(); state.meta.migratedV1 = true;
+      state = baseState(); state.subjects = initialSubjects(); state.meta.migratedV1 = true; migrateState(state);
       change(); render(); toast("Aplicación reiniciada");
     }
   });
 }
 /* ============================ MODALES ============================ */
-function openModal(html, wide) {
+function openModal(html, wide, noFocus) {
   const bg = byId("modalbg"), box = byId("modalbox");
   box.className = "modal" + (wide ? " wide" : "");
   box.innerHTML = html;
   bg.classList.add("open");
-  const f = box.querySelector("input,select,textarea,button");
-  if (f) setTimeout(() => f.focus(), 30);
+  // noFocus: cuando lo primero es una lista para elegir, enfocar un botón confunde ("¿está elegido Todas?")
+  const f = noFocus ? null : box.querySelector("input,select,textarea") || box.querySelector("button"); // primero un campo: un botón de arriba (p. ej. "Ver la serie") no se lleva el foco
+  // si mientras tanto ya tocaste otro campo del modal, no robarle el foco (lo que escribías iba a parar al título)
+  if (f) setTimeout(() => { if (!box.contains(document.activeElement)) f.focus(); }, 30);
 }
 function closeModal() { byId("modalbg").classList.remove("open"); }
+/* B3 · En los selectores no aparecen parciales cerrados (rendido / aprobado /
+   desaprobado) ni proyectos terminados o archivados, salvo el que ya está
+   elegido: una tarea vinculada a algo cerrado sigue mostrando su vínculo. */
+const EVAL_CLOSED = ["rendido", "aprob", "desaprob"];
+const PROJ_CLOSED = ["done", "arch"];
+function evalMatchesLink(e, link) {
+  if (!link) return true;
+  if (link.startsWith("s:")) return e.subjectId === link.slice(2);
+  if (link.startsWith("p:")) return e.projectId === link.slice(2);
+  return true;
+}
+/* Opciones de "Parcial / final" para una materia o proyecto (link "s:…"/"p:…"/""). */
+function evalOptions(link, keepId) {
+  const list = state.evals.filter(e => e.id === keepId || (!EVAL_CLOSED.includes(e.status) && evalMatchesLink(e, link)))
+    .sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
+  return `<option value="">— Ninguno —</option>` + list.map(e => `<option value="${e.id}" ${e.id === keepId ? "selected" : ""}>${esc(e.name)}${e.date ? " · " + fmtD(e.date) : ""}${EVAL_CLOSED.includes(e.status) ? " (" + EVAL_STATUS[e.status].toLowerCase() + ")" : ""}</option>`).join("");
+}
+/* Al cambiar la materia: se recalculan los parciales; si el elegido no es de esa materia, se limpia. */
+function refreshEvalSelect(linkId, evalId) {
+  const l = byId(linkId).value, es = byId(evalId); if (!es) return;
+  const cur = evalById(es.value);
+  es.innerHTML = evalOptions(l, cur && evalMatchesLink(cur, l) ? cur.id : null);
+}
+/* Al elegir un parcial sin materia elegida, se completa la materia del parcial. */
+function evalPicked(linkId, evalId) {
+  const e = evalById(byId(evalId).value), ls = byId(linkId);
+  if (!e || !ls || ls.value) return;
+  const want = e.subjectId ? "s:" + e.subjectId : e.projectId ? "p:" + e.projectId : "";
+  if (want && [...ls.options].some(o => o.value === want)) ls.value = want;
+}
 function linkOptions(sel, includeTasks) {
   let h = `<option value="">— Sin vínculo —</option><optgroup label="Materias">`;
   h += activeSubjects().map(s => `<option value="s:${s.id}" ${sel === "s:" + s.id ? "selected" : ""}>${esc(s.name)}</option>`).join("");
   h += `</optgroup><optgroup label="Proyectos">`;
-  h += state.projects.filter(p => p.status !== "arch").map(p => `<option value="p:${p.id}" ${sel === "p:" + p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("");
+  h += state.projects.filter(p => !PROJ_CLOSED.includes(p.status) || sel === "p:" + p.id).map(p => `<option value="p:${p.id}" ${sel === "p:" + p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("");
   h += `</optgroup>`;
   if (includeTasks) {
-    h += `<optgroup label="Evaluaciones">` + state.evals.map(e => `<option value="e:${e.id}" ${sel === "e:" + e.id ? "selected" : ""}>${esc(e.name)}</option>`).join("") + `</optgroup>`;
+    h += `<optgroup label="Evaluaciones">` + state.evals.filter(e => !EVAL_CLOSED.includes(e.status) || sel === "e:" + e.id).map(e => `<option value="e:${e.id}" ${sel === "e:" + e.id ? "selected" : ""}>${esc(e.name)}</option>`).join("") + `</optgroup>`;
     h += `<optgroup label="Tareas">` + state.tasks.filter(t => !t.archived && t.status !== "done").slice(0, 40).map(t => `<option value="t:${t.id}" ${sel === "t:" + t.id ? "selected" : ""}>${esc(t.title.slice(0, 44))}</option>`).join("") + `</optgroup>`;
   }
   return h;
 }
 
+function openQuickTaskForEval(evId) {
+  const e = evalById(evId); if (!e) return;
+  openQuickTask(null, e.subjectId, e.projectId);
+  const es = byId("qt_eval"); if (es) { es.innerHTML = evalOptions(byId("qt_link").value, evId); es.value = evId; }
+}
 /* ---------- Agregado rápido ---------- */
 function openQuick() {
   openModal(`<h3>Agregado rápido</h3>
@@ -3393,7 +3901,7 @@ function openQuick() {
       ${[["task", "Tarea"], ["eval", "Parcial / final"], ["project", "Proyecto"], ["subject", "Materia"], ["note", "Nota"], ["habit", "Hábito"]].map(([k, v]) =>
         `<button class="btn" style="padding:14px" onclick="quickRoute('${k}')">${v}</button>`).join("")}
     </div>
-    <p class="tiny" style="margin-top:12px">Atajos: <kbd>N</kbd> tarea · <kbd>/</kbd> buscar · <kbd>P</kbd> pomodoro · <kbd>Ctrl</kbd>+<kbd>K</kbd> acciones</p>`);
+    <p class="tiny" style="margin-top:12px">Atajos: <kbd>N</kbd> tarea · <kbd>/</kbd> buscar · <kbd>Ctrl</kbd>+<kbd>K</kbd> acciones</p>`);
 }
 function quickRoute(k) {
   closeModal();
@@ -3409,24 +3917,102 @@ function openQuickTask(date, subjectId, projectId) {
   openModal(`<h3>Nueva tarea</h3>
     <label for="qt_title">Título</label><input id="qt_title" placeholder="Ej: resolver práctica de límites" onkeydown="if(event.key==='Enter')saveQuickTask()">
     <div class="mrow">
-      <div><label for="qt_link">Materia / proyecto</label><select id="qt_link">${linkOptions(sel)}</select></div>
+      <div><label for="qt_link">Materia / proyecto</label><select id="qt_link" onchange="refreshEvalSelect('qt_link','qt_eval')">${linkOptions(sel)}</select></div>
+      <div><label for="qt_eval">Parcial / final (opcional)</label><select id="qt_eval" onchange="evalPicked('qt_link','qt_eval')">${evalOptions(sel, null)}</select></div>
+    </div>
+    <div class="mrow">
       <div><label for="qt_min">Tiempo estimado (min)</label><input id="qt_min" type="number" value="60" min="0" step="5"></div>
     </div>
     <div class="mrow">
-      <div><label for="qt_mode">Programación</label><select id="qt_mode" onchange="byId('qt_p2').style.display=this.value==='period'?'block':'none'">
+      <div><label for="qt_mode">Programación</label><select id="qt_mode" onchange="byId('qt_timewrap').style.display=this.value==='none'?'none':'block';byId('qt_repwrap').style.display=this.value==='d'?'block':'none';repPreview()">
         <option value="d">Día fijo</option>
         <option value="due">Fecha límite (flexible)</option>
-        <option value="period">Todos los días (período)</option>
         <option value="none">Sin fecha</option></select></div>
-      <div><label for="qt_date">Fecha${""}</label><input id="qt_date" type="date" value="${date || todayISO()}"></div>
+      <div><label for="qt_date">Fecha${""}</label><input id="qt_date" type="date" value="${date || todayISO()}" onchange="repPreview()"></div>
+      <div id="qt_timewrap"><label for="qt_time">Hora (opcional)</label><input id="qt_time" type="time"></div>
     </div>
-    <div id="qt_p2" style="display:none">
-      <label for="qt_date2">Hasta (inclusive)</label><input id="qt_date2" type="date" value="${date || todayISO()}">
-      <p class="tiny" style="margin-top:4px">Se crea una tarea igual por cada día del período, cada una con su tiempo estimado. Ideal para “practicar con parciales viejos, 1 h por día hasta el examen”.</p>
-    </div>
+    ${repeatControls(date || todayISO())}
     <div class="mfoot"><span class="tiny grow">Después podés abrirla para completar detalles avanzados.</span>
       <button class="btn" onclick="closeModal()">Cancelar</button>
-      <button class="btn primary" onclick="saveQuickTask()">Crear tarea</button></div>`);
+      <button class="btn primary" id="qt_save" onclick="saveQuickTask()">Crear tarea</button></div>`);
+  repPreview();
+}
+/* ---------- C1 · Repetir ----------
+   Un solo concepto para el usuario. Internamente:
+   - Con fin (fecha o cantidad): se crean tareas individuales con el mismo seriesId.
+     Así cada una se edita, se mueve o se completa por separado.
+   - Sin fin: UNA tarea con t.recur (el modelo que ya existía), porque no se pueden
+     crear infinitas. Las fechas de las dos salen del mismo cálculo (occursOn). */
+const REP_MAX = 120;
+function repeatControls(start) {
+  const wd = [[1, "L"], [2, "M"], [3, "X"], [4, "J"], [5, "V"], [6, "S"], [0, "D"]];
+  return `<div id="qt_repwrap">
+    <div class="mrow">
+      <div><label for="qt_rep">Repetir</label><select id="qt_rep" onchange="repPreview()">
+        <option value="none">No se repite</option><option value="daily">Todos los días</option><option value="interval">Cada N días</option>
+        <option value="days">Ciertos días de la semana</option><option value="weekly">Cada semana</option><option value="monthly">Cada mes</option></select></div>
+      <div class="repx" id="qt_repnwrap"><label for="qt_repn">Cada cuántos días</label><input id="qt_repn" type="number" min="2" max="60" value="2" oninput="repPreview()"></div>
+    </div>
+    <div class="repx" id="qt_repdayswrap"><label>Días</label><div class="wdpick" id="qt_repdays">${wd.map(([n, l]) => `<button type="button" data-wd="${n}" aria-pressed="false" onclick="this.setAttribute('aria-pressed',this.getAttribute('aria-pressed')==='true'?'false':'true');repPreview()">${l}</button>`).join("")}</div></div>
+    <div class="mrow repx" id="qt_rependwrap">
+      <div><label for="qt_repend">Termina</label><select id="qt_repend" onchange="repPreview()">
+        <option value="until">En una fecha</option><option value="count">Después de N veces</option><option value="never">Sin fin</option></select></div>
+      <div class="repx" id="qt_repuntilwrap"><label for="qt_repuntil">Hasta (inclusive)</label><input id="qt_repuntil" type="date" value="${addDays(start, 6)}" onchange="repPreview()"></div>
+      <div class="repx" id="qt_repcountwrap"><label for="qt_repcount">Cantidad de veces</label><input id="qt_repcount" type="number" min="1" max="${REP_MAX}" value="5" oninput="repPreview()"></div>
+    </div>
+    <div id="qt_preview" class="reppreview" role="status" aria-live="polite" hidden></div>
+  </div>`;
+}
+/* Fechas de una repetición. rule = {kind, n, days}; end = {type: until|count|never, date, n}.
+   Con "never" devuelve las primeras `peek` (para la vista previa). */
+function repeatDates(start, rule, end, peek) {
+  const fake = { recur: { kind: rule.kind, n: rule.n, days: rule.days || [], start } };
+  const max = end.type === "count" ? Math.min(end.n | 0, REP_MAX) : end.type === "never" ? (peek || 5) : REP_MAX + 1;
+  const out = [];
+  for (let d = start, i = 0; out.length < max && i < 3700; d = addDays(d, 1), i++) {
+    if (end.type === "until" && d > end.date) break;
+    if (occursOn(fake, d)) out.push(d);
+  }
+  return out;
+}
+/* Lee el formulario. Devuelve {rule, end, dates} o {error}. */
+function readRepeat() {
+  const kind = byId("qt_rep") ? byId("qt_rep").value : "none";
+  if (kind === "none" || byId("qt_mode").value !== "d") return null;
+  const start = byId("qt_date").value || todayISO();
+  const rule = { kind };
+  if (kind === "interval") { rule.n = parseInt(byId("qt_repn").value) || 0; if (rule.n < 2) return { error: "Poné cada cuántos días (2 o más)." }; }
+  if (kind === "days") {
+    rule.days = [...document.querySelectorAll('#qt_repdays [aria-pressed="true"]')].map(b => +b.dataset.wd);
+    if (!rule.days.length) return { error: "Elegí al menos un día de la semana." };
+  }
+  const et = byId("qt_repend").value, end = { type: et };
+  if (et === "until") { end.date = byId("qt_repuntil").value; if (!end.date || end.date < start) return { error: "La fecha final tiene que ser igual o posterior al inicio (" + fmtD(start) + ")." }; }
+  if (et === "count") { end.n = parseInt(byId("qt_repcount").value) || 0; if (end.n < 1) return { error: "Poné cuántas veces." }; if (end.n > REP_MAX) return { error: "Máximo " + REP_MAX + " veces. Si es para siempre, elegí “Sin fin”." }; }
+  const dates = repeatDates(start, rule, end, 5);
+  if (et !== "never" && dates.length > REP_MAX) return { error: "Serían más de " + REP_MAX + " tareas. Acortá el período o elegí “Sin fin”." };
+  if (!dates.length) return { error: "Con esta configuración no cae ningún día." };
+  return { start, rule, end, dates };
+}
+function repPreview() {
+  const kind = byId("qt_rep") ? byId("qt_rep").value : "none";
+  const show = (id, on) => { const el = byId(id); if (el) el.style.display = on ? "" : "none"; };
+  show("qt_repnwrap", kind === "interval");
+  show("qt_repdayswrap", kind === "days");
+  show("qt_rependwrap", kind !== "none");
+  const et = byId("qt_repend") ? byId("qt_repend").value : "until";
+  show("qt_repuntilwrap", et === "until"); show("qt_repcountwrap", et === "count");
+  const pv = byId("qt_preview"), btn = byId("qt_save");
+  if (!pv) return;
+  const r = readRepeat();
+  pv.hidden = !r; pv.classList.toggle("bad", !!(r && r.error));
+  if (btn) btn.textContent = r && !r.error && r.end.type !== "never" ? "Crear " + r.dates.length + " tareas" : "Crear tarea";
+  if (!r) return;
+  if (r.error) { pv.innerHTML = esc(r.error); return; }
+  const list = r.dates.slice(0, 14).map(d => `<span class="repdate">${fmtD(d)}</span>`).join("") + (r.dates.length > 14 ? `<span class="repdate more">y ${r.dates.length - 14} más</span>` : "");
+  pv.innerHTML = r.end.type === "never"
+    ? `<b>Sin fin:</b> una sola tarea que se repite. Próximas: <div class="repdates">${list}<span class="repdate more">…</span></div>`
+    : `<b>Se van a crear ${r.dates.length} tarea${r.dates.length > 1 ? "s" : ""}</b>${r.dates.length > 1 ? " (una serie)" : ""}: <div class="repdates">${list}</div>`;
 }
 function saveQuickTask() {
   const title = byId("qt_title").value.trim();
@@ -3434,18 +4020,24 @@ function saveQuickTask() {
   const link = byId("qt_link").value, mode = byId("qt_mode").value, date = byId("qt_date").value || todayISO();
   const base = {
     title, estMin: parseInt(byId("qt_min").value) || 0,
+    time: mode !== "none" && hmToMin(byId("qt_time").value) != null ? byId("qt_time").value : null,
     subjectId: link.startsWith("s:") ? link.slice(2) : null,
-    projectId: link.startsWith("p:") ? link.slice(2) : null
+    projectId: link.startsWith("p:") ? link.slice(2) : null,
+    evalId: byId("qt_eval").value || null // planId queda reservado al generador de planes: "Regenerar plan" solo borra esas
   };
-  if (mode === "period") {
-    const d2 = byId("qt_date2").value || date;
-    if (d2 < date) { toast("La fecha final debe ser igual o posterior a la inicial"); return; }
-    const total = Math.round((dToDate(d2) - dToDate(date)) / 864e5) + 1;
-    if (total > 120) { toast("Máximo 120 días por período"); return; }
-    const ids = [];
-    for (let d = date; d <= d2; d = addDays(d, 1)) ids.push(quickAddTask(Object.assign({ date: d }, base)).id);
+  const r = readRepeat();
+  if (r && r.error) { toast(r.error); repPreview(); return; }
+  if (r && r.end.type === "never") {
+    const t = quickAddTask(Object.assign({ date: null, recur: Object.assign({ start: r.start }, r.rule, { days: r.rule.days || [] }) }, base));
     closeModal(); render();
-    toast(total + " tareas creadas: " + fmtD(date) + " a " + fmtD(d2), () => { state.tasks = state.tasks.filter(x => !ids.includes(x.id)); change(); render(); });
+    toast("Tarea que se repite creada", () => { state.tasks = state.tasks.filter(x => x.id !== t.id); change(); render(); });
+    return;
+  }
+  if (r) {
+    const ids = [], seriesId = r.dates.length > 1 ? "sr-" + uid() : null;
+    for (const d of r.dates) ids.push(quickAddTask(Object.assign({ date: d, seriesId }, base)).id);
+    closeModal(); render();
+    toast(ids.length + " tareas creadas: " + fmtD(r.dates[0]) + " a " + fmtD(r.dates[r.dates.length - 1]), () => { state.tasks = state.tasks.filter(x => !ids.includes(x.id)); change(); render(); });
     return;
   }
   const t = quickAddTask(Object.assign({ date: mode === "d" ? date : null, due: mode === "due" ? date : null }, base));
@@ -3458,26 +4050,36 @@ function openTaskEditor(id) {
   const t = taskById(id); if (!t) return;
   const sel = t.subjectId ? "s:" + t.subjectId : t.projectId ? "p:" + t.projectId : "";
   const rec = t.recur || {};
+  ui.serMap = null; const sp = seriesPos(t);
   openModal(`<h3>Editar tarea</h3>
+    ${sp ? `<div class="serbanner"><span>Parte de una serie · <b>${sp.i} de ${sp.n}</b></span>
+      <button type="button" class="btn sm" onclick="closeModal();openSeriesModal('${escA(sp.key)}')">Ver la serie</button></div>` : ""}
     <label for="te_title">Título</label><input id="te_title" value="${escA(t.title)}">
     <label for="te_desc">Descripción</label><textarea id="te_desc" rows="2">${esc(t.desc || "")}</textarea>
     <div class="mrow">
-      <div><label for="te_link">Materia / proyecto</label><select id="te_link">${linkOptions(sel)}</select></div>
-      <div><label for="te_eval">Evaluación / plan</label><select id="te_eval"><option value="">—</option>${state.evals.map(e => `<option value="${e.id}" ${t.evalId === e.id ? "selected" : ""}>${esc(e.name)}</option>`).join("")}</select></div>
+      <div><label for="te_link">Materia / proyecto</label><select id="te_link" onchange="refreshEvalSelect('te_link','te_eval')">${linkOptions(sel)}</select></div>
+      <div><label for="te_eval">Parcial / final</label><select id="te_eval" onchange="evalPicked('te_link','te_eval')">${evalOptions(sel, t.evalId)}</select></div>
     </div>
     <div class="mrow">
       <div><label for="te_date">Fecha programada</label><input id="te_date" type="date" value="${t.date || ""}"></div>
+      <div><label for="te_time">Hora</label><input id="te_time" type="time" value="${t.time || ""}"></div>
+    </div>
+    <div class="mrow">
       <div><label for="te_due">Fecha límite</label><input id="te_due" type="date" value="${t.due || ""}"></div>
       <div><label for="te_min">Estimado (min)</label><input id="te_min" type="number" value="${t.estMin || 0}" min="0" step="5"></div>
     </div>
     <div class="mrow">
       <div><label for="te_prio">Prioridad</label><select id="te_prio">${PRIO.map((p, i) => `<option value="${i}" ${t.prio === i ? "selected" : ""}>${p}</option>`).join("")}</select></div>
-      <div><label for="te_status">Estado</label><select id="te_status">${Object.entries(TASK_STATUS).map(([k, v]) => `<option value="${k}" ${t.status === k ? "selected" : ""}>${v}</option>`).join("")}</select></div>
+      <div><label for="te_status">Estado</label><select id="te_status" onchange="byId('te_donewrap').style.display=this.value==='done'?'block':'none'">${Object.entries(TASK_STATUS).map(([k, v]) => `<option value="${k}" ${t.status === k ? "selected" : ""}>${v}</option>`).join("")}</select></div>
       <div><label for="te_type">Tipo</label><select id="te_type">${Object.entries(TASK_TYPES).map(([k, v]) => `<option value="${k}" ${t.type === k ? "selected" : ""}>${v}</option>`).join("")}</select></div>
+    </div>
+    <div id="te_donewrap" style="display:${t.status === "done" ? "block" : "none"}">
+      <label for="te_doneat">Completada el</label>
+      <input id="te_doneat" type="date" value="${t.doneAt || todayISO()}" max="${todayISO()}" style="max-width:220px">
     </div>
     <div class="mrow">
       <div><label for="te_tags">Etiquetas (separadas por coma)</label><input id="te_tags" value="${escA((t.tags || []).join(", "))}"></div>
-      <div><label for="te_rec">Recurrencia</label><select id="te_rec" onchange="byId('te_recdays').style.display=(this.value==='days')?'block':'none';byId('te_recn').style.display=(this.value==='interval')?'block':'none'">
+      <div${sp ? ' style="display:none"' : ""}><label for="te_rec">Recurrencia</label><select id="te_rec" onchange="byId('te_recdays').style.display=(this.value==='days')?'block':'none';byId('te_recn').style.display=(this.value==='interval')?'block':'none'">
         <option value="">No se repite</option>
         <option value="daily" ${rec.kind === "daily" ? "selected" : ""}>Todos los días</option>
         <option value="days" ${rec.kind === "days" ? "selected" : ""}>Días específicos</option>
@@ -3490,7 +4092,13 @@ function openTaskEditor(id) {
     <label>Subtareas</label><div id="te_subs"></div>
     <div class="mrow"><div><input id="te_newsub" placeholder="Nueva subtarea…" onkeydown="if(event.key==='Enter')addSubtaskFromEditor('${t.id}')"></div><button class="btn" onclick="addSubtaskFromEditor('${t.id}')">Agregar</button></div>
     <label for="te_notes">Notas de la tarea</label><textarea id="te_notes" rows="2">${esc(t.notes || "")}</textarea>
-    <p class="tiny" style="margin-top:8px">Tiempo real: ${fmtMin(t.realMin || 0)} · ${t.pomos || 0} pomodoros · creada ${fmtD(t.createdAt)}${t.doneAt ? " · completada " + fmtD(t.doneAt) : ""}</p>
+    <label for="te_newcmt">Comentarios</label>
+    <div id="te_comments" data-tid="${t.id}"></div>
+    <div class="cmt-new"><textarea id="te_newcmt" rows="1" placeholder="Escribí un comentario…" onkeydown="if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)){event.preventDefault();addTaskComment('${t.id}')}"></textarea>
+      <button class="btn" onclick="addTaskComment('${t.id}')">Comentar</button></div>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:12px">
+      <p class="tiny" style="flex:1;margin:0">Tiempo real: <b>${fmtMin(t.realMin || 0)}</b> · creada ${fmtD(t.createdAt)}${t.doneAt ? " · completada " + fmtD(t.doneAt) : ""}</p>
+      <button class="btn sm" onclick="openManualSession('${t.id}')">Registrar tiempo</button></div>
     <div class="mfoot">
       <button class="btn danger" onclick="deleteTask('${t.id}')">Eliminar</button>
       <button class="btn" onclick="archiveTask('${t.id}');closeModal()">${t.archived ? "Restaurar" : "Archivar"}</button>
@@ -3499,6 +4107,54 @@ function openTaskEditor(id) {
       <button class="btn" onclick="closeModal()">Cancelar</button>
       <button class="btn primary" onclick="saveTaskEditor('${t.id}')">Guardar</button></div>`, true);
   renderTaskEditorSubtasks(t);
+  ui.editingComment = null; renderTaskComments(t);
+  ui.teInit = { id, v: editorSharedValues() };
+}
+/* ---------- Comentarios en tareas (B2) ----------
+   t.comments = [{ id, text, ts, editedTs? }]. Se guardan al instante (como las
+   subtareas); borrar tiene deshacer. */
+function fmtStamp(ts) {
+  const d = new Date(ts);
+  return fmtD(iso(d)) + " · " + fmtTime(pad(d.getHours()) + ":" + pad(d.getMinutes()));
+}
+function renderTaskComments(t) {
+  const el = byId("te_comments"); if (!el || el.dataset.tid !== t.id) return;
+  const list = [...(t.comments || [])].sort((a, b) => a.ts - b.ts);
+  el.innerHTML = list.map(c => ui.editingComment === c.id
+    ? `<div class="cmt" data-cid="${c.id}"><textarea id="te_cmt_edit" rows="2" aria-label="Editar comentario">${esc(c.text)}</textarea>
+        <div class="cmt-act"><button class="btn sm ghost" onclick="ui.editingComment=null;renderTaskComments(taskById('${t.id}'))">Cancelar</button>
+        <button class="btn sm primary" onclick="saveTaskComment('${t.id}','${c.id}')">Guardar</button></div></div>`
+    : `<div class="cmt" data-cid="${c.id}"><div class="cmt-meta">${fmtStamp(c.ts)}${c.editedTs ? " · editado" : ""}</div>
+        <div class="cmt-text">${esc(c.text).replace(/\n/g, "<br>")}</div>
+        <div class="cmt-act"><button class="btn sm ghost" onclick="editTaskComment('${t.id}','${c.id}')">Editar</button>
+        <button class="btn sm ghost" style="color:var(--bad)" onclick="deleteTaskComment('${t.id}','${c.id}')">Borrar</button></div></div>`).join("");
+}
+function addTaskComment(taskId) {
+  const t = taskById(taskId), i = byId("te_newcmt");
+  if (!t || !i || !i.value.trim()) return;
+  t.comments = t.comments || [];
+  t.comments.push({ id: uid(), text: i.value.trim(), ts: Date.now() });
+  i.value = ""; change(); renderTaskComments(t); render();
+}
+function editTaskComment(taskId, cid) {
+  ui.editingComment = cid; renderTaskComments(taskById(taskId));
+  const a = byId("te_cmt_edit"); if (a) { a.focus(); a.setSelectionRange(a.value.length, a.value.length); }
+}
+function saveTaskComment(taskId, cid) {
+  const t = taskById(taskId); if (!t) return;
+  const c = (t.comments || []).find(x => x.id === cid), a = byId("te_cmt_edit");
+  if (!c || !a) return;
+  const txt = a.value.trim();
+  if (!txt) { toast("El comentario no puede quedar vacío (para sacarlo, usá Borrar)"); return; }
+  if (txt !== c.text) { c.text = txt; c.editedTs = Date.now(); change(); }
+  ui.editingComment = null; renderTaskComments(t);
+}
+function deleteTaskComment(taskId, cid) {
+  const t = taskById(taskId); if (!t || !t.comments) return;
+  const idx = t.comments.findIndex(x => x.id === cid); if (idx < 0) return;
+  const [c] = t.comments.splice(idx, 1);
+  change(); renderTaskComments(t); render();
+  toast("Comentario borrado", () => { const tt = taskById(taskId); if (!tt) return; tt.comments = tt.comments || []; tt.comments.splice(Math.min(idx, tt.comments.length), 0, c); change(); renderTaskComments(tt); render(); });
 }
 function renderTaskEditorSubtasks(t) {
   const el = byId("te_subs"); if (!el) return;
@@ -3519,24 +4175,82 @@ function removeSubtask(taskId, stId) {
   t.subtasks = (t.subtasks || []).filter(s => s.id !== stId);
   change(); renderTaskEditorSubtasks(t);
 }
-function saveTaskEditor(id) {
+/* C3 · Si la tarea es parte de una serie y cambiaste algo que comparten
+   (título, materia, minutos, hora…), pregunta a cuáles aplicarlo, como el
+   Calendario del iPhone. Fecha, estado, notas y comentarios son siempre de esta. */
+const SERIES_SHARED = [
+  ["title", "título"], ["desc", "descripción"], ["subjectId", "materia"], ["projectId", "proyecto"], ["evalId", "parcial"],
+  ["estMin", "minutos"], ["time", "hora"], ["prio", "prioridad"], ["type", "tipo"], ["tags", "etiquetas"]
+];
+function editorSharedValues() {
+  const link = byId("te_link").value, tm = byId("te_time").value;
+  return {
+    title: byId("te_title").value.trim(), desc: byId("te_desc").value,
+    subjectId: link.startsWith("s:") ? link.slice(2) : null, projectId: link.startsWith("p:") ? link.slice(2) : null,
+    evalId: byId("te_eval").value || null, estMin: parseInt(byId("te_min").value) || 0,
+    time: hmToMin(tm) != null ? tm : null, prio: parseInt(byId("te_prio").value), type: byId("te_type").value,
+    tags: byId("te_tags").value.split(",").map(x => x.trim().replace(/^#/, "")).filter(Boolean)
+  };
+}
+function saveTaskEditor(id, scope) {
   const t = taskById(id); if (!t) return;
   const title = byId("te_title").value.trim();
   if (!title) { toast("El título no puede quedar vacío"); return; }
+  ui.serMap = null;
+  const sp = seriesPos(t);
+  const nv = editorSharedValues(), norm = v => JSON.stringify(v == null || v === "" ? null : v);
+  // "lo que cambiaste" = lo que dice el editor ahora vs lo que decía al abrirse
+  const init = ui.teInit && ui.teInit.id === id ? ui.teInit.v : nv;
+  const diff = SERIES_SHARED.filter(([k]) => norm(nv[k]) !== norm(init[k]));
+  if (sp && diff.length && !scope) {
+    const rest = sp.list.filter(x => x !== t), next = sp.list.slice(sp.i - 1);
+    const names = [...new Set(diff.map(d => d[1]))];
+    const box = byId("confirmbox");
+    box.innerHTML = `<h3>Esta tarea es parte de una serie</h3>
+      <p class="muted">Cambiaste ${esc(names.length > 1 ? names.slice(0, -1).join(", ") + " y " + names[names.length - 1] : names[0])}. ¿A cuáles se lo aplico?</p>
+      <div class="scopebtns">
+        <button class="btn" onclick="closeConfirm();saveTaskEditor('${escA(id)}','this')">Solo a esta</button>
+        ${next.length > 1 && next.length < sp.n ? `<button class="btn" onclick="closeConfirm();saveTaskEditor('${escA(id)}','next')">A esta y las siguientes (${next.length})</button>` : ""}
+        <button class="btn primary" onclick="closeConfirm();saveTaskEditor('${escA(id)}','all')">A todas las de la serie (${sp.n})</button>
+        <button class="btn ghost" onclick="closeConfirm()">Cancelar</button></div>`;
+    byId("confirmbg").classList.add("open");
+    return;
+  }
+  // Las otras de la serie reciben solo los campos que cambiaste (con deshacer)
+  let others = [];
+  if (sp && diff.length && (scope === "next" || scope === "all")) {
+    others = (scope === "all" ? sp.list : sp.list.slice(sp.i - 1)).filter(x => x !== t);
+  }
+  const snaps = others.map(x => ({ x, v: Object.assign({ planId: x.planId }, Object.fromEntries(diff.map(([k]) => [k, Array.isArray(x[k]) ? [...x[k]] : x[k]]))) }));
+  others.forEach(x => diff.forEach(([k]) => {
+    x[k] = Array.isArray(nv[k]) ? [...nv[k]] : k === "desc" ? nv.desc : nv[k];
+    if (k === "evalId" && x.planId && x.planId !== nv.evalId) x.planId = null;
+  }));
   t.title = title; t.desc = byId("te_desc").value;
   const link = byId("te_link").value;
   t.subjectId = link.startsWith("s:") ? link.slice(2) : null;
   t.projectId = link.startsWith("p:") ? link.slice(2) : null;
-  const ev = byId("te_eval").value; t.evalId = ev || null; if (!ev) t.planId = null; else if (!t.planId) t.planId = ev;
+  const ev = byId("te_eval").value || null;
+  if (ev !== (t.evalId || null)) {
+    t.evalId = ev;
+    // planId lo pone solo el generador de planes ("Regenerar plan" borra esas tareas).
+    // Vincular a mano NO la mete en el plan; si la cambiás de parcial, sale del plan viejo.
+    if (t.planId && t.planId !== ev) t.planId = null;
+  }
   const prevDate = t.date;
   t.date = byId("te_date").value || null;
+  const tm = byId("te_time").value;
+  if (hmToMin(tm) != null) t.time = tm; else if (t.time) t.time = null;
   if (t.date !== prevDate) t.ord = null;
   t.due = byId("te_due").value || null;
   t.estMin = parseInt(byId("te_min").value) || 0;
   t.prio = parseInt(byId("te_prio").value);
   const prevStatus = t.status;
   t.status = byId("te_status").value;
-  if (t.status === "done" && prevStatus !== "done") { t.doneAt = todayISO(); bumpDayDone(todayISO()); askDoneTime(t.id); }
+  const doneIn = (byId("te_doneat") || {}).value || todayISO();
+  const doneDay = doneIn > todayISO() ? todayISO() : doneIn;
+  if (t.status === "done" && prevStatus !== "done") { t.doneAt = doneDay; bumpDayDone(doneDay); askDoneTime(t.id); }
+  else if (t.status === "done" && t.doneAt !== doneDay) moveDoneDate(t, doneDay);
   if (t.status !== "done") { t.doneAt = null; if (prevStatus === "done") uncreditTaskDone(t); }
   t.type = byId("te_type").value;
   t.tags = byId("te_tags").value.split(",").map(x => x.trim().replace(/^#/, "")).filter(Boolean);
@@ -3546,7 +4260,10 @@ function saveTaskEditor(id) {
     t.recur = { kind: rk, days: [...document.querySelectorAll(".te_day:checked")].map(x => parseInt(x.value)), n: parseInt((byId("te_n") || {}).value) || 2, start: t.date || todayISO() };
     t.recurDone = t.recurDone || {};
   } else t.recur = null;
-  change(); closeModal(); render(); toast("Tarea guardada");
+  change(); closeModal(); render();
+  if (others.length) toast("Guardado en " + (others.length + 1) + " tareas de la serie",
+    () => { snaps.forEach(sn => Object.assign(sn.x, sn.v)); change(); render(); });
+  else toast("Tarea guardada");
 }
 
 /* ---------- Materia ---------- */
@@ -3719,19 +4436,18 @@ function autoSaveNote(id) {
 }
 
 /* ---------- Sesión manual ---------- */
-function openManualSession() {
-  openModal(`<h3>Registrar sesión manual</h3>
-    <p class="tiny">Para cuando estudiaste sin el temporizador.</p>
+function openManualSession(taskId) {
+  openModal(`<h3>Registrar tiempo</h3>
+    <p class="tiny">Cuánto estudiaste. Suma a la tarea y a tus estadísticas.</p>
     <div class="mrow">
       <div><label for="ms_min">Minutos</label><input id="ms_min" type="number" min="5" step="5" value="60"></div>
       <div><label for="ms_date">Fecha</label><input id="ms_date" type="date" value="${todayISO()}"></div>
     </div>
-    <label for="ms_link">Vinculada a</label><select id="ms_link">${linkOptions("", true)}</select>
+    <label for="ms_link">Vinculada a</label><select id="ms_link">${linkOptions(taskId ? "t:" + taskId : "", true)}</select>
     <label for="ms_note">Nota (opcional)</label><input id="ms_note" placeholder="Qué estudiaste">
     <div class="mfoot"><button class="btn" onclick="closeModal()">Cancelar</button>
       <button class="btn primary" onclick="logManualSession()">Registrar</button></div>`);
 }
-function openPomoCfg() { go("config"); toast("Las duraciones del pomodoro se editan acá"); }
 
 /* ======================== BÚSQUEDA GLOBAL ======================== */
 let searchMode = "search";
@@ -3756,7 +4472,7 @@ function searchItems(q) {
     const cmds = [
       ["Nueva tarea", () => openQuickTask()], ["Nueva evaluación", () => openEvalEditor()], ["Nueva materia", () => openSubjectEditor()],
       ["Nuevo proyecto", () => openProjectEditor()], ["Nueva nota", () => openNoteEditor()], ["Nuevo hábito", () => openHabitEditor()],
-      ["Registrar sesión manual", () => openManualSession()], ["Empezar pomodoro", () => { startPomo(); go("pomodoro"); }],
+      ["Registrar tiempo estudiado", () => openManualSession()],
       ["Ir a Inicio", () => go("home")], ["Ir a Hoy", () => go("today")], ["Ir a Calendario", () => go("calendar")], ["Ir a Semana", () => go("week")],
       ["Ir a Materias", () => go("subjects")], ["Ir a Parciales y finales", () => go("evals")], ["Ir a Proyectos", () => go("projects")],
       ["Ir a Planes de estudio", () => go("plans")], ["Ir a Notas", () => go("notes")], ["Ir a Hábitos", () => go("habits")],
@@ -3802,7 +4518,6 @@ function showShortcuts() {
     <div class="muted" style="line-height:2.2">
       <kbd>N</kbd> Nueva tarea<br>
       <kbd>/</kbd> Buscar<br>
-      <kbd>P</kbd> Abrir Pomodoro<br>
       <kbd>Ctrl</kbd> + <kbd>K</kbd> Acciones rápidas<br>
       <kbd>Ctrl</kbd> + <kbd>S</kbd> Forzar guardado<br>
       <kbd>Ctrl</kbd> + clic Sumar una tarea a la selección<br>
@@ -3820,6 +4535,7 @@ function isTyping() {
 }
 function onKeydown(e) {
   if (e.key === "Escape") {
+    if (byId("sheetbg").classList.contains("open")) { closeMoveSheet(); return; }
     if (byId("confirmbg").classList.contains("open")) { closeConfirm(); return; }
     if (byId("searchbg").classList.contains("open")) { closeSearch(); return; }
     if (byId("modalbg").classList.contains("open")) { closeModal(); return; }
@@ -3834,12 +4550,11 @@ function onKeydown(e) {
   if (isTyping()) return;
   if (e.key === "n" || e.key === "N") { e.preventDefault(); openQuickTask(); }
   else if (e.key === "/") { e.preventDefault(); openSearch(); }
-  else if (e.key === "p" || e.key === "P") { e.preventDefault(); go("pomodoro"); }
   else if (e.key === "?") { e.preventDefault(); showShortcuts(); }
 }
 function trapFocus(e) {
   if (e.key !== "Tab") return;
-  const tops = ["confirmbg", "searchbg", "modalbg"];
+  const tops = ["sheetbg", "confirmbg", "searchbg", "modalbg"];
   let cont = null;
   for (const id of tops) { const el = byId(id); if (el && el.classList.contains("open")) { cont = el; break; } }
   if (!cont) return;
@@ -3856,12 +4571,6 @@ async function init() {
   applyTheme();
   try { localStorage.setItem("aula-theme", state.settings.theme); localStorage.setItem("aula-accent", state.settings.accent); } catch (e) {}
   document.documentElement.style.setProperty("--acc", state.settings.accent);
-  const T = state.timer;
-  if (!T.total) T.total = phaseDur(T.phase || "focus");
-  if (T.run && T.ends) {
-    if (Date.now() >= T.ends) { endPhase(true); T.run = false; T.ends = null; T.phase = "focus"; T.left = T.total = phaseDur("focus"); }
-    else T.left = Math.round((T.ends - Date.now()) / 1000);
-  }
   let sbPref = null; try { sbPref = localStorage.getItem("aula-sb"); } catch (e) {}
   if (window.innerWidth >= 980 && sbPref !== "0") document.body.classList.add("sb-open");
   byId("btnMenu").onclick = () => toggleSidebar();
@@ -3870,20 +4579,25 @@ async function init() {
   window.addEventListener("hashchange", () => { render(); if (window.innerWidth < 980) toggleSidebar(false); });
   document.addEventListener("keydown", onKeydown);
   document.addEventListener("keydown", trapFocus);
+  document.addEventListener("pointerdown", dragPointerDown);
+  // con la tarea levantada o arrastrándose, el dedo no scrollea la página ni abre el menú del sistema
+  document.addEventListener("touchmove", e => { if (drag && (drag.state === "lifted" || drag.state === "dragging")) e.preventDefault(); }, { passive: false });
+  document.addEventListener("contextmenu", e => { if (drag && drag.state !== "armed") e.preventDefault(); });
+  byId("sheetbg").addEventListener("click", e => { if (e.target.id === "sheetbg") closeMoveSheet(); });
   for (const id of ["modalbg", "searchbg"]) byId(id).addEventListener("mousedown", e => { if (e.target.id === id) (id === "searchbg" ? closeSearch : closeModal)(); });
   byId("confirmbg").addEventListener("mousedown", e => { if (e.target.id === "confirmbg") closeConfirm(); });
   await dailyBackup();
   persist();
   render();
-  setInterval(pomoTick, 300);
   setInterval(persist, 15000);
   setInterval(checkReminders, 5 * 60 * 1000);
   checkReminders();
   ui.dismissedAsk = new Set();
   setTimeout(checkPastEvals, 600);
   setInterval(checkPastEvals, 5 * 60 * 1000);
-  window.addEventListener("beforeunload", () => { try { const j = JSON.stringify(state); if (db) { const tx = db.transaction("kv", "readwrite"); tx.objectStore("kv").put(j, "state"); } localStorage.setItem(EMERGENCY_KEY, j); } catch (e) {} });
-  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") persist(); });
+  window.addEventListener("beforeunload", flushNow);
+  window.addEventListener("pagehide", flushNow); // en iOS/Android beforeunload no siempre llega
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") { flushNow(); persist(); } });
   if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
     navigator.serviceWorker.register("sw.js").catch(() => {});
   }
