@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.10.0";
+const APP_VERSION = "2.11.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -534,7 +534,6 @@ function minsBetween(d1, d2, filter) {
   for (const s of state.sessions) { if (s.date >= d1 && s.date <= d2 && (!filter || filter(s))) tot += s.min; }
   return tot;
 }
-function pomosBetween(d1, d2) { let n = 0; for (const s of state.sessions) if (s.date >= d1 && s.date <= d2) n += s.pomos || 0; return n; }
 function subjectRealMin(id) { return state.sessions.filter(s => s.subjectId === id).reduce((a, s) => a + s.min, 0); }
 function projectRealMin(id) { return state.sessions.filter(s => s.projectId === id).reduce((a, s) => a + s.min, 0); }
 function evalRealMin(id) { return state.sessions.filter(s => s.evalId === id).reduce((a, s) => a + s.min, 0); }
@@ -605,8 +604,8 @@ function moveDoneDate(t, nd) {
 }
 function bumpDayDone(d) { state.dayLog[d] = state.dayLog[d] || {}; state.dayLog[d].tasksDone = (state.dayLog[d].tasksDone || 0) + 1; }
 /* Al completar una tarea se pregunta cuánto llevó realmente: ese tiempo (no el estimado)
-   es el que suma a las estadísticas de la materia. Se descuenta lo ya cronometrado con
-   pomodoro/manual para no contar doble, y todo se revierte al desmarcar. */
+   es el que suma a las estadísticas de la materia. Se descuenta lo ya registrado
+   (a mano, o con el pomodoro en versiones viejas) para no contar doble, y todo se revierte al desmarcar. */
 function askDoneTime(taskId, date) {
   const t = taskById(taskId); if (!t) return;
   const already = t.recur ? 0 : (t.realMin || 0);
@@ -688,7 +687,7 @@ function quickAddTask(data) {
     id: uid(), title: data.title, desc: data.desc || "", subjectId: data.subjectId || null, projectId: data.projectId || null,
     evalId: data.evalId || null, planId: data.planId || null, date: data.date || null, due: data.due || null,
     estMin: data.estMin || 0, prio: data.prio == null ? 1 : data.prio, status: "pend", type: data.type || "estudio",
-    tags: data.tags || [], subtasks: [], notes: "", recur: data.recur || null, recurDone: {}, realMin: 0, pomos: 0,
+    tags: data.tags || [], subtasks: [], notes: "", recur: data.recur || null, recurDone: {}, realMin: 0,
     createdAt: todayISO(), doneAt: null, archived: false
   };
   if (data.seriesId) t.seriesId = data.seriesId;
@@ -709,18 +708,13 @@ function pruneDayPlan() {
   for (const k of Object.keys(state.dayPlan || {})) if (k < lim) delete state.dayPlan[k];
 }
 function blockMinutes(b) { const a = hmToMin(b.from), c = hmToMin(b.to); return a != null && c != null ? Math.max(0, c - a) : 0; }
-function pomosInBlock(b) {
-  if (!b.pomo) return 0;
-  const P = state.settings.pomo;
-  return Math.max(0, Math.floor((blockMinutes(b) + P.s) / (P.f + P.s)));
-}
 function addStudyBlock() {
   const from = byId("sb_from").value, to = byId("sb_to").value;
   const f = hmToMin(from), t = hmToMin(to);
   if (f == null || t == null) { toast("Cargá hora de inicio y de fin"); return; }
   if (t <= f) { toast("La hora de fin debe ser posterior a la de inicio"); return; }
   const dp = state.dayPlan[todayISO()] = state.dayPlan[todayISO()] || { blocks: [] };
-  dp.blocks.push({ id: uid(), from, to, pomo: byId("sb_pomo").checked });
+  dp.blocks.push({ id: uid(), from, to });
   dp.blocks.sort((a, b) => hmToMin(a.from) - hmToMin(b.from));
   change(); render(); toast("Bloque agregado");
 }
@@ -733,54 +727,51 @@ function updateDistLeft(total) {
   let sum = 0;
   document.querySelectorAll(".dist-inp").forEach(i => { sum += parseInt(i.value) || 0; });
   const el = byId("distLeft"); if (!el) return;
-  if (sum > total) { el.textContent = "te pasás por " + (sum - total); el.style.color = "var(--warn)"; }
-  else { el.textContent = "quedan " + (total - sum); el.style.color = ""; }
+  if (sum > total) { el.textContent = "te pasás por " + fmtMin(sum - total); el.style.color = "var(--warn)"; }
+  else { el.textContent = "quedan " + fmtMin(total - sum); el.style.color = ""; }
 }
 function createDistTasks() {
-  const today = todayISO(), P = state.settings.pomo;
+  const today = todayISO();
   let created = 0;
   document.querySelectorAll(".dist-inp").forEach(inp => {
     const n = parseInt(inp.value) || 0;
     if (n > 0) {
-      quickAddTask({ title: "Sesión de estudio (" + n + " pomodoro" + (n > 1 ? "s" : "") + ")", subjectId: inp.dataset.sid, date: today, estMin: n * P.f, type: "estudio" });
+      quickAddTask({ title: "Sesión de estudio", subjectId: inp.dataset.sid, date: today, estMin: n, type: "estudio" });
       created++;
     }
   });
-  if (!created) { toast("Asigná al menos un pomodoro a una materia"); return; }
+  if (!created) { toast("Asigná minutos al menos a una materia"); return; }
   render(); toast(created + " tarea" + (created > 1 ? "s" : "") + " creada" + (created > 1 ? "s" : "") + " para hoy");
 }
 function studyTodayCard() {
   const today = todayISO();
   pruneDayPlan();
   const dp = state.dayPlan[today] = state.dayPlan[today] || { blocks: [] };
-  const P = state.settings.pomo;
   const rows = dp.blocks.map(b => {
-    const min = blockMinutes(b), n = pomosInBlock(b);
+    const min = blockMinutes(b);
     return `<div class="task" style="cursor:default">
       <span class="pill acc" style="min-width:104px;text-align:center">${esc(b.from)} – ${esc(b.to)}</span>
-      <div class="tinfo"><div class="tt">${fmtMin(min)}${b.pomo ? ` · con pomodoro: entran <b>${n}</b>` : " · sin pomodoro"}</div></div>
+      <div class="tinfo"><div class="tt">${fmtMin(min)}</div></div>
       <button class="btn sm ghost" title="Quitar bloque" onclick="delStudyBlock('${b.id}')">×</button></div>`;
   }).join("");
   const totMin = dp.blocks.reduce((a, b) => a + blockMinutes(b), 0);
-  const totPom = dp.blocks.reduce((a, b) => a + pomosInBlock(b), 0);
   let dist = "";
-  if (totPom > 0) {
+  if (totMin > 0) {
     dist = `<div class="hr"></div>
-    <p class="tiny" style="margin-bottom:6px">Distribuí los <b>${totPom}</b> pomodoros por materia y creá las tareas de hoy — <span id="distLeft">quedan ${totPom}</span></p>` +
+    <p class="tiny" style="margin-bottom:6px">Repartí los <b>${fmtMin(totMin)}</b> entre tus materias (en minutos) y creá las tareas de hoy — <span id="distLeft">quedan ${fmtMin(totMin)}</span></p>` +
     activeSubjects().map(s => `<div style="display:flex;align-items:center;gap:8px;margin:4px 0">
       <span class="tag" style="background:${s.color}1c;color:${s.color};min-width:52px;text-align:center">${esc(s.short)}</span>
       <span style="flex:1;font-size:.78rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.name)}</span>
-      <input type="number" class="dist-inp" data-sid="${s.id}" value="0" min="0" max="${totPom}" oninput="updateDistLeft(${totPom})" aria-label="Pomodoros para ${escA(s.name)}" style="width:64px;background:var(--card2);border:1px solid var(--line);border-radius:7px;padding:5px 7px"></div>`).join("") +
+      <input type="number" class="dist-inp" data-sid="${s.id}" value="0" min="0" step="15" max="${totMin}" oninput="updateDistLeft(${totMin})" aria-label="Minutos para ${escA(s.name)}" style="width:76px;background:var(--card2);border:1px solid var(--line);border-radius:7px;padding:5px 7px"></div>`).join("") +
     `<div style="display:flex;justify-content:flex-end;margin-top:8px"><button class="btn sm primary" onclick="createDistTasks()">Crear tareas para hoy</button></div>`;
   }
   return `<div class="card"><h3>Estudio de hoy<div class="grow"></div>
-    <span class="tiny">${totMin ? fmtMin(totMin) + " disponibles" + (totPom ? " · " + totPom + " pomodoros posibles" : "") : ""}</span></h3>
-    ${rows || '<p class="tiny" style="margin-bottom:6px">Cargá tus horarios de estudio de hoy. Podés agregar varios bloques (por ejemplo 14:00–17:00 y 20:00–22:00) y elegir en cuáles usás pomodoro.</p>'}
+    <span class="tiny">${totMin ? fmtMin(totMin) + " disponibles" : ""}</span></h3>
+    ${rows || '<p class="tiny" style="margin-bottom:6px">Cargá tus horarios de estudio de hoy. Podés agregar varios bloques (por ejemplo 14:00–17:00 y 20:00–22:00) .</p>'}
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
       <input type="time" id="sb_from" value="14:00" aria-label="Hora de inicio" style="background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:6px">
       <span class="tiny">a</span>
       <input type="time" id="sb_to" value="17:00" aria-label="Hora de fin" style="background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:6px">
-      <label style="display:flex;gap:5px;align-items:center;font-size:.76rem;color:var(--tx2);cursor:pointer"><input type="checkbox" id="sb_pomo" checked style="width:auto">con pomodoro (${P.f}/${P.s})</label>
       <button class="btn sm" onclick="addStudyBlock()">Agregar bloque</button>
     </div>${dist}</div>`;
 }
@@ -1115,90 +1106,11 @@ function mdLite(src) {
   return out.join("").replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code style='background:var(--card2);padding:0 4px;border-radius:4px'>$1</code>");
 }
 
-/* ========================= POMODORO ========================= */
-function phaseDur(p) { const c = state.settings.pomo; return (p === "focus" ? c.f : p === "long" ? c.l : c.s) * 60; }
-function beep() {
-  if (!state.settings.sounds) return;
-  try {
-    const ctx = beep.ctx || (beep.ctx = new (window.AudioContext || window.webkitAudioContext)());
-    [0, .18, .36].forEach((d, i) => {
-      const o = ctx.createOscillator(), g = ctx.createGain();
-      o.connect(g); g.connect(ctx.destination); o.frequency.value = i === 2 ? 880 : 660; o.type = "sine";
-      g.gain.setValueAtTime(.2, ctx.currentTime + d); g.gain.exponentialRampToValueAtTime(.001, ctx.currentTime + d + .16);
-      o.start(ctx.currentTime + d); o.stop(ctx.currentTime + d + .17);
-    });
-  } catch (e) {}
-}
-function notify(msg) {
-  if (!state.settings.notif) return;
-  if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
-  try { new Notification("Aula", { body: msg }); } catch (e) {}
-}
-function startPomo(taskId) {
-  const T = state.timer;
-  if (taskId !== undefined) { T.taskId = taskId; const t = taskId && taskById(taskId); if (t) { T.subjectId = t.subjectId; T.projectId = t.projectId; } }
-  T.run = true; T.ends = Date.now() + T.left * 1000;
-  change(); renderPomoUI();
-}
-function pausePomo() { const T = state.timer; if (!T.run) return; T.run = false; T.left = Math.max(0, Math.round((T.ends - Date.now()) / 1000)); T.ends = null; change(); renderPomoUI(); }
-function resetPomo() { const T = state.timer; T.run = false; T.ends = null; T.phase = "focus"; T.cycle = 0; T.left = T.total = phaseDur("focus"); change(); renderPomoUI(); }
-function skipPomo() { endPhase(false); }
-function pomoSetLink(val) {
-  const T = state.timer;
-  T.taskId = null; T.subjectId = null; T.projectId = null;
-  if (val.startsWith("t:")) { T.taskId = val.slice(2); const t = taskById(T.taskId); if (t) { T.subjectId = t.subjectId; T.projectId = t.projectId; } }
-  else if (val.startsWith("s:")) T.subjectId = val.slice(2);
-  else if (val.startsWith("p:")) T.projectId = val.slice(2);
-  change();
-}
-function endPhase(credit) {
-  const T = state.timer;
-  if (T.phase === "focus") {
-    if (credit) {
-      addSession(state.settings.pomo.f, { pomos: 1, taskId: T.taskId, subjectId: T.subjectId, projectId: T.projectId });
-      toast("Pomodoro completado — descanso"); notify("Pomodoro completado. Tomate un descanso."); beep();
-    }
-    T.cycle++;
-    T.phase = (T.cycle % state.settings.pomo.c === 0) ? "long" : "short";
-    T.left = T.total = phaseDur(T.phase);
-    T.run = true; T.ends = Date.now() + T.left * 1000;
-  } else {
-    if (credit) { toast("Fin del descanso"); notify("Fin del descanso. Siguiente pomodoro."); beep(); }
-    T.phase = "focus"; T.left = T.total = phaseDur("focus");
-    T.run = false; T.ends = null;
-  }
-  change();
-  if (route.view === "pomodoro" || route.view === "home") render(); else renderPomoUI();
-}
-function pomoTick() {
-  const T = state.timer;
-  if (!T.run || !T.ends) return;
-  T.left = Math.max(0, Math.round((T.ends - Date.now()) / 1000));
-  if (T.left <= 0) { endPhase(true); return; }
-  updatePomoTime();
-}
-function fmtClock(sec) { return pad(Math.floor(sec / 60)) + ":" + pad(sec % 60); }
-function updatePomoTime() {
-  const T = state.timer, s = fmtClock(T.left);
-  const el = byId("ptime"); if (el) el.textContent = s;
-  const bar = byId("pfill"); if (bar) bar.style.width = (100 - T.left / T.total * 100) + "%";
-  const mp = byId("mp_time"); if (mp) mp.textContent = s;
-  document.title = T.run ? s + " · " + (T.phase === "focus" ? "Foco" : "Descanso") + " — Aula" : "Aula · Organizador académico";
-}
-function renderPomoUI() {
-  const T = state.timer, mp = byId("minipomo");
-  if (mp) {
-    const active = T.run || T.left !== T.total || T.phase !== "focus";
-    if (active && route.view !== "pomodoro") {
-      mp.classList.add("show");
-      mp.innerHTML = `<span class="ph" style="color:${T.phase === "focus" ? "var(--acc)" : "var(--ok)"}">${T.phase === "focus" ? "Foco" : "Descanso"}</span>
-        <span class="tm" id="mp_time">${fmtClock(T.left)}</span>
-        <span class="tiny">${T.run ? "en curso" : "en pausa"}</span>`;
-    } else mp.classList.remove("show");
-  }
-  if (route.view === "pomodoro") renderPomoView();
-  updatePomoTime();
-}
+/* ===================== TIEMPO ESTUDIADO (manual) =====================
+   El pomodoro se sacó en Aula 2.11 (A4). Las sesiones ya registradas se conservan
+   (state.sessions, con su campo pomos) y siguen sumando en estadísticas; los
+   campos viejos (settings.pomo, state.timer, t.pomos) quedan en los datos pero
+   no se muestran. El tiempo se carga a mano con "Registrar tiempo". */
 function logManualSession() {
   const min = parseInt(byId("ms_min").value) || 0;
   if (min <= 0) { toast("Ingresá los minutos"); return; }
@@ -1209,7 +1121,7 @@ function logManualSession() {
   else if (link.startsWith("p:")) o.projectId = link.slice(2);
   else if (link.startsWith("e:")) o.evalId = link.slice(2);
   addSession(min, o);
-  closeModal(); render(); toast("Sesión de " + fmtMin(min) + " registrada");
+  closeModal(); render(); toast(fmtMin(min) + " registrados");
 }
 
 /* ======================== NOTIFICACIONES ======================== */
@@ -1745,7 +1657,7 @@ function seriesDelete(all) {
 const VIEWS = [
   ["home", "Inicio"], ["today", "Hoy"], ["calendar", "Calendario"], ["week", "Semana"],
   ["subjects", "Materias"], ["evals", "Parciales y finales"], ["projects", "Proyectos"], ["series", "Series y repeticiones"],
-  ["plans", "Planes de estudio"], ["notes", "Notas"], ["pomodoro", "Pomodoro"], ["habits", "Hábitos"],
+  ["plans", "Planes de estudio"], ["notes", "Notas"], ["habits", "Hábitos"],
   ["stats", "Estadísticas"], ["history", "Historial"], ["backups", "Copias de seguridad"], ["config", "Configuración"]
 ];
 function go(view, id) { location.hash = "#/" + view + (id ? "/" + id : ""); }
@@ -1794,13 +1706,11 @@ function render() {
     home: viewHome, today: viewToday, calendar: viewCalendar, week: viewWeek, list: viewList,
     subjects: viewSubjects, subject: viewSubjectDetail, evals: viewEvals, eval: viewEvalDetail,
     projects: viewProjects, project: viewProjectDetail, plans: viewPlans, notes: viewNotes, series: viewSeries,
-    pomodoro: viewPomodoro, habits: viewHabits, stats: viewStats, history: viewHistory,
+    habits: viewHabits, stats: viewStats, history: viewHistory,
     backups: viewBackups, config: viewConfig
   };
   v.innerHTML = (map[route.view] || viewHome)();
   if (route.view === "backups") fillBackupsList();
-  if (route.view === "pomodoro") renderPomoView();
-  renderPomoUI();
   renderSelBar();
 }
 
@@ -1838,7 +1748,6 @@ function taskRow(t, opts = {}) {
     <div class="tactions" onclick="event.stopPropagation()">
       ${srt ? `<button title="Subir en el orden del día" onclick="moveTaskOrder('${t.id}',-1,'${date}')">↑</button>
       <button title="Bajar en el orden del día" onclick="moveTaskOrder('${t.id}',1,'${date}')">↓</button>` : ""}
-      <button title="Empezar pomodoro" onclick="startFromTask('${t.id}')">▸</button>
       ${canToday ? `<button title="Asignar a hoy" onclick="assignToday('${t.id}')">Hoy</button>` : ""}
       ${!t.recur ? `<button title="Posponer para mañana" onclick="postponeTask('${t.id}')">+1d</button>` : ""}
       <button title="Editar" onclick="openTaskEditor('${t.id}')">Editar</button>
@@ -1846,7 +1755,6 @@ function taskRow(t, opts = {}) {
     </div>
   </div>`;
 }
-function startFromTask(id) { startPomo(id); go("pomodoro"); }
 
 /* ============================ VISTA: INICIO ============================ */
 function viewHome() {
@@ -1862,7 +1770,7 @@ function viewHome() {
   const habitsToday = state.habits.filter(h => habitDueOn(h, today));
 
   let h = `<div class="vhead"><h2>${saludo()}</h2><span class="sub">${fmtDFull(today)}</span><div class="grow"></div>
-    <button class="btn" onclick="go('pomodoro')">Empezar a estudiar</button>
+    <button class="btn" onclick="openManualSession()">Registrar tiempo</button>
     <button class="btn primary" onclick="openQuick()">Agregar</button></div>`;
 
   h += `<div class="grid3" style="margin-bottom:12px">
@@ -1945,7 +1853,7 @@ function suggestNow(dayTasks, od, flex, evs) {
     items.push(`<b>${esc(next.name)}</b> es ${daysTo(next.date) === 0 ? "hoy" : daysTo(next.date) === 1 ? "mañana" : "en " + daysTo(next.date) + " días"}${pend.length ? ": quedan " + pend.length + " tareas de su plan (" + fmtMin(pend.reduce((a, t) => a + (t.estMin || 0), 0)) + ")" : ""}.`);
   }
   const first = dayTasks.filter(t => !isDoneOn(t, todayISO())).sort((a, b) => b.prio - a.prio)[0];
-  if (first) items.push(`Siguiente sugerida: <b>${esc(first.title)}</b>${first.estMin ? " (" + fmtMin(first.estMin) + ")" : ""}. <button class="btn sm" onclick="event.stopPropagation();startFromTask('${first.id}')">Empezar pomodoro</button>`);
+  if (first) items.push(`Siguiente sugerida: <b>${esc(first.title)}</b>${first.estMin ? " (" + fmtMin(first.estMin) + ")" : ""}. <button class="btn sm" onclick="event.stopPropagation();openTaskEditor('${first.id}')">Abrir</button>`);
   else if (flex.length) items.push(`Hoy está libre: podés adelantar <b>${esc(flex[0].title)}</b> (vence ${fmtD(flex[0].due)}).`);
   return items.length ? items.map(x => `<p class="muted" style="margin:4px 0">${x}</p>`).join("") : null;
 }
@@ -2128,7 +2036,7 @@ function viewSubjectDetail() {
     <button class="btn sm primary" onclick="openQuickTask(null,'${s.id}')">Nueva tarea</button></div>`;
   h += `<div class="grid3" style="margin-bottom:12px">
     <div class="card" style="margin:0"><div class="statnum">${pct}%</div><div class="statlab">${done.length}/${ts.length} tareas completadas</div><div class="pbar" style="margin-top:6px"><i style="width:${pct}%"></i></div></div>
-    <div class="card" style="margin:0"><div class="statnum">${fmtMin(real)}</div><div class="statlab">horas estudiadas (pomodoro + tareas hechas) · ${fmtMin(weekMin)} esta semana</div></div>
+    <div class="card" style="margin:0"><div class="statnum">${fmtMin(real)}</div><div class="statlab">horas estudiadas · ${fmtMin(weekMin)} esta semana</div></div>
     <div class="card" style="margin:0"><div class="statnum">${fmtMin(est)}</div><div class="statlab">estimado total ${real && est ? "· real/est " + Math.round(real / est * 100) + "%" : ""}</div></div>
   </div>`;
   if (nextEv) {
@@ -2342,47 +2250,6 @@ function viewNotes() {
     <button class="btn primary" onclick="openNoteEditor()">Nueva nota</button></div>`;
   h += list.length ? `<div class="grid2">${list.map(noteCard).join("")}</div>` : '<div class="card"><div class="empty">Sin notas todavía.</div></div>';
   return h;
-}
-
-/* ======================== VISTA: POMODORO ======================== */
-function pomoLinkOptions(sel) {
-  const today = todayISO();
-  const cand = state.tasks.filter(t => !t.archived && t.status !== "done" && t.status !== "canc" && (occursOn(t, today) || (t.due && !t.date) || t.status === "prog")).slice(0, 30);
-  let h = `<option value="">Sesión libre (sin vínculo)</option><optgroup label="Tareas">`;
-  h += cand.map(t => `<option value="t:${t.id}" ${sel === "t:" + t.id ? "selected" : ""}>${esc(t.title.slice(0, 48))}</option>`).join("");
-  h += `</optgroup><optgroup label="Materias">` + activeSubjects().map(s => `<option value="s:${s.id}" ${sel === "s:" + s.id ? "selected" : ""}>${esc(s.name)}</option>`).join("");
-  h += `</optgroup><optgroup label="Proyectos">` + state.projects.filter(p => p.status !== "arch" && p.status !== "done").map(p => `<option value="p:${p.id}" ${sel === "p:" + p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("") + "</optgroup>";
-  return h;
-}
-function viewPomodoro() { return `<div class="vhead"><h2>Pomodoro</h2><div class="grow"></div>
-    <button class="btn" onclick="openManualSession()">Registrar sesión manual</button></div><div id="pomowrap"></div>`; }
-function renderPomoView() {
-  const w = byId("pomowrap"); if (!w) return;
-  const T = state.timer;
-  const today = todayISO();
-  const todayMin = minsBetween(today, today), todayPomos = pomosBetween(today, today);
-  const sel = T.taskId ? "t:" + T.taskId : T.subjectId ? "s:" + T.subjectId : T.projectId ? "p:" + T.projectId : "";
-  const linked = T.taskId ? taskById(T.taskId) : null;
-  const dots = Array.from({ length: state.settings.pomo.c }, (_, i) => i < (T.cycle % state.settings.pomo.c) || (T.cycle > 0 && T.cycle % state.settings.pomo.c === 0 && T.phase === "long") ? "●" : "○").join(" ");
-  w.innerHTML = `<div class="card pomobig">
-    <div class="phase ${T.phase === "focus" ? "" : "break"}">${T.phase === "focus" ? "Foco" : T.phase === "long" ? "Descanso largo" : "Descanso"}</div>
-    <div class="ptime" id="ptime">${fmtClock(T.left)}</div>
-    <div class="pring"><i id="pfill" style="width:${100 - T.left / T.total * 100}%"></i></div>
-    <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
-      ${T.run ? `<button class="btn" onclick="pausePomo()">Pausar</button>` : `<button class="btn primary" onclick="startPomo()">${T.left === T.total ? "Iniciar" : "Continuar"}</button>`}
-      <button class="btn" onclick="skipPomo()">Saltar fase</button>
-      <button class="btn" onclick="resetPomo()">Reiniciar</button>
-      <button class="btn" onclick="openPomoCfg()">Ajustes</button></div>
-    <div class="dots">${dots}</div>
-    <label style="display:block;font-size:.66rem;color:var(--tx2);margin:16px 0 4px;text-transform:uppercase;letter-spacing:.06em;font-weight:700;text-align:left">Trabajando en</label>
-    <select onchange="pomoSetLink(this.value)" style="width:100%;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:8px;font-size:.8rem" aria-label="Vincular sesión">${pomoLinkOptions(sel)}</select>
-    ${linked ? `<p class="tiny" style="margin-top:8px;text-align:left">${fmtMin(linked.realMin || 0)} acumulados en esta tarea · ${linked.pomos || 0} pomodoros</p>` : ""}
-  </div>
-  <div class="grid3" style="max-width:640px;margin:0 auto">
-    <div class="card" style="margin:0"><div class="statnum">${todayPomos}</div><div class="statlab">pomodoros hoy</div></div>
-    <div class="card" style="margin:0"><div class="statnum">${fmtMin(todayMin)}</div><div class="statlab">estudiado hoy</div></div>
-    <div class="card" style="margin:0"><div class="statnum">${state.settings.pomo.f}/${state.settings.pomo.s}</div><div class="statlab">min foco / descanso</div></div>
-  </div>`;
 }
 
 /* ========================= VISTA: HÁBITOS ========================= */
@@ -2859,7 +2726,7 @@ function viewStats() {
     ${kpi(st.best.d ? hClock(st.best.m) : "—", st.best.d ? "mejor día · " + fmtD(st.best.d) : "mejor día")}
     ${kpi(st.activeDays + "<span style='font-size:1rem;color:var(--tx3)'>/" + st.elapsed.length + "</span>", "días con actividad (" + st.coverage + "% de constancia)")}
     ${kpi(st.streak, "racha actual · mejor: " + st.bestStreak + " días")}
-    ${kpi(st.pomos, "pomodoros · " + st.sess.length + " sesiones")}
+    ${kpi(st.sess.length, "sesiones de estudio registradas")}
     ${kpi(hClock(st.sessionAvg), "duración media por sesión")}
     ${kpi(st.doneR.length, "tareas completadas" + (st.prevDone ? ` · ${st.doneR.length >= st.prevDone ? "▲" : "▼"} ${Math.abs(st.doneR.length - st.prevDone)} vs anterior` : ""))}
     ${kpi(st.withLim ? Math.round(st.onTime / st.withLim * 100) + "%" : "—", "completadas en fecha (" + st.onTime + "/" + st.withLim + ")")}
@@ -2883,7 +2750,7 @@ function viewStats() {
     h += `<div class="card" style="margin:0"><h3>¿A qué hora estudiás?<div class="grow"></div><span class="tiny">pico: ${peak}:00 hs</span></h3>
       ${chartBars(hrItems, C, 430, 200, {})}</div>`;
   } else {
-    h += `<div class="card" style="margin:0"><h3>¿A qué hora estudiás?</h3><div class="empty">Se completa con las sesiones de pomodoro y las manuales que registres de acá en adelante.</div></div>`;
+    h += `<div class="card" style="margin:0"><h3>¿A qué hora estudiás?</h3><div class="empty">Se completa con el tiempo que registres de acá en adelante.</div></div>`;
   }
   h += `</div>`;
 
@@ -2902,7 +2769,7 @@ function viewStats() {
 
   /* --- Composición del tiempo --- */
   const compParts = [
-    { label: "Pomodoro", v: st.comp.pomo, color: C.acc },
+    { label: "Con temporizador (antes)", v: st.comp.pomo, color: C.acc },
     { label: "Tareas completadas", v: st.comp.auto, color: C.ok },
     { label: "Manual", v: st.comp.manual, color: C.warn },
     { label: "Otras", v: st.comp.otro, color: C.tx3 }
@@ -2986,7 +2853,7 @@ function viewStats() {
 
 function buildInsights(st, C) {
   const out = [];
-  if (!st.total) return ["Todavía no hay tiempo registrado en este período. Usá el pomodoro, registrá una sesión manual o completá tareas cargando cuánto te llevaron."];
+  if (!st.total) return ["Todavía no hay tiempo registrado en este período. Registrá tiempo o completá tareas cargando cuánto te llevaron."];
   out.push(`Estudiaste <b>${hClock(st.total)}</b> en ${st.activeDays} de ${st.elapsed.length} días (${st.coverage}% de constancia), con un promedio de <b>${hClock(st.avgActive)}</b> los días que te sentaste a estudiar.`);
   const bd = st.dow.map((x, i) => ({ i, avg: x.n ? x.min / x.n : 0 })).sort((a, b) => b.avg - a.avg);
   if (bd[0].avg > 0) {
@@ -3091,7 +2958,7 @@ function buildStatsPoster() {
   g += txt(M + 26, 118, "Aula · generado el " + fmtDFull(todayISO()), 10.5, "#ffffff", "start");
   g += txt(W - M - 26, 78, hClock(st.total), 34, "#ffffff", "end", 800);
   g += txt(W - M - 26, 100, "tiempo total estudiado", 11, "#ffffff", "end");
-  g += txt(W - M - 26, 118, st.activeDays + " días activos · " + st.pomos + " pomodoros", 10.5, "#ffffff", "end");
+  g += txt(W - M - 26, 118, st.activeDays + " días activos · " + st.sess.length + " sesiones", 10.5, "#ffffff", "end");
 
   /* Tira de KPIs */
   const kpis = [
@@ -3144,7 +3011,7 @@ function buildStatsPoster() {
   g += panel(M, y, cL, 236, "Horas por materia");
   if (distItems.length) g += nest(M + 10, y + 36, cL - 20, 190, chartHBars(distItems.slice(0, 9).map(x => ({ label: x.short, color: x.color, v: x.v, full: x.label })), C, 560, Math.max(120, Math.min(9, distItems.length) * 22 + 12)));
   const compParts = [
-    { label: "Pomodoro", v: st.comp.pomo, color: C.acc },
+    { label: "Temporizador", v: st.comp.pomo, color: C.acc },
     { label: "Tareas", v: st.comp.auto, color: C.ok },
     { label: "Manual", v: st.comp.manual, color: C.warn },
     { label: "Otras", v: st.comp.otro, color: C.tx3 }
@@ -3232,7 +3099,7 @@ function exportRangeCSV() {
   ["Promedio por dia activo (min)", Math.round(st.avgActive)], ["Mediana diaria (min)", st.median],
   ["Mejor dia", st.best.d || "-"], ["Mejor dia (min)", st.best.m], ["Dias del periodo", st.elapsed.length],
   ["Dias con actividad", st.activeDays], ["Constancia (%)", st.coverage], ["Racha actual", st.streak],
-  ["Mejor racha", st.bestStreak], ["Pomodoros", st.pomos], ["Sesiones", st.sess.length],
+  ["Mejor racha", st.bestStreak], ["Sesiones", st.sess.length],
   ["Duracion media sesion (min)", Math.round(st.sessionAvg)], ["Tareas completadas", st.doneR.length],
   ["Tareas creadas", st.createdR.length], ["Completadas en fecha", st.onTime], ["Con fecha limite", st.withLim],
   ["Tiempo estimado (min)", st.estSum], ["Tiempo real (min)", st.realSum],
@@ -3285,7 +3152,7 @@ function viewHistory() {
   h += sess.length ? sess.map(s => {
     const sub = s.subjectId && subjById(s.subjectId), t = s.taskId && taskById(s.taskId), p = s.projectId && projById(s.projectId);
     return `<div class="task" style="cursor:default"><span class="pill">${fmtD(s.date)}</span>
-      <div class="tinfo"><div class="tt">${fmtMin(s.min)}${s.pomos ? " · " + s.pomos + " pomodoro" + (s.pomos > 1 ? "s" : "") : ""}${s.manual ? " · manual" : ""}${s.auto ? " · por tarea completada" : ""}</div>
+      <div class="tinfo"><div class="tt">${fmtMin(s.min)}${s.manual ? " · manual" : ""}${s.auto ? " · por tarea completada" : ""}</div>
       <div class="tmeta">${sub ? `<span class="tag" style="background:${sub.color}1c;color:${sub.color}">${esc(sub.short)}</span>` : ""}${t ? `<span class="tiny">${esc(t.title.slice(0, 44))}</span>` : ""}${p ? `<span class="tiny">${esc(p.name.slice(0, 30))}</span>` : ""}${s.note ? `<span class="tiny">${esc(s.note.slice(0, 40))}</span>` : ""}</div></div></div>`;
   }).join("") : '<div class="empty">Sin sesiones registradas.</div>';
   h += "</div>";
@@ -3408,17 +3275,8 @@ function viewConfig() {
       ${["00:00", "01:00", "02:00", "03:00", "04:00", "05:00", "06:00"].map(h => `<option value="${h}" ${st.dayEnd === h ? "selected" : ""}>${h === "00:00" ? "Medianoche" : h}</option>`).join("")}</select>
     <p class="tiny" style="margin-top:6px">Lo que marques antes de esa hora cuenta para el día anterior. Ideal si estudiás hasta tarde.</p>
   </div>
-  <div class="card" style="margin:0"><h3>Pomodoro</h3>
-    <div class="mrow"><div><label class="tiny" style="font-weight:700">Foco (min)</label><input id="cfg_f" type="number" min="5" max="120" value="${st.pomo.f}" style="width:100%;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:7px"></div>
-    <div><label class="tiny" style="font-weight:700">Descanso</label><input id="cfg_s" type="number" min="1" max="45" value="${st.pomo.s}" style="width:100%;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:7px"></div></div>
-    <div class="mrow" style="margin-top:8px"><div><label class="tiny" style="font-weight:700">Descanso largo</label><input id="cfg_l" type="number" min="5" max="90" value="${st.pomo.l}" style="width:100%;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:7px"></div>
-    <div><label class="tiny" style="font-weight:700">Ciclos p/ largo</label><input id="cfg_c" type="number" min="2" max="10" value="${st.pomo.c}" style="width:100%;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:7px"></div></div>
-    <button class="btn sm" style="margin-top:10px" onclick="savePomoCfgFromConfig()">Guardar duraciones</button>
-    <div class="hr"></div>
-    <label style="display:flex;gap:8px;align-items:center;font-size:.8rem;cursor:pointer"><input type="checkbox" style="width:auto" ${chk(st.sounds)} onchange="state.settings.sounds=this.checked;change()">Sonidos al terminar cada fase</label>
-  </div>
   <div class="card" style="margin:0"><h3>Notificaciones</h3>
-    <label style="display:flex;gap:8px;align-items:center;font-size:.8rem;cursor:pointer"><input type="checkbox" style="width:auto" ${chk(st.notif)} onchange="toggleNotif(this.checked)">Notificaciones locales (pomodoro, vencimientos, parciales)</label>
+    <label style="display:flex;gap:8px;align-items:center;font-size:.8rem;cursor:pointer"><input type="checkbox" style="width:auto" ${chk(st.notif)} onchange="toggleNotif(this.checked)">Notificaciones locales (vencimientos y parciales)</label>
     <p class="tiny" style="margin-top:8px">El permiso del navegador se pide recién al activar esta opción.</p>
     <div class="hr"></div>
     <label class="tiny" style="font-weight:700">Días considerados “próximos”</label>
@@ -3450,15 +3308,6 @@ function viewConfig() {
   </div>`;
 }
 function addTag() { const i = byId("newTag"); const v = (i.value || "").trim().toLowerCase().replace(/^#/, ""); if (!v) return; if (!state.settings.tags.includes(v)) state.settings.tags.push(v); i.value = ""; change(); render(); }
-function savePomoCfgFromConfig() {
-  const p = state.settings.pomo;
-  p.f = clamp(parseInt(byId("cfg_f").value) || p.f, 5, 120);
-  p.s = clamp(parseInt(byId("cfg_s").value) || p.s, 1, 45);
-  p.l = clamp(parseInt(byId("cfg_l").value) || p.l, 5, 90);
-  p.c = clamp(parseInt(byId("cfg_c").value) || p.c, 2, 10);
-  if (!state.timer.run) { state.timer.left = state.timer.total = phaseDur(state.timer.phase); }
-  change(); renderPomoUI(); toast("Duraciones guardadas");
-}
 function toggleNotif(on) {
   if (!on) { state.settings.notif = false; change(); return; }
   if (typeof Notification === "undefined") { toast("Este navegador no soporta notificaciones"); render(); return; }
@@ -3534,7 +3383,7 @@ function openQuick() {
       ${[["task", "Tarea"], ["eval", "Parcial / final"], ["project", "Proyecto"], ["subject", "Materia"], ["note", "Nota"], ["habit", "Hábito"]].map(([k, v]) =>
         `<button class="btn" style="padding:14px" onclick="quickRoute('${k}')">${v}</button>`).join("")}
     </div>
-    <p class="tiny" style="margin-top:12px">Atajos: <kbd>N</kbd> tarea · <kbd>/</kbd> buscar · <kbd>P</kbd> pomodoro · <kbd>Ctrl</kbd>+<kbd>K</kbd> acciones</p>`);
+    <p class="tiny" style="margin-top:12px">Atajos: <kbd>N</kbd> tarea · <kbd>/</kbd> buscar · <kbd>Ctrl</kbd>+<kbd>K</kbd> acciones</p>`);
 }
 function quickRoute(k) {
   closeModal();
@@ -3635,7 +3484,9 @@ function openTaskEditor(id) {
     <label>Subtareas</label><div id="te_subs"></div>
     <div class="mrow"><div><input id="te_newsub" placeholder="Nueva subtarea…" onkeydown="if(event.key==='Enter')addSubtaskFromEditor('${t.id}')"></div><button class="btn" onclick="addSubtaskFromEditor('${t.id}')">Agregar</button></div>
     <label for="te_notes">Notas de la tarea</label><textarea id="te_notes" rows="2">${esc(t.notes || "")}</textarea>
-    <p class="tiny" style="margin-top:8px">Tiempo real: ${fmtMin(t.realMin || 0)} · ${t.pomos || 0} pomodoros · creada ${fmtD(t.createdAt)}${t.doneAt ? " · completada " + fmtD(t.doneAt) : ""}</p>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:12px">
+      <p class="tiny" style="flex:1;margin:0">Tiempo real: <b>${fmtMin(t.realMin || 0)}</b> · creada ${fmtD(t.createdAt)}${t.doneAt ? " · completada " + fmtD(t.doneAt) : ""}</p>
+      <button class="btn sm" onclick="openManualSession('${t.id}')">Registrar tiempo</button></div>
     <div class="mfoot">
       <button class="btn danger" onclick="deleteTask('${t.id}')">Eliminar</button>
       <button class="btn" onclick="archiveTask('${t.id}');closeModal()">${t.archived ? "Restaurar" : "Archivar"}</button>
@@ -3867,19 +3718,18 @@ function autoSaveNote(id) {
 }
 
 /* ---------- Sesión manual ---------- */
-function openManualSession() {
-  openModal(`<h3>Registrar sesión manual</h3>
-    <p class="tiny">Para cuando estudiaste sin el temporizador.</p>
+function openManualSession(taskId) {
+  openModal(`<h3>Registrar tiempo</h3>
+    <p class="tiny">Cuánto estudiaste. Suma a la tarea y a tus estadísticas.</p>
     <div class="mrow">
       <div><label for="ms_min">Minutos</label><input id="ms_min" type="number" min="5" step="5" value="60"></div>
       <div><label for="ms_date">Fecha</label><input id="ms_date" type="date" value="${todayISO()}"></div>
     </div>
-    <label for="ms_link">Vinculada a</label><select id="ms_link">${linkOptions("", true)}</select>
+    <label for="ms_link">Vinculada a</label><select id="ms_link">${linkOptions(taskId ? "t:" + taskId : "", true)}</select>
     <label for="ms_note">Nota (opcional)</label><input id="ms_note" placeholder="Qué estudiaste">
     <div class="mfoot"><button class="btn" onclick="closeModal()">Cancelar</button>
       <button class="btn primary" onclick="logManualSession()">Registrar</button></div>`);
 }
-function openPomoCfg() { go("config"); toast("Las duraciones del pomodoro se editan acá"); }
 
 /* ======================== BÚSQUEDA GLOBAL ======================== */
 let searchMode = "search";
@@ -3904,7 +3754,7 @@ function searchItems(q) {
     const cmds = [
       ["Nueva tarea", () => openQuickTask()], ["Nueva evaluación", () => openEvalEditor()], ["Nueva materia", () => openSubjectEditor()],
       ["Nuevo proyecto", () => openProjectEditor()], ["Nueva nota", () => openNoteEditor()], ["Nuevo hábito", () => openHabitEditor()],
-      ["Registrar sesión manual", () => openManualSession()], ["Empezar pomodoro", () => { startPomo(); go("pomodoro"); }],
+      ["Registrar tiempo estudiado", () => openManualSession()],
       ["Ir a Inicio", () => go("home")], ["Ir a Hoy", () => go("today")], ["Ir a Calendario", () => go("calendar")], ["Ir a Semana", () => go("week")],
       ["Ir a Materias", () => go("subjects")], ["Ir a Parciales y finales", () => go("evals")], ["Ir a Proyectos", () => go("projects")],
       ["Ir a Planes de estudio", () => go("plans")], ["Ir a Notas", () => go("notes")], ["Ir a Hábitos", () => go("habits")],
@@ -3950,7 +3800,6 @@ function showShortcuts() {
     <div class="muted" style="line-height:2.2">
       <kbd>N</kbd> Nueva tarea<br>
       <kbd>/</kbd> Buscar<br>
-      <kbd>P</kbd> Abrir Pomodoro<br>
       <kbd>Ctrl</kbd> + <kbd>K</kbd> Acciones rápidas<br>
       <kbd>Ctrl</kbd> + <kbd>S</kbd> Forzar guardado<br>
       <kbd>Ctrl</kbd> + clic Sumar una tarea a la selección<br>
@@ -3982,7 +3831,6 @@ function onKeydown(e) {
   if (isTyping()) return;
   if (e.key === "n" || e.key === "N") { e.preventDefault(); openQuickTask(); }
   else if (e.key === "/") { e.preventDefault(); openSearch(); }
-  else if (e.key === "p" || e.key === "P") { e.preventDefault(); go("pomodoro"); }
   else if (e.key === "?") { e.preventDefault(); showShortcuts(); }
 }
 function trapFocus(e) {
@@ -4004,12 +3852,6 @@ async function init() {
   applyTheme();
   try { localStorage.setItem("aula-theme", state.settings.theme); localStorage.setItem("aula-accent", state.settings.accent); } catch (e) {}
   document.documentElement.style.setProperty("--acc", state.settings.accent);
-  const T = state.timer;
-  if (!T.total) T.total = phaseDur(T.phase || "focus");
-  if (T.run && T.ends) {
-    if (Date.now() >= T.ends) { endPhase(true); T.run = false; T.ends = null; T.phase = "focus"; T.left = T.total = phaseDur("focus"); }
-    else T.left = Math.round((T.ends - Date.now()) / 1000);
-  }
   let sbPref = null; try { sbPref = localStorage.getItem("aula-sb"); } catch (e) {}
   if (window.innerWidth >= 980 && sbPref !== "0") document.body.classList.add("sb-open");
   byId("btnMenu").onclick = () => toggleSidebar();
@@ -4023,7 +3865,6 @@ async function init() {
   await dailyBackup();
   persist();
   render();
-  setInterval(pomoTick, 300);
   setInterval(persist, 15000);
   setInterval(checkReminders, 5 * 60 * 1000);
   checkReminders();

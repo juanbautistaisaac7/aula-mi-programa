@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="description" content="Aula — organizador académico personal: materias, parciales, planes de estudio, pomodoro, hábitos y estadísticas.">
+<meta name="description" content="Aula — organizador académico personal: materias, parciales, planes de estudio, hábitos y estadísticas.">
 <meta name="theme-color" content="#4338ca">
 <title>Aula · Organizador académico</title>
 <link rel="manifest" href="manifest.webmanifest">
@@ -193,18 +193,6 @@ body.selbar-on #main{padding-bottom:230px}
 #toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(16px);background:var(--tx);color:var(--bg);padding:9px 16px;border-radius:9px;font-size:.79rem;font-weight:600;opacity:0;transition:.22s;z-index:120;display:flex;gap:14px;align-items:center;box-shadow:var(--shadow-lg);pointer-events:none;max-width:92vw}
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0);pointer-events:auto}
 #toast button{background:transparent;border:none;color:var(--acc);font-weight:700;cursor:pointer;font-size:.79rem;filter:brightness(1.4)}
-/* mini pomodoro flotante */
-#minipomo{position:fixed;bottom:16px;right:16px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:9px 14px;box-shadow:var(--shadow-lg);z-index:70;display:none;align-items:center;gap:10px;cursor:pointer}
-#minipomo.show{display:flex}
-#minipomo .ph{font-size:.6rem;text-transform:uppercase;letter-spacing:.1em;font-weight:700}
-#minipomo .tm{font-weight:800;font-variant-numeric:tabular-nums;font-size:1rem}
-/* pomodoro vista */
-.pomobig{max-width:420px;margin:0 auto;text-align:center}
-.pomobig .ptime{font-size:3.6rem;font-weight:800;letter-spacing:-.03em;font-variant-numeric:tabular-nums;margin:6px 0}
-.pomobig .phase{font-size:.68rem;letter-spacing:.16em;text-transform:uppercase;font-weight:700;color:var(--acc)}
-.pomobig .phase.break{color:var(--ok)}
-.pomobig .pring{height:5px;background:var(--card2);border-radius:99px;overflow:hidden;margin:14px 0}
-.pomobig .pring i{display:block;height:100%;background:var(--acc);transition:width .3s linear}
 .dots{letter-spacing:.3em;color:var(--tx3);font-size:.72rem;margin-top:10px}
 /* hábitos */
 .habitrow{display:flex;align-items:center;gap:12px;padding:10px 6px;border-bottom:1px solid var(--line2)}
@@ -246,7 +234,7 @@ footer{text-align:center;margin-top:30px;color:var(--tx3);font-size:.7rem}
   #topbar .date{display:none}
   .cal .day{min-height:64px}
 }
-@media print{#topbar,#sidebar,#minipomo{display:none}}
+@media print{#topbar,#sidebar{display:none}}
 </style>
 </head>
 <body>
@@ -272,7 +260,6 @@ footer{text-align:center;margin-top:30px;color:var(--tx3);font-size:.7rem}
 <div class="mbg" id="searchbg"><div class="modal" id="searchbox2" role="dialog" aria-modal="true"></div></div>
 <div id="selbar" role="toolbar" aria-label="Acciones sobre las tareas seleccionadas"></div>
 <div id="toast" role="status"></div>
-<div id="minipomo" onclick="go('pomodoro')" title="Ir al Pomodoro"></div>
 
 <script src="app.js"></script>
 </body>

@@ -6,7 +6,24 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
-## Corrida 04:08–(en curso) (hora ARG) — A1, X1, A2, A3
+## Corrida 04:08–(en curso) (hora ARG) — A1, X1, A2, A3, A4a
+
+### A4a · Sacar el pomodoro
+
+**Plan:** el ítem A4 era grande (pomodoro + reorganizar el menú), así que lo partí: A4a saca el pomodoro, A4b ordena el menú. Primero listé todas las apariciones (`grep -i pomo`): la vista, el reloj flotante, el botón ▸ en cada tarea, "Empezar a estudiar" en Inicio, la sugerencia "Empezar pomodoro", la tarjeta de Configuración, el atajo P, las acciones rápidas, los textos de estadísticas e historial, y el reparto del "Estudio de hoy", que era en pomodoros.
+
+**Decisiones:**
+- **Datos: no se borra nada.** `state.sessions` (con su campo `pomos`), `state.timer`, `settings.pomo` y `t.pomos` siguen guardados; solo dejan de mostrarse. Las sesiones viejas siguen sumando minutos en estadísticas. En "Composición del tiempo" la parte que vino del pomodoro se llama "Con temporizador (antes)", para que esos minutos no desaparezcan del gráfico (igual D2 rehace las estadísticas).
+- **Para cargar tiempo:** "Registrar tiempo" en el detalle de cada tarea (abre el formulario con la tarea ya elegida) y en Inicio en lugar de "Empezar a estudiar". Lo registrado suma a la tarea, a su materia y a estadísticas, como antes.
+- **"Estudio de hoy"** ahora reparte **minutos** por materia (de a 15) en vez de pomodoros, y crea tareas "Sesión de estudio" con esos minutos. Los bloques viejos que tenían `pomo: true` quedan igual en los datos.
+- **Código muerto eliminado:** temporizador, fases, beep, notificación del pomodoro, vista, reloj flotante y su CSS, ajustes de duraciones, `pomosBetween`. El link viejo `#/pomodoro` cae en Inicio sin errores.
+- En la exportación CSV de sesiones dejé la columna `pomodoros`: es un volcado de datos, no interfaz, y sacarla perdería información.
+
+**Salió bien:** todo verde a la primera.
+**Salió mal / intentos fallidos:** en la captura del editor el botón "Registrar tiempo" quedaba metido en el medio de la frase "Tiempo real: … · creada …". Lo pasé a una fila propia, texto a la izquierda y botón a la derecha.
+**Tests:** +5 (×2 = 10): ninguna vista/modal/atajo/acción menciona el pomodoro (recorre todas las vistas con el fixture); el link viejo no rompe; las sesiones con pomodoros se conservan y suman; "Registrar tiempo" desde la tarea; "Estudio de hoy" en minutos. `npm test`: 54/54.
+**Capturas:** [Inicio (mobile claro)](capturas/A4-home-mobile-light.png) · [editor (mobile oscuro)](capturas/A4-editor-mobile-dark.png) · [Configuración (desktop claro)](capturas/A4-config-desktop-light.png)
+**Para Bauti:** si te queda algún reloj del pomodoro corriendo en el celu al actualizar, simplemente desaparece; lo que ya habías estudiado sigue en estadísticas e historial.
 
 ### A3 · Una tarea simple aparece como "serie"
 

@@ -1,7 +1,7 @@
 {
   "name": "Aula — Organizador académico",
   "short_name": "Aula",
-  "description": "Organizador académico personal: materias, parciales, planes de estudio, pomodoro, hábitos y estadísticas. Funciona sin conexión.",
+  "description": "Organizador académico personal: materias, parciales, planes de estudio, hábitos y estadísticas. Funciona sin conexión.",
   "lang": "es-AR",
   "start_url": "./index.html",
   "scope": "./",
