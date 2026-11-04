@@ -6,7 +6,25 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
-## Corrida 06:06–… (hora ARG) — C2a, C2b, …
+## Corrida 06:06–… (hora ARG) — C2a, C2b, C3, …
+
+### C3 · Series bien integradas
+
+**Plan:** que una serie se note y se pueda abrir desde cualquiera de sus tareas, que editar una pregunte a cuáles aplicar el cambio (como el Calendario del iPhone) y simplificar la vista Series.
+
+**Decisiones:**
+- **En el editor de una tarea de serie** aparece arriba "Parte de una serie · **3 de 5**" con el botón "Ver la serie" (abre el editor de C2). En las filas de Hoy / Lista / Semana, un indicador chiquito ↻ 3/5 al lado de los minutos.
+- **"¿A cuáles se lo aplico?"** solo aparece si cambiaste algo que las tareas de la serie comparten: título, descripción, materia/proyecto, parcial, minutos, hora, prioridad, tipo o etiquetas. Opciones: **Solo a esta / A esta y las siguientes (N) / A todas las de la serie (N) / Cancelar**. La fecha, el estado, "completada el", notas, subtareas y comentarios son siempre de esa tarea sola: no pregunta (sería molesto preguntar al mover una).
+- **A las otras se les copia solo lo que cambiaste**, no todo el formulario: si cambiaste la hora, a las demás se les pone la hora y conservan sus minutos propios. "Lo que cambiaste" se calcula comparando el editor con cómo estaba al abrirlo (así un dato viejo sin prioridad no dispara la pregunta sin motivo).
+- **Deshacer** después de aplicar a varias vuelve atrás las otras; la que editaste queda como la guardaste.
+- **Vista Series → lista simple** (estilo Ajustes): punto de color de la materia, título, "cada 3 días · 2/5 hechas · próxima jue 5 nov", una barrita de progreso y ›. Tocar la fila abre el editor. Las terminadas, plegadas abajo. Las que se repiten sin fin dicen su regla ("los lun y mié, sin fin"). Saqué "Seleccionar tareas" (lo reemplaza la selección del editor de C2a) y el menú dice "Series" a secas.
+- Detalle general: al abrir cualquier modal, el foco va al primer **campo** y no al primer botón (si no, "Ver la serie" aparecía con el anillo de foco).
+
+**Salió bien:** todos los tests pasaron a la primera.
+**Salió mal / intentos fallidos:** ninguno serio. Actualicé el helper de `series-editar` que tocaba "Gestionar" para que toque la fila de la lista nueva.
+**Tests:** +5 (`tests/series-integradas.spec.js`, 10 corridas): "3 de 5" + Ver la serie (y que una suelta no lo muestra); indicador 3/5 en la fila; minutos con solo esta / siguientes / todas / cancelar y deshacer; cambiar fecha no pregunta y título + hora a todas sí ("Cambiaste título y hora"); la vista Series con el fixture. `npm test`: 168 pasaron, 0 fallaron.
+**Capturas:** [Series (mobile claro)](capturas/C3-series-mobile-light.png) · [Series (desktop oscuro)](capturas/C3-series-desktop-dark.png) · [la pregunta (mobile oscuro)](capturas/C3-pregunta-mobile-dark.png) · [banner en el editor (mobile claro)](capturas/C3-banner-mobile-light.png)
+**Para Bauti:** abrí una tarea de una serie desde Hoy, cambiale los minutos y guardá: te pregunta. Si te parece que debería preguntar también al cambiar la fecha ("mover esta y las siguientes"), decime: es una línea.
 
 ### C2b · Editar una sola, agregar y quitar ocurrencias
 

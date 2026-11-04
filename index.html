@@ -228,6 +228,29 @@ body.selbar-on #main{padding-bottom:230px}
 .srmore[open] summary::before{transform:rotate(90deg)}
 @media (prefers-reduced-motion:reduce){.occ,.srmore summary::before{transition:none}}
 @media(max-width:600px){.srbulk .mrow,.sradd .mrow{flex-direction:column;gap:0}}
+/* C3 · series integradas */
+.serlist{padding:0;overflow:hidden}
+.serrow{display:flex;align-items:center;gap:12px;width:100%;min-height:60px;padding:10px 16px;background:none;border:none;border-bottom:1px solid var(--line2);color:var(--tx);font:inherit;text-align:left;cursor:pointer;transition:background-color .15s}
+.serrow:last-child{border-bottom:none}
+.serrow:hover{background:var(--hover)}
+.serdot{width:10px;height:10px;border-radius:50%;flex:none}
+.sermain{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.sertitle{font-weight:600;font-size:.9rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sermain .tiny{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.serpct{width:44px;height:5px;border-radius:99px;background:var(--line);overflow:hidden;flex:none}
+.serpct i{display:block;height:100%;background:var(--acc);border-radius:99px}
+.serchev{color:var(--tx3);font-size:1.2rem;line-height:1;flex:none}
+.sermore{padding:0}
+.sermore summary{cursor:pointer;padding:0 16px;min-height:48px;display:flex;align-items:center;font-weight:600;font-size:.85rem;color:var(--tx2)}
+.sermore[open] summary{border-bottom:1px solid var(--line2)}
+.serbanner{display:flex;align-items:center;gap:10px;margin:-4px 0 6px;padding:8px 8px 8px 12px;border-radius:10px;background:var(--acc-soft);color:var(--tx);font-size:.8rem}
+.serbanner span{flex:1}
+.serbanner .btn{min-height:34px}
+.serpos{display:inline-flex;align-items:center;gap:3px;font-variant-numeric:tabular-nums}
+.scopebtns{display:flex;flex-direction:column;gap:8px;margin-top:14px}
+.scopebtns .btn{min-height:44px;font-size:.85rem}
+.scopebtns .btn.ghost{background:none;border-color:transparent;box-shadow:none}
+@media (prefers-reduced-motion:reduce){.serrow{transition:none}}
 .zonehint{margin:-6px 0 8px;color:var(--tx3)}
 .card h3 .sub{font-size:.72rem;font-weight:500;color:var(--tx3);text-transform:none}
 .dropzone{transition:box-shadow .18s,background-color .18s}

@@ -104,7 +104,7 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
   - El caso exacto de Bauti es un test: 5 tareas cada 3 días → +1 h 30 a las 5 → +10 min a una sola → verificar los minutos de cada una.
   - Tests de extender, quitar, mover y borrar, en desktop y mobile.
 
-- [ ] **C3 · Series bien integradas**
+- [x] **C3 · Series bien integradas**
   Listo cuando: desde cualquier tarea de una serie se puede abrir la serie ("parte de una serie · 3 de 5"). Al editar una ocurrencia, la app pregunta "¿solo esta / esta y las siguientes / todas?", como el calendario del iPhone. La sección "Series y repeticiones" del menú pasa a ser una lista simple de series activas o desaparece si ya no hace falta. Con tests.
 
 ## D. Calendario y gráficos

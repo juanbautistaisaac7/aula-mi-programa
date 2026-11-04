@@ -24,7 +24,7 @@ const fechas = (page, title = "Practicar parciales") => page.evaluate(t =>
 
 async function abrirDesdeSeries(page) {
   await page.evaluate(() => go("series"));
-  await page.getByRole("button", { name: "Gestionar" }).first().click();
+  await page.locator(".serrow").first().click(); // (C3) la vista Series es una lista: tocar la fila abre el editor
   await expect(page.locator("#sr_occ .occ")).toHaveCount(5);
 }
 const fila = (page, i) => page.locator("#sr_occ .occ").nth(i);

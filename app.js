@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.21.0";
+const APP_VERSION = "2.22.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -1659,42 +1659,57 @@ function seriesLabel(s) {
   const o = s.subjectId ? subjById(s.subjectId) : null, p = s.projectId ? projById(s.projectId) : null;
   return o ? { name: o.short, color: o.color, full: o.name } : p ? { name: p.name.slice(0, 8), color: "#64748b", full: p.name } : null;
 }
+/* C3 · La vista Series es una lista simple (estilo Ajustes del iPhone): cada
+   fila dice qué es, cada cuánto y cómo va; tocarla abre el editor de la serie. */
 function viewSeries() {
   const all = buildSeries();
   const act = all.filter(s => s.active), old = all.filter(s => !s.active);
-  let h = `<div class="vhead"><h2>Series y repeticiones</h2><span class="sub">tareas creadas con “Repetir”</span>
-    <div class="grow"></div><button class="btn primary" onclick="openQuickTask()">Nueva serie</button></div>`;
-  const card = s => {
-    const lb = seriesLabel(s);
-    const daysLeft = s.kind === "recur" ? null : daysTo(s.to);
-    const pct = s.tasks.length ? Math.round(s.doneN / s.tasks.length * 100) : 0;
-    return `<div class="card" style="margin:0">
-      <h3 style="margin-bottom:6px">${esc(s.title)}<div class="grow"></div>
-        ${lb ? `<span class="tag" style="background:${lb.color}1c;color:${lb.color}">${esc(lb.name)}</span>` : ""}
-        ${s.kind === "recur" ? '<span class="pill acc">recurrente</span>' : ""}</h3>
-      <div class="tiny" style="margin-bottom:8px">
-        ${s.kind === "recur" ? "Se repite automáticamente" : `Del ${fmtD(s.from)} al ${fmtD(s.to)} · ${s.tasks.length} días`}
-        ${daysLeft !== null ? (daysLeft >= 0 ? ` · termina ${fmtRel(s.to)}` : " · ya terminó") : ""}
-      </div>
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><div class="pbar"><i style="width:${pct}%"></i></div><span class="tiny">${s.doneN}/${s.tasks.length}</span></div>
-      <div class="tiny">${s.mins.length === 1 ? hClock(s.mins[0]) + " cada día" : "entre " + hClock(s.mins[0]) + " y " + hClock(s.mins[s.mins.length - 1]) + " por día"} · <b>${hClock(s.pendMin)} pendientes</b>${s.next ? " · próxima " + fmtD(s.next.date) : ""}</div>
-      <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
-        <button class="btn sm primary" onclick="openSeriesModal('${escA(s.key)}')">Gestionar</button>
-        <button class="btn sm" onclick="selectSeries('${escA(s.key)}')">Seleccionar tareas</button>
-      </div></div>`;
+  const row = s => {
+    const lb = seriesLabel(s), recur = s.kind === "recur";
+    const how = recur ? recurLabel(s.tasks[0].recur) + ", sin fin" : seriesPattern(s.tasks.map(t => t.date)).label;
+    const prog = recur ? "" : ` · ${s.doneN}/${s.tasks.length} hechas`;
+    const next = recur ? "" : s.next ? ` · próxima ${fmtD(s.next.date)}` : s.active ? "" : ` · terminó ${fmtD(s.to)}`;
+    return `<button type="button" class="serrow" onclick="openSeriesModal('${escA(s.key)}')">
+      <span class="serdot" style="background:${lb ? lb.color : "var(--tx3)"}"></span>
+      <span class="sermain"><span class="sertitle">${esc(s.title)}</span>
+        <span class="tiny">${lb ? esc(lb.name) + " · " : ""}${esc(how)}${prog}${next}</span></span>
+      ${recur ? "" : `<span class="serpct" aria-hidden="true"><i style="width:${Math.round(s.doneN / s.tasks.length * 100)}%"></i></span>`}
+      <span class="serchev" aria-hidden="true">›</span></button>`;
   };
-  h += act.length ? `<div class="grid2">${act.map(card).join("")}</div>`
-    : `<div class="card"><div class="empty">No tenés series activas.<br>Al crear una tarea, elegí “Repetir” y la serie aparece acá para gestionarla entera.</div></div>`;
-  if (old.length) h += `<div class="card" style="margin-top:14px"><h3>Terminadas</h3><div class="grid2" style="margin-top:8px">${old.map(card).join("")}</div></div>`;
+  let h = `<div class="vhead"><h2>Series</h2><span class="sub">tareas que se repiten</span>
+    <div class="grow"></div><button class="btn primary" onclick="openQuickTask()">Nueva serie</button></div>`;
+  h += act.length ? `<div class="card serlist">${act.map(row).join("")}</div>`
+    : `<div class="card"><div class="empty">No tenés series activas.<br>Al crear una tarea, elegí “Repetir” y la serie aparece acá.</div></div>`;
+  if (old.length) h += `<details class="card sermore"><summary>Terminadas (${old.length})</summary><div class="serlist">${old.map(row).join("")}</div></details>`;
   return h;
 }
-function selectSeries(key) {
-  const s = seriesByKey(key); if (!s) return;
-  ui.sel = new Set(s.pend.map(t => t.id));
-  ui.selMode = true;
-  go("list");
-  setTimeout(selRefresh, 60);
-  toast(s.pend.length + " tareas de la serie seleccionadas");
+function recurLabel(r) {
+  r = r || {};
+  if (r.kind === "daily") return "todos los días";
+  if (r.kind === "weekly") return "cada semana";
+  if (r.kind === "monthly") return "cada mes";
+  if (r.kind === "interval") return "cada " + (r.n || 2) + " días";
+  if (r.kind === "days" && r.days && r.days.length) {
+    const o = [1, 2, 3, 4, 5, 6, 0].filter(d => r.days.includes(d)).map(d => DAYS[d]);
+    return o.length === 1 ? "los " + o[0] : "los " + o.slice(0, -1).join(", ") + " y " + o[o.length - 1];
+  }
+  return "se repite";
+}
+/* C3 · "3 de 5": posición de una tarea dentro de su serie. */
+function seriesPos(t) {
+  if (!t || !t.seriesId || t.recur) return null;
+  if (!ui.serMap) {
+    ui.serMap = new Map();
+    for (const x of state.tasks) {
+      if (!x.seriesId || x.recur || !x.date || x.archived || x.status === "canc") continue;
+      if (!ui.serMap.has(x.seriesId)) ui.serMap.set(x.seriesId, []);
+      ui.serMap.get(x.seriesId).push(x);
+    }
+    for (const v of ui.serMap.values()) v.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  }
+  const list = ui.serMap.get(t.seriesId) || [];
+  const i = list.indexOf(t);
+  return list.length >= 2 && i >= 0 ? { i: i + 1, n: list.length, key: "s:" + t.seriesId, list } : null;
 }
 /* C2a · Editor de serie: todas las ocurrencias en una lista, selección
    (todas / pendientes / ninguna / a mano) y acciones masivas con vista previa
@@ -2021,7 +2036,7 @@ function seriesDelete(all) {
 /* ========================= ROUTER / SIDEBAR ========================= */
 const VIEWS = [
   ["home", "Inicio"], ["today", "Hoy"], ["calendar", "Calendario"], ["week", "Semana"],
-  ["subjects", "Materias"], ["evals", "Parciales y finales"], ["projects", "Proyectos"], ["series", "Series y repeticiones"],
+  ["subjects", "Materias"], ["evals", "Parciales y finales"], ["projects", "Proyectos"], ["series", "Series"],
   ["plans", "Planes de estudio"], ["notes", "Notas"], ["habits", "Hábitos"],
   ["stats", "Estadísticas"], ["history", "Historial"], ["backups", "Copias de seguridad"], ["config", "Configuración"]
 ];
@@ -2073,6 +2088,7 @@ function renderTop() {
 function render() {
   parseHash();
   ui.selList = [];           // orden visual de las filas, para el Shift+clic
+  ui.serMap = null;          // posiciones "3 de 5" de las series (C3), se arma una vez por render
   renderSidebar(); renderTop();
   const v = byId("view");
   const map = {
@@ -2113,6 +2129,7 @@ function taskRow(t, opts = {}) {
         ${t.estMin ? `<span class="mins">${fmtMin(t.estMin)}</span>` : ""}
         ${t.prio === 2 ? '<span class="prio2">! alta</span>' : t.prio === 0 ? '<span class="prio0">baja</span>' : ""}
         ${dateBit} ${sub}
+        ${(sp => sp ? `<span class="tiny serpos" title="Parte de una serie: ${sp.i} de ${sp.n}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 2l4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/></svg>${sp.i}/${sp.n}</span>` : "")(seriesPos(t))}
         ${t.comments && t.comments.length ? `<span class="tiny cmtcount" title="${t.comments.length} comentario${t.comments.length > 1 ? "s" : ""}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg>${t.comments.length}</span>` : ""}
         ${ev && opts.showEval !== false ? `<span class="tiny">→ ${esc(ev.name.slice(0, 26))}</span>` : ""}
         ${(t.tags || []).map(x => `<span class="tiny">#${esc(x)}</span>`).join(" ")}
@@ -3754,7 +3771,7 @@ function openModal(html, wide, noFocus) {
   box.innerHTML = html;
   bg.classList.add("open");
   // noFocus: cuando lo primero es una lista para elegir, enfocar un botón confunde ("¿está elegido Todas?")
-  const f = noFocus ? null : box.querySelector("input,select,textarea,button");
+  const f = noFocus ? null : box.querySelector("input,select,textarea") || box.querySelector("button"); // primero un campo: un botón de arriba (p. ej. "Ver la serie") no se lleva el foco
   if (f) setTimeout(() => f.focus(), 30);
 }
 function closeModal() { byId("modalbg").classList.remove("open"); }
@@ -3962,7 +3979,10 @@ function openTaskEditor(id) {
   const t = taskById(id); if (!t) return;
   const sel = t.subjectId ? "s:" + t.subjectId : t.projectId ? "p:" + t.projectId : "";
   const rec = t.recur || {};
+  ui.serMap = null; const sp = seriesPos(t);
   openModal(`<h3>Editar tarea</h3>
+    ${sp ? `<div class="serbanner"><span>Parte de una serie · <b>${sp.i} de ${sp.n}</b></span>
+      <button type="button" class="btn sm" onclick="closeModal();openSeriesModal('${escA(sp.key)}')">Ver la serie</button></div>` : ""}
     <label for="te_title">Título</label><input id="te_title" value="${escA(t.title)}">
     <label for="te_desc">Descripción</label><textarea id="te_desc" rows="2">${esc(t.desc || "")}</textarea>
     <div class="mrow">
@@ -4017,6 +4037,7 @@ function openTaskEditor(id) {
       <button class="btn primary" onclick="saveTaskEditor('${t.id}')">Guardar</button></div>`, true);
   renderTaskEditorSubtasks(t);
   ui.editingComment = null; renderTaskComments(t);
+  ui.teInit = { id, v: editorSharedValues() };
 }
 /* ---------- Comentarios en tareas (B2) ----------
    t.comments = [{ id, text, ts, editedTs? }]. Se guardan al instante (como las
@@ -4083,10 +4104,57 @@ function removeSubtask(taskId, stId) {
   t.subtasks = (t.subtasks || []).filter(s => s.id !== stId);
   change(); renderTaskEditorSubtasks(t);
 }
-function saveTaskEditor(id) {
+/* C3 · Si la tarea es parte de una serie y cambiaste algo que comparten
+   (título, materia, minutos, hora…), pregunta a cuáles aplicarlo, como el
+   Calendario del iPhone. Fecha, estado, notas y comentarios son siempre de esta. */
+const SERIES_SHARED = [
+  ["title", "título"], ["desc", "descripción"], ["subjectId", "materia"], ["projectId", "proyecto"], ["evalId", "parcial"],
+  ["estMin", "minutos"], ["time", "hora"], ["prio", "prioridad"], ["type", "tipo"], ["tags", "etiquetas"]
+];
+function editorSharedValues() {
+  const link = byId("te_link").value, tm = byId("te_time").value;
+  return {
+    title: byId("te_title").value.trim(), desc: byId("te_desc").value,
+    subjectId: link.startsWith("s:") ? link.slice(2) : null, projectId: link.startsWith("p:") ? link.slice(2) : null,
+    evalId: byId("te_eval").value || null, estMin: parseInt(byId("te_min").value) || 0,
+    time: hmToMin(tm) != null ? tm : null, prio: parseInt(byId("te_prio").value), type: byId("te_type").value,
+    tags: byId("te_tags").value.split(",").map(x => x.trim().replace(/^#/, "")).filter(Boolean)
+  };
+}
+function saveTaskEditor(id, scope) {
   const t = taskById(id); if (!t) return;
   const title = byId("te_title").value.trim();
   if (!title) { toast("El título no puede quedar vacío"); return; }
+  ui.serMap = null;
+  const sp = seriesPos(t);
+  const nv = editorSharedValues(), norm = v => JSON.stringify(v == null || v === "" ? null : v);
+  // "lo que cambiaste" = lo que dice el editor ahora vs lo que decía al abrirse
+  const init = ui.teInit && ui.teInit.id === id ? ui.teInit.v : nv;
+  const diff = SERIES_SHARED.filter(([k]) => norm(nv[k]) !== norm(init[k]));
+  if (sp && diff.length && !scope) {
+    const rest = sp.list.filter(x => x !== t), next = sp.list.slice(sp.i - 1);
+    const names = [...new Set(diff.map(d => d[1]))];
+    const box = byId("confirmbox");
+    box.innerHTML = `<h3>Esta tarea es parte de una serie</h3>
+      <p class="muted">Cambiaste ${esc(names.length > 1 ? names.slice(0, -1).join(", ") + " y " + names[names.length - 1] : names[0])}. ¿A cuáles se lo aplico?</p>
+      <div class="scopebtns">
+        <button class="btn" onclick="closeConfirm();saveTaskEditor('${escA(id)}','this')">Solo a esta</button>
+        ${next.length > 1 && next.length < sp.n ? `<button class="btn" onclick="closeConfirm();saveTaskEditor('${escA(id)}','next')">A esta y las siguientes (${next.length})</button>` : ""}
+        <button class="btn primary" onclick="closeConfirm();saveTaskEditor('${escA(id)}','all')">A todas las de la serie (${sp.n})</button>
+        <button class="btn ghost" onclick="closeConfirm()">Cancelar</button></div>`;
+    byId("confirmbg").classList.add("open");
+    return;
+  }
+  // Las otras de la serie reciben solo los campos que cambiaste (con deshacer)
+  let others = [];
+  if (sp && diff.length && (scope === "next" || scope === "all")) {
+    others = (scope === "all" ? sp.list : sp.list.slice(sp.i - 1)).filter(x => x !== t);
+  }
+  const snaps = others.map(x => ({ x, v: Object.assign({ planId: x.planId }, Object.fromEntries(diff.map(([k]) => [k, Array.isArray(x[k]) ? [...x[k]] : x[k]]))) }));
+  others.forEach(x => diff.forEach(([k]) => {
+    x[k] = Array.isArray(nv[k]) ? [...nv[k]] : k === "desc" ? nv.desc : nv[k];
+    if (k === "evalId" && x.planId && x.planId !== nv.evalId) x.planId = null;
+  }));
   t.title = title; t.desc = byId("te_desc").value;
   const link = byId("te_link").value;
   t.subjectId = link.startsWith("s:") ? link.slice(2) : null;
@@ -4121,7 +4189,10 @@ function saveTaskEditor(id) {
     t.recur = { kind: rk, days: [...document.querySelectorAll(".te_day:checked")].map(x => parseInt(x.value)), n: parseInt((byId("te_n") || {}).value) || 2, start: t.date || todayISO() };
     t.recurDone = t.recurDone || {};
   } else t.recur = null;
-  change(); closeModal(); render(); toast("Tarea guardada");
+  change(); closeModal(); render();
+  if (others.length) toast("Guardado en " + (others.length + 1) + " tareas de la serie",
+    () => { snaps.forEach(sn => Object.assign(sn.x, sn.v)); change(); render(); });
+  else toast("Tarea guardada");
 }
 
 /* ---------- Materia ---------- */
