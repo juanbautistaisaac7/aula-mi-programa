@@ -34,9 +34,11 @@ Buen día, Bauti. Esto es lo que hizo el agente mientras dormías. El detalle de
 
 ## ¿Se publicó en `main`?
 
-Sí, si `npm test` daba todo verde después del merge (ver al final de este archivo). Si algo no te gusta:
+**Sí.** Se mergeó `agente/mejoras` en `main` después de verificar `npm test` en verde en la rama y otra vez sobre el merge (196 pasaron, 0 fallaron).
 
-- **Código:** el tag `antes-del-agente` apunta a como estaba `main` antes de esta noche. Para volver: `git checkout main && git reset --hard antes-del-agente && git push --force origin main` (o pedímelo).
+Si algo no te gusta:
+
+- **Código:** el punto de vuelta atrás es la **rama** `antes-del-agente` (el `main` exacto de antes de esta noche, commit `e2c964a`). El manual pedía un *tag*, pero el proxy de GitHub de esta sesión rechaza tags (error 403), así que usé una rama, que sirve igual. Para volver: `git checkout main && git reset --hard origin/antes-del-agente && git push --force origin main` (o pedímelo).
 - **Datos:** en la app, **Configuración → Copias de seguridad**, restaurá la copia "antes de migrar" que se guardó sola.
 
 ## Estadísticas de la noche

@@ -29,6 +29,7 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 **Salió mal / intentos fallidos:** el primer `sed` para subir la versión en `sw.js` "no hizo nada" — ahí descubrí que estaba vacío.
 **Tests de la corrida:** `npm test` final: 196 pasaron, 0 fallaron (16 saltados a propósito).
+**Cierre de la noche:** `npm test` verde en la rama y otra vez sobre el merge con `main` (196/0). Publicado en `main`. El tag `antes-del-agente` no se pudo pushear (el proxy de GitHub devuelve 403 para tags; reintenté 4 veces), así que creé una **rama** `antes-del-agente` desde el `main` viejo (`e2c964a`) con la API de GitHub: es el mismo punto de vuelta atrás. Escribí `docs/RESUMEN-NOCHE.md` y `.agente/TERMINADO`.
 **Para Bauti:** abrí un parcial en el celu y mirá el encabezado y "Tareas y plan de estudio". Si la app instalada se comportaba raro sin conexión desde anoche, era el `sw.js` vacío: con esta versión vuelve a andar offline (puede que tengas que abrirla dos veces para que tome el service worker nuevo).
 
 ---
