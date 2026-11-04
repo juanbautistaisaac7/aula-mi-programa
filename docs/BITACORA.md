@@ -6,7 +6,22 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
-## Corrida 04:08–(en curso) (hora ARG) — A1, X1, A2, A3, A4a, A4b, B1, B2
+## Corrida 04:08–(en curso) (hora ARG) — A1, X1, A2, A3, A4a, A4b, B1, B2, X2
+
+### X2 · En el celu, las filas de tareas usaban la mitad del ancho
+
+**Plan:** lo vi en las capturas de B1/B2 y lo anoté; como era chico y molesta todos los días, lo hice enseguida.
+
+**Causa:** las acciones de cada fila (Hoy, +1d, Editar, ×, ↑↓) aparecen al pasar el mouse (`opacity: 0` → `1`). En el celu no hay "pasar el mouse": nunca se veían, pero seguían ocupando lugar a la derecha y el título se cortaba a la mitad.
+
+**Decisiones:**
+- En pantallas táctiles (`@media (hover:none)`) esas acciones no se dibujan. No se pierde nada que se pudiera usar: tocar la tarea abre el detalle con Eliminar, Archivar, etc. En B4 viene el "Mover a…" de una mano, que reemplaza a "Hoy" y "+1d".
+- En desktop quedan igual (aparecen con el mouse).
+- Aviso honesto: las flechas ↑↓ para reordenar tampoco se podían usar en el celu, y la manija ⣿ usa arrastre HTML5, que en táctil no anda. Reordenar con el dedo es parte de B4.
+
+**Salió bien / mal:** bien; el test falla sin el arreglo (en mobile) y pasa con él.
+**Tests:** +1 (×2). `npm test`: 88/88.
+**Capturas:** [Hoy (mobile claro)](capturas/X2-hoy-mobile-light.png) · [mobile oscuro](capturas/X2-hoy-mobile-dark.png)
 
 ### B2 · Comentarios en tareas
 

@@ -154,6 +154,6 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
   Por qué: en la corrida de A1 el test de humo "crear una tarea… persiste" falló **una vez** (no se pudo reproducir en 40 repeticiones). La causa probable: `change()` guarda con 500 ms de demora y, si la página se recarga o se cierra antes, el guardado de `beforeunload` abre una transacción de IndexedDB que el navegador puede cortar. En el celu eso sería "creé una tarea, cerré la app y no estaba".
   Listo cuando: los cambios hechos con acciones explícitas (crear, completar, borrar, mover) se guardan sin esperar el debounce, o hay una garantía equivalente (por ejemplo, `pagehide` + copia sincrónica en localStorage que `loadState` prefiera si es más nueva, comparando `meta.lastSave`). Test: crear una tarea y recargar al instante, repetido 20 veces, nunca pierde la tarea.
 
-- [ ] **X2 · En el celu, las filas de tareas usan solo la mitad del ancho**
+- [x] **X2 · En el celu, las filas de tareas usan solo la mitad del ancho**
   Por qué: en las capturas mobile de Hoy (B1/B2) el título y los datos de cada tarea se cortan a mitad de pantalla ("Leer apunte de / límites", "Segundo parcial / PE") aunque sobra lugar a la derecha. Probablemente la zona de acciones (`.tactions`) ocupa espacio aunque no se vea. Ver en F1 o antes si sobra tiempo.
 

@@ -153,6 +153,9 @@ body.sb-open #sidebar{transform:translateX(0)}
 .task:hover .tactions{opacity:1}
 .tactions button{background:var(--card);border:1px solid var(--line);color:var(--tx3);height:24px;min-width:24px;padding:0 5px;border-radius:6px;cursor:pointer;font-size:.62rem}
 .tactions button:hover{color:var(--acc);border-color:var(--acc)}
+/* X2 · En pantallas táctiles no hay hover: estas acciones nunca se veían pero
+   ocupaban la mitad del ancho de la fila. Tocar la tarea abre su detalle. */
+@media (hover:none){.tactions{display:none}}
 /* arrastrar para ordenar el día */
 .drag{cursor:grab;color:var(--tx3);font-size:.72rem;line-height:1;padding:3px 2px;margin-top:2px;flex-shrink:0;opacity:.35;transition:.12s;letter-spacing:-2px;user-select:none;touch-action:none}
 .task:hover .drag{opacity:.9;color:var(--acc)}
