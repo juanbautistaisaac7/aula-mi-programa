@@ -126,7 +126,7 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
   - Funciona con 0 datos (estado vacío lindo) y con muchos datos (usar el fixture de A1).
   - Tests de que los números son correctos para el fixture.
 
-## Noche 2 (pedidos del 4/11 al mediodía) — HACER PRIMERO, en este orden: C4, G1, G2; después E1, F1, F2
+## Noche 2 (pedidos del 4/11 al mediodía) — HACER PRIMERO, en este orden: C4, S1, G1, G2; después E1, F1, F2
 
 - [ ] **C4 · Tiempos de una serie por tramos, en segundos**
   Pedido: *"las series todavía no son del todo cómodas, más que nada el tema de tiempos. si yo creo una tarea de hoy a un mes para adelante y quiero que las primeras 10 sean de una hora, luego 2 de 1h y media, luego de 2h y luego de 3.. es muy tedioso, haz ese paso más fácil, se me ocurre que se muestren todas en una lista y que puedas seleccionar rápido y cambiar horarios"*.
@@ -135,6 +135,21 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
   - En el editor de la serie, la lista de ocurrencias permite **selección rápida de rangos**: tocar la primera y Shift/clic o mantener apretado y arrastrar sobre la última en el celu selecciona todas las del medio; atajos "primeras N", "de la N a la M", "las que quedan". Con varias seleccionadas, poner el tiempo es 1 toque (chips: 30 m · 1 h · 1 h 30 · 2 h · 3 h · otro).
   - Cada fila muestra sus minutos editables en el lugar (tocar el número y cambiarlo), sin abrir otra pantalla.
   - Test con el caso exacto de Bauti: serie diaria de hoy a 30 días → 10 de 1 h, 2 de 1 h 30, el resto 2 h y las últimas 3 de 3 h; verificar los minutos de cada una. En desktop y mobile. Capturas.
+
+- [ ] **S1 · Compu y celu sincronizados** *(FUNDAMENTAL según Bauti; grande: partirlo en S1a/S1b/S1c; datos sagrados)*
+  Pedido: *"quiero que estén conectados ambos, sino no tiene sentido, ambos dispositivos digo, nose si se maneja con cuenta o como eso, pero eso anotalo también porque es fundamental"*.
+  Contexto: hoy cada dispositivo tiene sus datos en su IndexedDB; Bauti abrió la app en el iPhone y la vio vacía. La app ya está publicada en **Cloudflare Pages** (`aula-pi0.pages.dev`, conectada al repo, se despliega sola desde `main`).
+  Propuesta (el agente puede mejorarla documentando por qué):
+  - **Backend mínimo con Cloudflare Pages Functions + KV** (gratis, mismo proyecto, sin servidor aparte): `functions/api/sync.js` con `GET` y `PUT`. El agente NO tiene acceso a Cloudflare: el código queda listo y en el resumen va un paso a paso de 2 minutos para que Bauti cree el namespace KV y lo vincule al proyecto (Settings → Functions → KV bindings, nombre de variable fijo, por ejemplo `AULA_KV`). Mientras no esté vinculado, la app funciona igual que hoy y la sync muestra "falta activar en Cloudflare".
+  - **Sin cuentas ni contraseñas**: "Código de sincronización". En la compu: Configuración → Sincronizar → "Activar" genera una clave larga al azar (128 bits o más) y muestra un **QR** + el código para copiar. En el celu: "Ya tengo un código" → escanear QR con la cámara o pegarlo. En KV se guarda bajo un hash de la clave; nadie sin la clave lee nada. Opción "desconectar este dispositivo" y "cambiar código".
+  - **Sincronización automática**: al abrir la app, al volver a primer plano (`visibilitychange`), unos segundos después de cada cambio y cada ~1 min con la app abierta. Indicador discreto (el "todo guardado" de arriba pasa a "sincronizado" / "sin conexión, se sube después").
+  - **Fusión por elemento, no "el último pisa todo"**: cada tarea, parcial, materia, proyecto, nota, hábito, sesión, etc. tiene `updatedAt` (migración: ponerlo a todo lo existente) y los borrados dejan una lápida (`deleted: true` + `updatedAt`) en vez de desaparecer, así un borrado en el celu no "revive" desde la compu. Al sincronizar: por id gana el `updatedAt` más nuevo; ajustes también por campo o por bloque. Para escritura concurrente usar versión/ETag en el PUT (si cambió en el medio, bajar, fusionar y reintentar).
+  - **Primera vez con datos en los dos lados** (justo el caso de Bauti: compu llena, celu vacío o con algo): fusionar, nunca reemplazar a ciegas; antes, copia de seguridad automática local en los dos dispositivos.
+  Listo cuando:
+  - Tests de la función con un KV falso en Node (GET/PUT, clave inválida, conflicto de versión, tamaño grande) y tests de la app con la red **mockeada** (`page.route`): dos "dispositivos" (dos contextos de navegador) que crean, editan y borran cosas cruzadas y terminan iguales; borrar en uno no revive; sin conexión no se pierde nada y sube al volver; primera vez con datos en ambos fusiona sin perder.
+  - Funciona en iPhone/Safari (sin APIs que Safari no tenga; QR con una librería mínima embebida o generada a mano, sin CDN en runtime si se puede).
+  - Paso a paso para Bauti en `docs/RESUMEN-NOCHE.md` y en la propia pantalla de Configuración: crear KV, vincularlo, redeploy, activar en la compu, escanear desde el celu.
+  - Bitácora explicando la decisión (por qué no Firebase/Supabase: requieren que Bauti cree cuenta y proyecto y meter claves; Cloudflare ya lo tiene).
 
 - [ ] **G1 · Años de cursado: un espacio nuevo por año** *(grande, toca el modelo: partirlo; datos sagrados)*
   Pedido: *"esta app la quiero seguir usando el año que viene y todos los que me queden de facultad así que habrá que tener una forma de dividir el año ... y también separar por año osea que se cree como un nuevo espacio de trabajo totalmente nuevo para 4to yo poder crearlo"*.
