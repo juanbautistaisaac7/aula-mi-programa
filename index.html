@@ -184,6 +184,33 @@ body.selbar-on #main{padding-bottom:230px}
 .repdate{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:2px 7px;font-size:.74rem;font-variant-numeric:tabular-nums;white-space:nowrap}
 .repdate.more{color:var(--tx3)}
 @media (prefers-reduced-motion:reduce){.wdpick button{transition:none}}
+/* C2a · editor de serie */
+.btn:disabled{opacity:.45;cursor:default}
+.srbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:10px 0 8px}
+.srbar .btn{min-height:32px}
+.occlist{border:1px solid var(--line);border-radius:12px;overflow:auto;max-height:min(46vh,360px);background:var(--card)}
+.modal label.occ{display:flex;align-items:center;gap:12px;min-height:46px;padding:6px 14px;margin:0;border-bottom:1px solid var(--line2);cursor:pointer;text-transform:none;letter-spacing:0;font-size:.85rem;font-weight:500;color:var(--tx);transition:background-color .15s}
+.modal label.occ:last-child{border-bottom:none}
+.modal label.occ.on{background:var(--acc-soft)}
+.modal label.occ input{width:20px;height:20px;flex:none;margin:0;accent-color:var(--acc);padding:0}
+:root[data-theme="dark"] .modal label.occ input{color-scheme:dark}
+.occ .occd{flex:1;min-width:0;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.occ .occst{font-size:.72rem;color:var(--tx3);white-space:nowrap}
+.occ.done .occst{color:var(--ok,#16a34a)}
+.occ.done .occd{color:var(--tx3)}
+.occ .occm{font-variant-numeric:tabular-nums;font-weight:600;min-width:62px;text-align:right;white-space:nowrap}
+.srbulk{margin-top:12px}
+.srbulk .mrow>div.srx{flex:1}
+.srchips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.srchips .btn{min-height:32px;font-variant-numeric:tabular-nums}
+.srapply{width:100%;margin-top:10px;min-height:44px;font-size:.85rem}
+.srmore{margin-top:14px;border-top:1px solid var(--line2);padding-top:10px}
+.srmore summary{cursor:pointer;font-size:.8rem;font-weight:600;color:var(--tx2);min-height:44px;display:flex;align-items:center;gap:8px;list-style:none}
+.srmore summary::-webkit-details-marker{display:none}
+.srmore summary::before{content:"›";font-size:1.1rem;line-height:1;color:var(--tx3);transition:transform .18s}
+.srmore[open] summary::before{transform:rotate(90deg)}
+@media (prefers-reduced-motion:reduce){.modal label.occ,.srmore summary::before{transition:none}}
+@media(max-width:600px){.srbulk .mrow{flex-direction:column;gap:0}}
 .zonehint{margin:-6px 0 8px;color:var(--tx3)}
 .card h3 .sub{font-size:.72rem;font-weight:500;color:var(--tx3);text-transform:none}
 .dropzone{transition:box-shadow .18s,background-color .18s}

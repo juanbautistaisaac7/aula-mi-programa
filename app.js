@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.19.1";
+const APP_VERSION = "2.20.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -1696,64 +1696,163 @@ function selectSeries(key) {
   setTimeout(selRefresh, 60);
   toast(s.pend.length + " tareas de la serie seleccionadas");
 }
+/* C2a · Editor de serie: todas las ocurrencias en una lista, selección
+   (todas / pendientes / ninguna / a mano) y acciones masivas con vista previa
+   antes de aplicar y deshacer después. El modal queda abierto después de
+   aplicar, así se puede encadenar ("+1 h 30 a todas" y después "+10 min a una"). */
+const SR_ACTS = [
+  ["add", "Sumar tiempo"], ["sub", "Restar tiempo"], ["set", "Fijar tiempo"],
+  ["move", "Mover de día"], ["time", "Cambiar hora"], ["del", "Borrar"]
+];
 function openSeriesModal(key) {
   const s = seriesByKey(key); if (!s) { toast("La serie ya no existe"); return; }
-  const lb = seriesLabel(s);
-  const recur = s.kind === "recur";
+  ui.srSel = new Set(s.pend.map(t => t.id)); // por defecto: las pendientes
+  if (ui.seriesKey !== key || !ui.srAct) { ui.srAct = "add"; ui.srMin = 90; ui.srDays = 1; ui.srTime = ""; }
   ui.seriesKey = key;
+  openModal(seriesModalHTML(s), true, true);
+  srPreview();
+}
+function refreshSeriesModal() {
+  const box = byId("modalbox");
+  if (!byId("modalbg").classList.contains("open") || !box.querySelector("#sr_occ")) return;
+  const s = seriesByKey(ui.seriesKey);
+  if (!s) { closeModal(); return; }
+  const keepScroll = byId("sr_occ").scrollTop;
+  box.innerHTML = seriesModalHTML(s);
+  byId("sr_occ").scrollTop = keepScroll;
+  srPreview();
+}
+function seriesModalHTML(s) {
+  const lb = seriesLabel(s), recur = s.kind === "recur", today = todayISO();
   let h = `<h3>${esc(s.title)}</h3>
-    <p class="tiny">${lb ? esc(lb.full) + " · " : ""}${recur ? "tarea recurrente" : `del ${fmtD(s.from)} al ${fmtD(s.to)} · ${s.tasks.length} días · ${s.doneN} completadas`}</p>`;
+    <p class="tiny">${lb ? esc(lb.full) + " · " : ""}${recur ? "tarea que se repite sin fin" : `${s.tasks.length} tareas · ${s.doneN} hechas · ${fmtMin(s.totMin)} en total`}</p>`;
   if (!recur) {
-    h += `<div class="card" style="margin:12px 0"><h3>Tiempo por día</h3>
-      <div class="mrow">
-        <div><label for="sr_op">Operación</label><select id="sr_op">
-          <option value="set">Fijar en</option><option value="add">Sumar</option><option value="sub">Restar</option><option value="mul">Multiplicar por</option></select></div>
-        <div><label for="sr_val">Minutos</label><input id="sr_val" type="number" value="60" step="5" min="0"></div>
-        <div><label for="sr_scope">Aplicar a</label><select id="sr_scope">
-          <option value="pend">Todas las pendientes</option>
-          <option value="last">Solo las últimas…</option>
-          <option value="all">Todas (incluidas las hechas)</option></select></div>
-      </div>
-      <div class="mrow"><div><label for="sr_lastn">Cuántas son “las últimas”</label><input id="sr_lastn" type="number" value="3" min="1" max="99"></div>
-      <div style="flex:2;display:flex;align-items:flex-end"><button class="btn primary" style="width:100%" onclick="seriesApplyTime()">Aplicar cambio de tiempo</button></div></div>
-      <p class="tiny" style="margin-top:6px">Ejemplo: “Fijar en 120, solo las últimas 3” carga más las vísperas del examen.</p></div>`;
-    h += `<div class="card" style="margin:12px 0"><h3>Extender o recortar</h3>
+    const ids = new Set(s.tasks.map(t => t.id));
+    ui.srSel = new Set([...ui.srSel].filter(id => ids.has(id))); // las borradas ya no cuentan
+    const row = t => {
+      const done = t.status === "done", late = !done && t.date < today;
+      return `<label class="occ${done ? " done" : ""}" data-id="${escA(t.id)}">
+        <input type="checkbox" ${ui.srSel.has(t.id) ? "checked" : ""} onchange="srToggle('${escA(t.id)}',this.checked)">
+        <span class="occd">${fmtD(t.date)}${t.time ? ` <span class="ttime">${esc(t.time)}</span>` : ""}</span>
+        <span class="occst">${done ? "✓ hecha" : late ? "atrasada" : t.date === today ? "hoy" : ""}</span>
+        <span class="occm">${fmtMin(t.estMin)}</span></label>`;
+    };
+    h += `<div class="srbar"><span class="tiny">Elegir:</span>
+        <button type="button" class="btn sm" onclick="srSelect('all')">Todas</button>
+        <button type="button" class="btn sm" onclick="srSelect('pend')">Pendientes</button>
+        <button type="button" class="btn sm" onclick="srSelect('none')">Ninguna</button>
+        <div class="grow"></div><span class="tiny" id="sr_count"></span></div>
+      <div class="occlist" id="sr_occ">${s.tasks.map(row).join("")}</div>
+      <div class="srbulk">
+        <div class="mrow">
+          <div><label for="sr_act">Qué hacer con las elegidas</label><select id="sr_act" onchange="ui.srAct=this.value;srPreview()">
+            ${SR_ACTS.map(([v, l]) => `<option value="${v}"${ui.srAct === v ? " selected" : ""}>${l}</option>`).join("")}</select></div>
+          <div class="srx" id="sr_minwrap"><label for="sr_min">Minutos</label><input id="sr_min" type="number" min="0" step="5" value="${ui.srMin}" oninput="ui.srMin=this.value;srPreview()"></div>
+          <div class="srx" id="sr_dayswrap"><label for="sr_days">Días (− antes, + después)</label><input id="sr_days" type="number" step="1" value="${ui.srDays}" oninput="ui.srDays=this.value;srPreview()"></div>
+          <div class="srx" id="sr_timewrap"><label for="sr_time">Hora (vacía = sin hora)</label><input id="sr_time" type="time" value="${escA(ui.srTime)}" oninput="ui.srTime=this.value;srPreview()"></div>
+        </div>
+        <div class="srchips srx" id="sr_minchips">${[10, 30, 60, 90, 120].map(m => `<button type="button" class="btn sm" onclick="srSetVal('sr_min',${m})">${fmtMin(m)}</button>`).join("")}</div>
+        <div class="srchips srx" id="sr_dayschips">${[-7, -1, 1, 2, 3, 7].map(d => `<button type="button" class="btn sm" onclick="srSetVal('sr_days',${d})">${d > 0 ? "+" : "−"}${Math.abs(d)} d</button>`).join("")}</div>
+        <div class="reppreview" id="sr_preview" aria-live="polite"></div>
+        <button type="button" class="btn primary srapply" id="sr_apply" onclick="seriesBulkApply()">Aplicar</button>
+      </div>`;
+    h += `<details class="srmore"><summary>Más opciones</summary>
       <div class="mrow">
         <div><label for="sr_until">Extender hasta</label><input id="sr_until" type="date" value="${addDays(s.to, 7)}"></div>
         <div style="display:flex;align-items:flex-end"><button class="btn" style="width:100%" onclick="seriesExtend()">Agregar días</button></div>
-      </div>
-      <div class="mrow" style="margin-top:8px">
-        <div><label for="sr_trim">Borrar pendientes desde</label><input id="sr_trim" type="date" value="${todayISO()}"></div>
-        <div style="display:flex;align-items:flex-end"><button class="btn danger" style="width:100%" onclick="seriesTrim()">Recortar</button></div>
-      </div></div>`;
+      </div>`;
+  } else {
+    h += `<details class="srmore" open><summary>Opciones</summary>`;
   }
-  h += `<div class="card" style="margin:12px 0"><h3>Toda la serie</h3>
-    <label for="sr_title">Renombrar</label><input id="sr_title" value="${escA(s.title)}">
+  h += `<label for="sr_title">Renombrar</label><input id="sr_title" value="${escA(s.title)}">
     <label for="sr_link">Materia / proyecto</label><select id="sr_link">${linkOptions(s.subjectId ? "s:" + s.subjectId : s.projectId ? "p:" + s.projectId : "")}</select>
     <div class="mrow" style="margin-top:10px">
-      <div><label for="sr_prio">Prioridad</label><select id="sr_prio">${PRIO.map((p, i) => `<option value="${i}">${p}</option>`).join("")}</select></div>
-      <div style="display:flex;align-items:flex-end"><button class="btn primary" style="width:100%" onclick="seriesApplyMeta()">Guardar cambios</button></div>
-    </div></div>`;
+      <div><label for="sr_prio">Prioridad</label><select id="sr_prio">${PRIO.map((p, i) => `<option value="${i}"${(s.tasks[0].prio ?? 1) === i ? " selected" : ""}>${p}</option>`).join("")}</select></div>
+      <div style="display:flex;align-items:flex-end"><button class="btn" style="width:100%" onclick="seriesApplyMeta()">Guardar nombre y materia</button></div>
+    </div></details>`;
   h += `<div class="mfoot">
-    <button class="btn danger" onclick="seriesDelete(false)">Eliminar pendientes</button>
     <button class="btn danger" onclick="seriesDelete(true)">Eliminar toda la serie</button>
     <div class="grow"></div>
-    <button class="btn" onclick="closeModal()">Cerrar</button></div>`;
-  openModal(h, true);
+    <button class="btn" onclick="closeModal()">Listo</button></div>`;
+  return h;
 }
-function seriesApplyTime() {
+function srToggle(id, on) { if (on) ui.srSel.add(id); else ui.srSel.delete(id); srPreview(); }
+function srSelect(which) {
   const s = seriesByKey(ui.seriesKey); if (!s) return;
-  const op = byId("sr_op").value, val = parseFloat(byId("sr_val").value) || 0;
-  const scope = byId("sr_scope").value, lastN = Math.max(1, parseInt(byId("sr_lastn").value) || 1);
-  let targets = scope === "all" ? s.tasks : s.pend;
-  if (scope === "last") targets = s.pend.slice(-lastN);
-  if (!targets.length) { toast("No hay tareas para cambiar"); return; }
-  targets.forEach(t => {
-    const cur = t.estMin || 0;
-    t.estMin = Math.max(0, Math.round(op === "set" ? val : op === "add" ? cur + val : op === "sub" ? cur - val : cur * val));
+  ui.srSel = new Set(which === "all" ? s.tasks.map(t => t.id) : which === "pend" ? s.pend.map(t => t.id) : []);
+  document.querySelectorAll("#sr_occ .occ").forEach(l => { l.querySelector("input").checked = ui.srSel.has(l.dataset.id); });
+  srPreview();
+}
+function srSetVal(id, v) { const el = byId(id); if (!el) return; el.value = v; el.dispatchEvent(new Event("input")); }
+/* Calcula qué va a pasar con la selección actual, sin tocar nada. */
+function srPlan() {
+  const s = seriesByKey(ui.seriesKey); if (!s || s.kind === "recur") return null;
+  const act = ui.srAct, targets = s.tasks.filter(t => ui.srSel.has(t.id));
+  const n = targets.length, nn = n + " tarea" + (n === 1 ? "" : "s");
+  if (!n) return { error: "Elegí al menos una tarea de la lista." };
+  const min = Math.round(parseFloat(ui.srMin)), days = parseInt(ui.srDays, 10);
+  if (["add", "sub", "set"].includes(act) && !(min >= 0)) return { error: "Poné cuántos minutos." };
+  if (["add", "sub"].includes(act) && min === 0) return { error: "Poné cuántos minutos." };
+  if (act === "move" && !days) return { error: "Poné cuántos días (por ejemplo 2 o −1)." };
+  if (act === "time" && ui.srTime && hmToMin(ui.srTime) == null) return { error: "La hora no es válida." };
+  const changes = targets.map(t => {
+    const c = { t, from: "", to: "" };
+    if (act === "add" || act === "sub" || act === "set") {
+      const v = act === "set" ? min : Math.max(0, (t.estMin || 0) + (act === "add" ? min : -min));
+      c.from = fmtMin(t.estMin); c.to = fmtMin(v); c.apply = () => { t.estMin = v; };
+    } else if (act === "move") {
+      const d = addDays(t.date, days);
+      c.from = fmtD(t.date); c.to = fmtD(d); c.apply = () => { t.date = d; };
+    } else if (act === "time") {
+      const v = ui.srTime || null;
+      c.from = t.time || "sin hora"; c.to = v || "sin hora"; c.apply = () => { t.time = v; };
+    } else { c.from = fmtD(t.date); }
+    return c;
   });
-  change(); closeModal(); render();
-  toast("Tiempo actualizado en " + targets.length + " día" + (targets.length > 1 ? "s" : "") + " de la serie");
+  const what = act === "add" ? `sumar ${fmtMin(min)} a ${nn}` : act === "sub" ? `restar ${fmtMin(min)} a ${nn}`
+    : act === "set" ? `dejar ${nn} en ${fmtMin(min)}` : act === "move" ? `mover ${nn} ${Math.abs(days)} día${Math.abs(days) === 1 ? "" : "s"} ${days > 0 ? "más tarde" : "antes"}`
+    : act === "time" ? (ui.srTime ? `poner ${nn} a las ${ui.srTime}` : `sacarle la hora a ${nn}`) : `borrar ${nn}`;
+  const btn = act === "add" ? `Sumar ${fmtMin(min)}` : act === "sub" ? `Restar ${fmtMin(min)}` : act === "set" ? `Fijar en ${fmtMin(min)}`
+    : act === "move" ? "Mover" : act === "time" ? "Cambiar hora" : "Borrar";
+  const past = act === "add" ? `Sumaste ${fmtMin(min)} a ${nn}` : act === "sub" ? `Restaste ${fmtMin(min)} a ${nn}`
+    : act === "set" ? `${n === 1 ? "Quedó" : "Quedaron"} ${nn} en ${fmtMin(min)}` : act === "move" ? `${n === 1 ? "Movida" : "Movidas"} ${nn}`
+    : act === "time" ? `Hora cambiada en ${nn}` : `${n === 1 ? "Borrada" : "Borradas"} ${nn}`;
+  return { s, act, targets, changes, what, past, btn: btn + (act === "move" || act === "del" ? " " : " a ") + nn, n };
+}
+function srPreview() {
+  const pv = byId("sr_preview"), btn = byId("sr_apply"); if (!pv) return;
+  const act = ui.srAct, show = (id, on) => { const el = byId(id); if (el) el.style.display = on ? "" : "none"; };
+  const isMin = ["add", "sub", "set"].includes(act);
+  show("sr_minwrap", isMin); show("sr_minchips", isMin);
+  show("sr_dayswrap", act === "move"); show("sr_dayschips", act === "move");
+  show("sr_timewrap", act === "time");
+  const cnt = byId("sr_count"); if (cnt) cnt.textContent = ui.srSel.size + (ui.srSel.size === 1 ? " elegida" : " elegidas");
+  document.querySelectorAll("#sr_occ .occ").forEach(l => l.classList.toggle("on", ui.srSel.has(l.dataset.id)));
+  const p = srPlan(); if (!p) return;
+  pv.classList.toggle("bad", !!p.error);
+  btn.disabled = !!p.error;
+  btn.classList.toggle("danger", !p.error && p.act === "del");
+  btn.classList.toggle("primary", !!p.error || p.act !== "del");
+  if (p.error) { pv.textContent = p.error; btn.textContent = "Aplicar"; return; }
+  const list = p.changes.slice(0, 8).map(c => `<span class="repdate">${p.act === "move" || p.act === "del" ? "" : fmtD(c.t.date) + ": "}${esc(c.from)}${p.act === "del" ? "" : " → <b>" + esc(c.to) + "</b>"}</span>`).join("")
+    + (p.changes.length > 8 ? `<span class="repdate more">y ${p.changes.length - 8} más</span>` : "");
+  pv.innerHTML = `<b>Vas a ${esc(p.what)}</b>${p.act === "del" ? " (podés deshacer)" : ""}: <div class="repdates">${list}</div>`;
+  btn.textContent = p.btn;
+}
+function seriesBulkApply() {
+  const p = srPlan(); if (!p || p.error) { if (p) toast(p.error); return; }
+  let undo;
+  if (p.act === "del") {
+    const snap = p.targets.map(t => ({ t, i: state.tasks.indexOf(t) })).filter(x => x.i >= 0).sort((a, b) => b.i - a.i);
+    snap.forEach(x => state.tasks.splice(x.i, 1));
+    undo = () => { [...snap].reverse().forEach(x => state.tasks.splice(Math.min(x.i, state.tasks.length), 0, x.t)); };
+  } else {
+    const snap = p.targets.map(t => ({ t, estMin: t.estMin, date: t.date, time: t.time }));
+    p.changes.forEach(c => c.apply());
+    undo = () => { snap.forEach(x => { x.t.estMin = x.estMin; x.t.date = x.date; x.t.time = x.time; }); };
+  }
+  change(); render(); refreshSeriesModal();
+  toast(p.past, () => { undo(); change(); render(); refreshSeriesModal(); });
 }
 function seriesExtend() {
   const s = seriesByKey(ui.seriesKey); if (!s || s.kind === "recur") return;
@@ -1771,19 +1870,6 @@ function seriesExtend() {
   }
   closeModal(); render();
   toast(n + " días agregados hasta el " + fmtD(until), () => { state.tasks = state.tasks.filter(t => !ids.includes(t.id)); change(); render(); });
-}
-function seriesTrim() {
-  const s = seriesByKey(ui.seriesKey); if (!s || s.kind === "recur") return;
-  const from = byId("sr_trim").value;
-  if (!from) { toast("Elegí una fecha"); return; }
-  const victims = s.pend.filter(t => t.date >= from);
-  if (!victims.length) { toast("No hay tareas pendientes desde esa fecha"); return; }
-  doubleDelete(victims.length + " tareas de la serie desde el " + fmtD(from), () => {
-    const snap = victims.map(t => ({ t, i: state.tasks.indexOf(t) })).filter(x => x.i >= 0).sort((a, b) => b.i - a.i);
-    snap.forEach(x => state.tasks.splice(x.i, 1));
-    change(); closeModal(); render();
-    toast(snap.length + " tareas eliminadas", () => { [...snap].reverse().forEach(x => state.tasks.splice(Math.min(x.i, state.tasks.length), 0, x.t)); change(); render(); });
-  });
 }
 function seriesApplyMeta() {
   const s = seriesByKey(ui.seriesKey); if (!s) return;
@@ -3541,12 +3627,13 @@ function resetApp() {
   });
 }
 /* ============================ MODALES ============================ */
-function openModal(html, wide) {
+function openModal(html, wide, noFocus) {
   const bg = byId("modalbg"), box = byId("modalbox");
   box.className = "modal" + (wide ? " wide" : "");
   box.innerHTML = html;
   bg.classList.add("open");
-  const f = box.querySelector("input,select,textarea,button");
+  // noFocus: cuando lo primero es una lista para elegir, enfocar un botón confunde ("¿está elegido Todas?")
+  const f = noFocus ? null : box.querySelector("input,select,textarea,button");
   if (f) setTimeout(() => f.focus(), 30);
 }
 function closeModal() { byId("modalbg").classList.remove("open"); }

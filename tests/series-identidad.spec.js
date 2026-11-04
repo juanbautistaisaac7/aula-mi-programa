@@ -44,6 +44,7 @@ test("extender una serie suma días a la misma serie; duplicar una ocurrencia no
   });
   const key = await page.evaluate(() => buildSeries()[0].key);
   await page.evaluate(k => openSeriesModal(k), key);
+  await page.locator(".srmore summary").click(); // (C2a) extender quedó en "Más opciones"
   await page.fill("#sr_until", "2026-11-08");
   await page.getByRole("button", { name: "Agregar días" }).click();
   expect(await seriesTitles(page)).toEqual(["Leer:4"]);

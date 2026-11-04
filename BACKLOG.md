@@ -93,7 +93,7 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
   - Tests de cada patrón y del preview (fechas exactas, con reloj simulado).
 
 - [ ] **C2 · Editar una serie con flexibilidad total** (depende de C1) *(partido en C2a y C2b por el agente: es grande para una corrida)*
-  - [ ] **C2a** · Lista de todas las ocurrencias (fecha, minutos, estado) con selección (varias / todas / todas las pendientes) y acciones masivas: sumar/restar/fijar tiempo, mover ±N días, cambiar hora, borrar. Vista previa antes de aplicar ("Vas a sumar 1 h 30 a 5 tareas") y deshacer. Test del caso exacto de Bauti.
+  - [x] **C2a** · Lista de todas las ocurrencias (fecha, minutos, estado) con selección (varias / todas / todas las pendientes) y acciones masivas: sumar/restar/fijar tiempo, mover ±N días, cambiar hora, borrar. Vista previa antes de aplicar ("Vas a sumar 1 h 30 a 5 tareas") y deshacer. Test del caso exacto de Bauti.
   - [ ] **C2b** · Editar una sola ocurrencia en la lista (+10 min sin tocar el resto), agregar ocurrencias (siguiendo el patrón o una fecha suelta) y quitar puntuales. Tests de extender, quitar, mover y borrar en desktop y mobile.
   Listo cuando:
   - El editor de serie muestra **todas las ocurrencias** en una lista o línea de tiempo visual (fecha, minutos, estado).

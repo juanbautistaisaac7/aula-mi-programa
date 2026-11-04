@@ -6,6 +6,29 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
+## Corrida 06:06–… (hora ARG) — C2a, …
+
+### C2a · Editor de serie: lista de ocurrencias y cambios masivos
+
+**Plan:** reemplazar el modal "Gestionar" (que tenía un formulario de "Operación / Minutos / Aplicar a / Cuántas son las últimas" a ciegas) por lo que hace el Recordatorios del iPhone: ver **todas** las tareas de la serie, tildar las que querés y decir qué hacer, viendo antes qué va a pasar.
+
+**Decisiones:**
+- **Lista arriba, acción abajo.** Cada fila: casilla, fecha (y hora si tiene), estado (✓ hecha / hoy / atrasada) y minutos. Se toca la fila entera (46 px de alto), no solo el cuadradito.
+- **Selección:** Todas / Pendientes / Ninguna, o a mano. **Al abrir quedan elegidas las pendientes**, que es lo que casi siempre querés cambiar; las hechas solo se tocan si las elegís.
+- **Acciones:** Sumar tiempo, Restar tiempo, Fijar tiempo, Mover de día (±N, con atajos −7, −1, +1, +2, +3, +7), Cambiar hora (vacía = sin hora) y Borrar. Para minutos hay atajos 10 m / 30 m / 1 h / 1 h 30 m / 2 h.
+- **Vista previa siempre visible** ("Vas a sumar 1 h 30 m a 5 tareas: mar 10 nov: 1 h → 2 h 30 m …") y el botón dice exactamente lo que hace ("Sumar 1 h 30 m a 5 tareas"). Si no elegiste nada, el botón se apaga y te lo dice.
+- **El editor queda abierto después de aplicar**, con los minutos ya actualizados, para encadenar tu caso: +1 h 30 a todas y después +10 min a una. Cada cambio tiene **Deshacer** en el aviso, y el deshacer también actualiza la lista.
+- **Borrar no pide la doble confirmación** de siempre: ya ves en la vista previa qué se borra, el botón se pone rojo y hay deshacer. "Eliminar toda la serie" sí sigue con la doble confirmación.
+- Saqué "Recortar desde una fecha" y el viejo "Tiempo por día" (quedaron reemplazados por elegir + Borrar / Sumar). Renombrar, materia, prioridad y "Extender hasta" quedaron en **"Más opciones"** (plegado), para que la pantalla tenga una sola tarea obvia. Extender bien hecho (siguiendo el patrón) es C2b.
+- Restar nunca deja minutos negativos (queda en 0).
+- Sin cambios de forma de datos: solo cambian `estMin`, `date` y `time`. No hace falta migración.
+
+**Salió bien:** los tests nuevos pasaron a la primera.
+**Salió mal / intentos fallidos:** en las capturas vi dos cosas: (1) el modal enfocaba solo el primer botón, y "Todas" aparecía con el anillo azul como si estuviera elegido: ahora este modal no enfoca nada al abrir (`openModal` acepta `noFocus`); (2) el botón decía "Mover a 1 tarea" / "Borrar a 1 tarea": corregido a "Mover 1 tarea". También las casillas en tema oscuro eran blancas: ahora usan el esquema oscuro.
+**Tests:** +5 (`tests/series-editar.spec.js`, 9 corridas entre desktop y mobile): tu caso exacto creando la serie con el control Repetir real (5 cada 3 días → +1 h 30 → +10 min a la del jue 16 → [150, 150, 160, 150, 150], también después de recargar); fijar y deshacer, restar sin negativos; mover ±N, cambiar hora y borrar con deshacer (la serie mantiene su `seriesId`); Todas vs Pendientes con una hecha; en el celu filas ≥ 44 px y nada se sale del ancho. Actualicé `series-identidad` ("extender una serie…") para que abra "Más opciones" antes de usar "Extender hasta"; lo que verifica no cambió. `npm test`: 149 pasaron, 0 fallaron.
+**Capturas:** [editor (mobile claro)](capturas/C2a-editor-mobile-light.png) · [mover una (mobile oscuro)](capturas/C2a-mover-mobile-dark.png) · [desktop oscuro](capturas/C2a-editor-desktop-dark.png) · [mover (desktop claro)](capturas/C2a-mover-desktop-light.png)
+**Para Bauti:** Series y repeticiones → Gestionar. Probá: dejá las pendientes, Sumar 1 h 30 m, aplicar; después "Ninguna", tocá una fila, 10 m, aplicar.
+
 ## Corrida 05:05–05:42 (hora ARG) — B4, B5, C1
 
 **Resumen de la corrida:** 3 ítems cerrados (B4 mover tareas de día, B5 lista que se limpia sola, C1 Repetir con vista previa). Tests: de 100 a 140, todos en verde en cada commit. Versión: 2.16.0 → 2.19.1. Sin cambios de esquema de datos (no hizo falta migrar nada). Al final corregí un texto viejo de "Series y repeticiones" que todavía hablaba de "Todos los días (período)", que ya no existe (2.19.1). Partí **C2** en C2a y C2b en el backlog: es el ítem más delicado (lo que más te frustra) y no quería empezarlo con 15 minutos y dejarlo a medias; la próxima corrida arranca C2a de cero.
