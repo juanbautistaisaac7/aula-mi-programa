@@ -6,6 +6,61 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
+## Corrida 07:06–07:28 (hora ARG) — D1b, D2a, D2b, X3
+
+**Resumen de la corrida:** terminé el **calendario en desktop** (D1b, cierra D1), reemplacé las estadísticas por una vista **Progreso** con 5 preguntas reales (D2a), recorté "Estadísticas detalladas" a lo que sirve (D2b, cierra D2) y compacté el **detalle del parcial** (X3). Partí **E1** (notificaciones) en E1a/E1b/E1c para que la próxima corrida arranque derecho. Tests: de 174 a 190, todos en verde en cada commit. Versión: 2.23.0 → 2.27.0. Sin cambios de forma de datos (no hizo falta migrar). El push falló dos veces con "Internal Server Error" de GitHub (igual que en la corrida anterior); reintenté con espera y anduvo.
+
+**Commits:** `8a6f9ae` D1b · `fe787f0` D2a · `694c565` D2b · `59c67fa` X3 · el de cierre.
+
+### D1b · Calendario en desktop
+
+**Plan:** mirar la captura "antes" con ojo de diseñador y arreglar lo que pedía el ítem: horas ilegibles ("1.8 h"), crear desde la celda, parciales poco marcados, desbordes.
+**Decisiones:**
+- **Horas:** "1 h 50 m", "20 m" (mismo formato que el resto de la app) en vez de decimales.
+- **Crear desde la celda:** al pasar el mouse aparece un **+** azul arriba a la derecha (también con el teclado, por foco) que abre "Nueva tarea" con ese día, sin pasar por el resumen. Elegí hover porque en desktop hay mouse; en el celu ya está "+ Tarea para el …" de D1a. El clic en el resto de la celda sigue abriendo el resumen.
+- **Parciales:** el día con parcial tiene una franja roja arriba y el número en rojo; el parcial va primero, con barrita roja a la izquierda y su hora.
+- **Desbordes:** cada celda muestra como mucho 3 renglones (parciales primero, hasta 2) y "+N más" (que cuenta también parciales escondidos) junto con los hábitos en un solo renglón. Todas las filas miden lo mismo (`1fr`), columnas `minmax(0,1fr)` para que un título largo no ensanche la columna. Hoy: número en círculo azul, como el Calendario de macOS.
+**Salió mal / intentos fallidos:** la primera versión hacía las filas más altas y el mes ya no entraba en 800 px; junté "+N más" y hábitos en un renglón y bajé el alto mínimo.
+**Tests:** +4 desktop (`tests/calendario.spec.js`): horas sin decimales; + crea en el día sin abrir el resumen y está oculto si no pasás por encima; día con parcial marcado y parcial primero con hora; día con 11 tareas y 2 parciales no desborda, la fila no se estira y "+10 más" abre el resumen.
+**Capturas:** [antes (desktop claro)](capturas/D1b-antes-desktop-light.png) · [después (desktop claro)](capturas/D1b-calendar-desktop-light.png) · [después (desktop oscuro)](capturas/D1b-calendar-desktop-dark.png) · [el + al pasar el mouse](capturas/D1b-hover-desktop-dark.png)
+
+### D2a · Progreso: gráficos que responden algo
+
+**Plan:** dijiste que los gráficos "no te sirven para nada". En vez de retocarlos, armé una vista nueva con **una pregunta por tarjeta**, un número grande y una barra simple (estilo Salud/Fitness).
+**Decisiones (qué pregunta responde cada una):**
+1. **¿Cuánto estudié esta semana?** Total de la semana y comparación con **la semana pasada a esta misma altura** (comparar un miércoles contra una semana entera siempre da "menos" y desanima). Barras L M X J V S D (X para miércoles, como en iOS en español); los días que faltan, apagados.
+2. **¿Voy al día?** Tareas atrasadas y cuánto trabajo suman, botón "Ver atrasadas" (va a Hoy, donde se resuelven) y "Tareas hechas esta semana: 5 de 12".
+3. **¿Llego a los parciales?** Los próximos 4 con los días que faltan grandes (en rojo si es esta semana), preparación con barra de color y tiempo estudiado.
+4. **¿A qué le dedico tiempo?** Últimos 14 días por materia, ordenadas por el parcial más cercano; si un parcial está a ≤14 días y le diste menos de 2 h, avisa "le estás dando poco".
+5. **¿Soy constante?** Racha de días seguidos y 28 puntitos (4 semanas).
+- En el menú "Estadísticas" pasó a llamarse **Progreso**. Lo viejo no se borró: queda en "Estadísticas detalladas, informe y CSV ›" al pie.
+- El tiempo estudiado sale de las sesiones registradas (lo mismo que usaba la vista vieja).
+**Salió mal / intentos fallidos:** las barras de preparación no se veían (la clase `.pbar` tiene `flex:1` y dentro de una columna flex quedaba con alto 0); y la primera fila de cada lista tenía una línea de más arriba. Los vi en las capturas y los arreglé.
+**Tests:** +3 (×2) en `tests/progreso.spec.js`: números exactos con el fixture (75 m vs 90 m, racha 2, 3 días activos, parciales a 8/14/21 días, minutos por materia) y que se muestran; estado vacío sin errores y sin scroll horizontal; atrasadas cuenta y lleva a Hoy.
+**Capturas:** [desktop claro](capturas/D2a-stats-desktop-light.png) · [desktop oscuro](capturas/D2a-stats-desktop-dark.png) · [celu claro](capturas/D2a-stats-mobile-light.png) · [celu oscuro](capturas/D2a-stats-mobile-dark.png)
+
+### D2b · Estadísticas detalladas, más cortas
+
+**Decisión:** saqué lo que no responde nada o repetía Progreso: 8 de las 12 tarjetas de números (mediana, promedios, sesiones…), la dona (repetía "horas por materia"), "¿De dónde vienen las horas?" (hablaba del temporizador que ya no existe), "Tareas del período", "Qué tipo de trabajo hiciste", "Cumplimiento de hábitos" (está en Hábitos) y la tabla por materia. Quedan: 4 números, evolución, horas por materia, día de la semana y hora del día, precisión de estimaciones, notas, mapa de actividad y conclusiones. **El informe descargable (póster) y el CSV se quedan**: no molestan, están escondidos un nivel más abajo y sirven para compartir. Solo se tocó la vista; los cálculos siguen (los usa el póster).
+**Salió mal:** honestamente, este test lo escribí después de recortar (pasó a la primera), no antes como dice el manual.
+**Tests:** +1 (×2). **Capturas:** [desktop claro](capturas/D2b-detalle-desktop-light.png)
+
+### X3 · Detalle del parcial compacto
+
+**Plan:** antes había 6 tarjetas grandes de números y las tareas quedaban varias pantallas abajo en el celu.
+**Decisiones:** una tarjeta arriba con **los días que faltan bien grandes** (con fecha y hora) y la **preparación** con su barra de color; abajo una sola fila con estudiado · temas · tareas (con atrasadas) · simulacros, y una línea con lo pendiente estimado. Si ya pasó, lo dice; si es hoy, "Hoy" en rojo.
+**Tests:** +2 (×2) en `tests/parcial-detalle.spec.js` (número grande y preparación correctos, 4 datos en una fila, en el celu todo entra en la primera pantalla, parcial pasado). Actualicé una línea de `tests/vinculos.spec.js` que leía "1/2" de la tarjeta vieja "tareas del plan": ahora lo lee de la fila compacta (mismo dato, otro lugar).
+**Capturas:** [antes (celu claro)](capturas/B3-eval-e-pe2-mobile-light.png) · [después (celu claro)](capturas/X3-eval-e-pe2-mobile-light.png) · [después (desktop oscuro)](capturas/X3-eval-e-pe2-desktop-dark.png)
+
+**Tests de la corrida:** `npm test` final: 190 pasaron, 0 fallaron (16 saltados a propósito: son de un solo proyecto, desktop o mobile).
+
+**Para Bauti:**
+- Abrí **Progreso** en el celu y decime si las 5 preguntas son las que te hacés. El umbral de "le estás dando poco" (menos de 2 h en 14 días con parcial a 2 semanas) es arbitrario: es un número fácil de cambiar.
+- En el calendario de la compu pasá el mouse por un día y tocá el +.
+- Visto en las capturas y anotado para F1: en el celu, el encabezado del detalle del parcial parte los botones en dos renglones y "Tareas y plan de estudio" queda apretado con 3 botones.
+
+---
+
 ## Corrida 06:06–06:39 (hora ARG) — C2a, C2b, C3, X4, D1a
 
 **Resumen de la corrida:** se terminó todo el bloque **C (series y repeticiones)**, que era lo que más te frustraba, más el calendario en el celu. 5 ítems cerrados: C2a (editor de serie con lista, selección y cambios masivos con vista previa), C2b (editar una sola, agregar siguiendo el patrón, quitar), C3 ("3 de 5" y la pregunta "¿solo esta / siguientes / todas?"), X4 (pulido que encontré en las capturas) y D1a (calendario estilo iOS en el celu; antes se salía de la pantalla). Partí **D1** en D1a/D1b: D1b (desktop) queda para la próxima corrida. Tests: de 140 a 174, todos en verde en cada commit. Versión: 2.19.1 → 2.23.0. Sin cambios de forma de datos (no hizo falta migrar). Un push falló una vez con "Internal Server Error" de GitHub; reintenté y anduvo.

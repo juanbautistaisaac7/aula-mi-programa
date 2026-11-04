@@ -128,7 +128,10 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
 
 ## E. Notificaciones al celular
 
-- [ ] **E1 · Recordatorios que llegan al celu**
+- [ ] **E1 · Recordatorios que llegan al celu** *(partido en E1a–E1c por el agente, corrida 07:05: es grande y toca el modelo)*
+  - [ ] **E1a** · Modelo + migración: `reminders: [{amount, unit: "min"|"h"|"d"}]` en tareas con fecha y hora y en parciales; defaults en `settings.reminderDefaults` (parciales: 7 d y 1 d). Paso de migración con copia previa (A1) y test de que el fixture sobrevive. UI en el editor de tarea y de parcial ("Avisarme: 30 min antes · + agregar").
+  - [ ] **E1b** · ntfy: Configuración paso a paso (instalar ntfy, tema al azar, "mandar notificación de prueba", "mensaje genérico" por privacidad). Programar con header `At` lo que entra en la ventana de antelación; reprogramar al abrir la app; si se edita/borra la tarea, ignorar al disparar (documentar). Tests con `page.route` (nunca ntfy.sh real).
+  - [ ] **E1c** · Respaldo local (`checkReminders` con la app abierta) usando los mismos `reminders`, y bitácora con por qué WhatsApp/mail necesitan servidor.
   Pedido: *"alguna forma de ver desde el celu o mandar una notificación"* y *"a las tareas/eventos que se les pueda poner hora, que permita mandar una notificación a mi celular lo más simple que se pueda, si es por wsp mejor, sino bueno mail está bien, y que se pueda acomodar para que diga tantos minutos o días antes de esa hora y también que se pueda hacer lo mismo para eventos o tareas o parciales más que nada con fecha"*.
   Contexto técnico: la app no tiene servidor y los datos viven en el celular. WhatsApp o mail necesitan un servidor que mande el mensaje a la hora indicada.
   Propuesta a investigar y decidir (documentar todo):
