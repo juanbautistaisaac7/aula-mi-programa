@@ -1,0 +1,13 @@
+{
+  "name": "aula",
+  "private": true,
+  "version": "2.6.0",
+  "description": "Aula — organizador académico personal (PWA vanilla JS)",
+  "scripts": {
+    "serve": "node tests/serve.mjs",
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0"
+  }
+}
