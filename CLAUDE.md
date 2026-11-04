@@ -13,11 +13,11 @@ No hay nadie para responder preguntas. **No pidas confirmación nunca.** Tomá l
 
 ## Reglas que no se rompen
 
-1. **Los datos de Bauti son sagrados.** Tiene meses de datos reales en su celular. Cualquier cambio en la forma de `state` necesita una migración que convierta datos viejos sin perder nada, y un test que cargue un estado "viejo" y verifique que sobrevive. Nunca borres campos ni datos existentes: si algo deja de usarse (por ejemplo, los pomodoros), dejá de mostrarlo pero no borres lo guardado.
+1. **Los datos de Bauti son sagrados.** Tiene meses de datos reales en su celular. **Antes de migrar, la app tiene que guardar automáticamente una copia del estado viejo** en el store `backups` (con fecha y versión), para que se pueda volver atrás desde "Copias de seguridad". Cualquier cambio en la forma de `state` necesita una migración que convierta datos viejos sin perder nada, y un test que cargue un estado "viejo" y verifique que sobrevive. Nunca borres campos ni datos existentes: si algo deja de usarse (por ejemplo, los pomodoros), dejá de mostrarlo pero no borres lo guardado.
 2. **Todo pasa por tests.** `npm test` tiene que dar verde antes de cada commit. Cada mejora agrega sus propios tests en `tests/` (Playwright; mirá `tests/helpers.js` y `tests/smoke.spec.js`). Probá en desktop **y** mobile (ya están los dos proyectos). Si un test viejo se rompe porque cambió la interfaz a propósito, actualizalo y explicalo en la bitácora; nunca lo borres ni lo saltees para que pase.
 3. **Verificá visualmente.** Para cada cambio visible sacá screenshots con Playwright (desktop y mobile, tema claro y oscuro) y miralos con la herramienta Read antes de dar el ítem por terminado. Guardalos en `docs/capturas/<id-del-item>-*.png` y commitealos: Bauti los va a ver a la mañana.
 4. **Cero errores de consola.** Los tests de humo ya lo chequean; mantenelo.
-5. **Rama `agente/mejoras` solamente.** Nunca toques `main`, nunca hagas force-push.
+5. **Trabajá en la rama `agente/mejoras`.** Nunca hagas force-push. `main` se toca **una sola vez**, en la última corrida (ver más abajo).
 6. **Al cambiar código de la app**, subí `APP_VERSION` en `app.js` (versión menor por ítem, por ejemplo 2.7.0, 2.8.0...) y `CACHE_VERSION` en `sw.js` con el mismo número. Si no, el celular de Bauti sigue mostrando la versión vieja.
 7. **Sin secretos ni datos personales** en el repo.
 
@@ -25,6 +25,7 @@ No hay nadie para responder preguntas. **No pidas confirmación nunca.** Tomá l
 
 Cada corrida es una sesión nueva sin memoria de las anteriores. **La memoria son los archivos**: `BACKLOG.md` (qué falta), `docs/BITACORA.md` (qué pasó) y el historial de git.
 
+0. **¿Ya está terminado?** Si existe `.agente/TERMINADO`, no hagas nada más: terminá enseguida sin gastar recursos.
 1. **Preparar:**
    ```bash
    git clone https://github.com/juanbautistaisaac7/aula-mi-programa aula && cd aula
@@ -45,7 +46,7 @@ Cada corrida es una sesión nueva sin memoria de las anteriores. **La memoria so
 8. **Si te trabás:** después de unos 3 intentos serios sin éxito, revertí lo que no anda (no dejes la app rota), marcá el ítem `[!]` con una nota corta de por qué, anotalo en la bitácora y seguí con otro. Si un ítem es demasiado grande para una corrida, partilo en sub-ítems en el backlog, hacé el primero y dejá el resto `[ ]`.
 9. **Salir:** borrá `.agente/LOCK`, commiteá y pusheá. Nunca termines con tests en rojo en la rama.
 
-**Si el backlog está vacío (o solo quedan `[!]`), no pares: hacé una pasada de calidad.** Usá la app como Bauti desde el celular (Playwright mobile): creá materias, parciales y tareas, armá una serie, mové tareas, completalas tarde a la noche, etc. Buscá bugs, fricciones, cosas feas o confusas, casos borde sin test. Anotá lo que encuentres como ítems nuevos y arreglalos. Repetí hasta que no encuentres nada que valga la pena; recién ahí cerrá.
+**Si el backlog está vacío (o solo quedan `[!]`), no pares: hacé una pasada de calidad.** Usá la app como Bauti desde el celular (Playwright mobile): creá materias, parciales y tareas, armá una serie, mové tareas, completalas tarde a la noche, etc. Buscá bugs, fricciones, cosas feas o confusas, casos borde sin test. Anotá lo que encuentres como ítems nuevos y arreglalos. Repetí hasta que no encuentres nada que valga la pena. **Si la app ya está realmente terminada** (backlog completo y la pasada de calidad no encuentra nada importante), no inventes trabajo: hacé el cierre de la noche (sección "Última corrida") aunque sea temprano, creá `.agente/TERMINADO` con el motivo, commiteá y pusheá. Las corridas siguientes van a salir enseguida.
 
 Podés agregar ítems nuevos al backlog si encontrás algo necesario (bugs, mejoras de UX, deuda técnica que frena). Ponelos en la sección "Agregados por el agente" con su porqué. No te desvíes a cosas cosméticas menores mientras queden pendientes ítems importantes.
 
@@ -68,15 +69,28 @@ Bauti la va a leer a la mañana para entender qué pasó y para aprender cómo t
 
 Usá horas reales (`TZ=America/Argentina/Buenos_Aires date +%H:%M`). Las entradas nuevas van **arriba** del todo, debajo del encabezado.
 
-## Última corrida de la noche
+## Última corrida de la noche (o cuando la app esté terminada)
 
-Si al arrancar ya son las **09:00 o más** (hora ARG), además de lo normal, escribí `docs/RESUMEN-NOCHE.md`, que es lo primero que Bauti va a abrir:
+Si al arrancar ya son las **08:00 o más** (hora ARG), esta es la última corrida. Trabajá como siempre, pero reservá los últimos 15 minutos para el cierre:
+
+1. **Publicar en `main`** para que Bauti tenga la app nueva al levantarse. Solo si `npm test` da todo verde en `agente/mejoras`:
+   ```bash
+   git fetch origin main
+   git tag antes-del-agente origin/main && git push origin antes-del-agente   # punto de vuelta atrás
+   git checkout main && git pull origin main
+   git merge --no-ff agente/mejoras -m "Mejoras de la noche (agente)"
+   npm test   # tiene que seguir verde
+   git push origin main
+   ```
+   Si algo falla o hay tests en rojo, **no** mergees: dejá todo en la rama y explicalo en el resumen. Si `.agente/LOCK` está en la rama, borralo antes de mergear.
+2. Escribí `docs/RESUMEN-NOCHE.md`, que es lo primero que Bauti va a abrir (y commitealo en las dos ramas):
 - Qué quedó hecho, en una lista corta y concreta.
 - Qué quedó a medias o bloqueado, y por qué.
 - Cómo probarlo: qué tocar en la app, en qué orden, y qué mirar especialmente en el celular.
-- Cómo pasar los cambios a la app real: revisar la rama y mergear `agente/mejoras` en `main`.
+- Si se publicó en `main` o no, y **cómo volver atrás** si algo no le gusta (tag `antes-del-agente` + la copia automática de datos en "Copias de seguridad").
 - Estadísticas de la noche: corridas, commits y tests al principio vs al final.
 - Las 3 capturas más representativas.
+3. Creá `.agente/TERMINADO` para que no corra nada más.
 
 ## Estándar de diseño
 
