@@ -293,6 +293,27 @@ body.is-dragging,body.is-dragging *{cursor:grabbing!important;user-select:none;-
 .cal .dnum{font-weight:700;font-size:.7rem;color:var(--tx2);margin-bottom:3px}
 .cal .ev{border-radius:5px;padding:1.5px 5px;margin-bottom:2px;font-size:.62rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;cursor:pointer}
 .cal .more{color:var(--tx3);font-size:.6rem;padding-left:4px}
+.cal .cfoot{display:flex;gap:2px;white-space:nowrap;overflow:hidden}
+/* D1b · calendario en desktop: celdas parejas, horas legibles, parciales marcados, + para crear */
+.cal .calplus{display:none}
+@media(min-width:721px){
+  .cal{grid-template-columns:repeat(7,minmax(0,1fr));grid-template-rows:auto repeat(6,1fr)}
+  .cal .day{min-height:92px;min-width:0;overflow:hidden;transition:border-color .15s}
+  .cal .dnum{display:flex;align-items:center;gap:6px;height:22px;margin-bottom:2px}
+  .cal .dn{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;border-radius:11px;padding:0 4px;font-variant-numeric:tabular-nums}
+  .cal .day.today{border-color:var(--acc-line);box-shadow:none}
+  .cal .day.today .dn{background:var(--acc);color:#fff}
+  .cal .dnum .dmin{float:none;margin-left:auto;font-variant-numeric:tabular-nums;transition:opacity .15s}
+  .cal .day.hasev{box-shadow:inset 0 3px 0 var(--bad)}
+  .cal .day.hasev:not(.today) .dn{color:var(--bad)}
+  .cal .ev.exam{background:var(--bad-soft);color:var(--bad);border-left:3px solid var(--bad);border-radius:3px 5px 5px 3px;padding-left:4px}
+  .cal .more{cursor:pointer;font-weight:600}
+  .cal .more:hover{color:var(--acc)}
+  .cal .calplus{display:flex;position:absolute;top:4px;right:4px;width:24px;height:24px;border-radius:12px;border:none;background:var(--acc);color:#fff;font-size:1rem;font-weight:600;line-height:1;align-items:center;justify-content:center;cursor:pointer;opacity:0;transform:scale(.85);transition:opacity .15s,transform .15s}
+  .cal .day:hover .calplus,.cal .calplus:focus-visible{opacity:1;transform:none}
+  .cal .day:hover .dmin{opacity:0}
+}
+@media(min-width:721px) and (prefers-reduced-motion:reduce){.cal .calplus,.cal .dmin,.cal .day{transition:none}}
 /* D1 · calendario en el celu: estilo Calendario de iOS */
 .cal .cdots,.calday{display:none}
 @media(max-width:720px){
@@ -300,7 +321,7 @@ body.is-dragging,body.is-dragging *{cursor:grabbing!important;user-select:none;-
   .cal .day{min-height:52px;border:none;background:none;padding:4px 0;display:flex;flex-direction:column;align-items:center;gap:4px;border-radius:0;box-shadow:none}
   .cal .day.today{box-shadow:none}
   .cal .day:hover{border-color:transparent}
-  .cal .day .ev,.cal .day .more,.cal .dmin{display:none}
+  .cal .day .ev,.cal .day .more,.cal .cfoot,.cal .dmin{display:none}
   .cal .dnum{margin:0;font-size:.95rem;font-weight:500;color:var(--tx)}
   .cal .dn{display:flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:50%;font-variant-numeric:tabular-nums;transition:background-color .15s,color .15s}
   .cal .day.today .dn{color:var(--acc);font-weight:700}

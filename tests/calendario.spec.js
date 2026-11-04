@@ -76,3 +76,73 @@ test("en desktop las celdas muestran las tareas y el clic abre el resumen del d�
   await expect(page.locator("#modalbg")).toHaveClass(/open/);
   expect(errors).toEqual([]);
 });
+
+// D1b · desktop: horas legibles, crear desde la celda, parciales bien marcados, sin desbordes.
+test("en desktop las horas del día se leen como '1 h 15 m' y no como decimales", async ({ page }, info) => {
+  test.skip(info.project.name !== "desktop", "solo desktop");
+  const errors = await openApp(page);
+  await datos(page);
+  await page.evaluate(() => { quickAddTask({ title: "Corta", date: "2026-11-13", estMin: 20 }); change(); render(); });
+  await expect(page.locator('.cal .day[data-date="2026-11-12"] .dmin')).toHaveText("1 h 15 m");
+  await expect(page.locator('.cal .day[data-date="2026-11-13"] .dmin')).toHaveText("20 m");
+  const decimales = await page.locator(".cal .dmin").allTextContents();
+  expect(decimales.filter(t => /\d[.,]\d/.test(t))).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
+test("en desktop se crea una tarea en un día desde la celda, sin pasar por el resumen", async ({ page }, info) => {
+  test.skip(info.project.name !== "desktop", "solo desktop");
+  const errors = await openApp(page);
+  await datos(page);
+  const cell = page.locator('.cal .day[data-date="2026-11-19"]');
+  await cell.hover();
+  const plus = cell.getByRole("button", { name: "Nueva tarea el jue 19 nov" });
+  await expect(plus).toBeVisible();
+  await plus.click();
+  await expect(page.locator("#qt_date")).toHaveValue("2026-11-19");
+  await page.fill("#qt_title", "Desde la celda");
+  await page.press("#qt_title", "Enter");
+  await expect(cell.locator(".ev", { hasText: "Desde la celda" })).toBeVisible();
+  // el botón no se ve si no pasás por encima (no ensucia la grilla)
+  await page.mouse.move(5, 5);
+  await expect(page.locator('.cal .day[data-date="2026-11-20"] .calplus')).toHaveCSS("opacity", "0");
+  expect(errors).toEqual([]);
+});
+
+test("en desktop los días con parcial se distinguen y el parcial va primero con su hora", async ({ page }, info) => {
+  test.skip(info.project.name !== "desktop", "solo desktop");
+  const errors = await openApp(page);
+  await datos(page);
+  const cell = page.locator('.cal .day[data-date="2026-11-12"]');
+  await expect(cell).toHaveClass(/hasev/);
+  await expect(page.locator('.cal .day[data-date="2026-11-13"]')).not.toHaveClass(/hasev/);
+  const first = cell.locator(".ev").first();
+  await expect(first).toHaveClass(/exam/);
+  await expect(first).toContainText("09:00");
+  await expect(first).toContainText("Parcial AM2");
+  await first.click();
+  await expect(page).toHaveURL(/#\/eval\/e-cal/);
+  expect(errors).toEqual([]);
+});
+
+test("en desktop un día con muchas cosas no desborda y '+N más' abre el resumen", async ({ page }, info) => {
+  test.skip(info.project.name !== "desktop", "solo desktop");
+  const errors = await openApp(page);
+  await datos(page);
+  await page.evaluate(() => {
+    for (let i = 1; i <= 9; i++) quickAddTask({ title: "Tarea con un título bastante largo número " + i, date: "2026-11-12", estMin: 30 });
+    state.evals.push({ id: "e-cal2", name: "Final de Análisis Matemático II con nombre largo", date: "2026-11-12", subjectId: null, status: "pend", topics: [] });
+    change(); render();
+  });
+  const cell = page.locator('.cal .day[data-date="2026-11-12"]');
+  const m = await cell.evaluate(el => ({ sw: el.scrollWidth, cw: el.clientWidth, h: el.getBoundingClientRect().height,
+    other: document.querySelector('.cal .day[data-date="2026-11-11"]').getBoundingClientRect().height }));
+  expect(m.sw).toBeLessThanOrEqual(m.cw);
+  expect(m.h).toBeLessThanOrEqual(m.other + 1); // la fila no se estira por un día lleno
+  const more = cell.locator(".more", { hasText: /más/ });
+  await expect(more).toHaveText("+10 más");
+  await more.click();
+  await expect(page.locator("#modalbg")).toHaveClass(/open/);
+  await expect(page.locator("#modalbg")).toContainText("Tarea con un título bastante largo número 9");
+  expect(errors).toEqual([]);
+});

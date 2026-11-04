@@ -109,9 +109,9 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
 
 ## D. Calendario y gráficos
 
-- [ ] **D1 · Acomodar el calendario** *(partido en D1a y D1b por el agente)*
+- [x] **D1 · Acomodar el calendario** *(partido en D1a y D1b por el agente)*
   - [x] **D1a** · Celu estilo iOS: el mes entra en la pantalla (antes se salía: solo se veían lun–mié), puntos de colores por día, día elegido con su lista abajo (parciales y tareas con hora), "+ Tarea para el …", deslizar para cambiar de mes.
-  - [ ] **D1b** · Desktop: horas de cada día legibles ("1.8 h" → "1 h 50 m" o similar), crear una tarea en un día desde la celda (sin pasar por el resumen), marcar mejor los parciales en la celda, revisar desbordes con muchos ítems. Capturas antes/después.
+  - [x] **D1b** · Desktop: horas de cada día legibles ("1.8 h" → "1 h 50 m" o similar), crear una tarea en un día desde la celda (sin pasar por el resumen), marcar mejor los parciales en la celda, revisar desbordes con muchos ítems. Capturas antes/después.
   Pedido: *"acomodar calendario"*.
   Listo cuando: el calendario mensual se lee bien en el celular (estilo Calendario de iOS: puntos de colores por día y la lista del día elegido abajo) y en desktop (tareas y parciales visibles en cada celda, sin desbordes). Se marcan hoy y los parciales. Tocar un día muestra sus tareas con hora. Se puede crear una tarea en ese día. Navegación fluida entre meses (botones + deslizar en el celu). Capturas antes y después en la bitácora.
 

@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.23.0";
+const APP_VERSION = "2.24.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -2324,22 +2324,24 @@ function viewCalendar() {
     const ts = tasksOn(dISO);
     const evs = state.evals.filter(e => e.date === dISO);
     const habs = state.habits.filter(hb => habitDueOn(hb, dISO) && hb.checks && hb.checks[dISO]);
+    // D1b · en desktop entran 3 renglones por celda: parciales primero (hasta 2), después tareas; el resto, "+N más"
     const items = [];
-    for (const e of evs) items.push(`<div class="ev" style="background:var(--bad-soft);color:var(--bad)" onclick="event.stopPropagation();go('eval','${e.id}')" title="${escA(e.name)}">${e.time ? `<b>${esc(fmtTime(e.time))}</b> ` : ""}${esc(e.name)}</div>`);
-    for (const t of ts.slice(0, evs.length ? 2 : 3)) {
+    const evShow = evs.slice(0, 2), tShow = ts.slice(0, Math.max(0, 3 - evShow.length));
+    for (const e of evShow) items.push(`<div class="ev exam" onclick="event.stopPropagation();go('eval','${e.id}')" title="${escA(e.name)}">${e.time ? `<b>${esc(fmtTime(e.time))}</b> ` : ""}${esc(e.name)}</div>`);
+    for (const t of tShow) {
       const o = ownerOf(t);
       items.push(`<div class="ev" style="background:${o ? o.color + "1c" : "var(--card2)"};color:${o ? o.color : "var(--tx2)"};${isDoneOn(t, dISO) ? "text-decoration:line-through;opacity:.6" : ""}" onclick="event.stopPropagation();openTaskEditor('${t.id}')" title="${escA(t.title)}">${t.time ? `<b>${esc(fmtTime(t.time))}</b> ` : ""}${esc(t.title)}</div>`);
     }
-    const moreN = ts.length - (evs.length ? 2 : 3);
-    if (moreN > 0) items.push(`<div class="more">+${moreN} más</div>`);
-    if (habs.length) items.push(`<div class="more" style="color:var(--ok)">${habs.length} hábito${habs.length > 1 ? "s" : ""} ✓</div>`);
+    const moreN = evs.length + ts.length - evShow.length - tShow.length;
+    // "+N más" y los hábitos comparten un renglón para que todas las celdas midan lo mismo
+    if (moreN > 0 || habs.length) items.push(`<div class="cfoot">${moreN > 0 ? `<span class="more" title="Ver todo el ${escA(fmtD(dISO))}">+${moreN} más</span>` : ""}${habs.length ? `<span class="more" style="color:var(--ok)">${habs.length} hábito${habs.length > 1 ? "s" : ""} ✓</span>` : ""}</div>`);
     const dayMin = ts.reduce((a, t) => a + (t.estMin || 0), 0);
     // D1 · en el celu: puntos de colores (parcial en rojo primero, después las tareas por materia)
     const dots = evs.map(() => `<i style="background:var(--bad)"></i>`).concat(ts.map(t => { const o = ownerOf(t); return `<i style="background:${o ? o.color : "var(--tx3)"}${isDoneOn(t, dISO) ? ";opacity:.35" : ""}"></i>`; })).slice(0, 4).join("");
-    h += `<div class="day ${inMonth ? "" : "out"} ${dISO === today ? "today" : ""} ${dISO === sel ? "selday" : ""}" data-date="${dISO}" onclick="calTap('${dISO}')" title="Ver el resumen del ${escA(fmtD(dISO))}">
-      <div class="dnum"><span class="dn">${d.getDate()}</span>${dayMin ? `<span class="dmin">${hClock(dayMin)}</span>` : ""}</div>${items.join("")}<div class="cdots">${dots}</div></div>`;
+    h += `<div class="day ${inMonth ? "" : "out"} ${dISO === today ? "today" : ""} ${dISO === sel ? "selday" : ""} ${evs.length ? "hasev" : ""}" data-date="${dISO}" onclick="calTap('${dISO}')" title="Ver el resumen del ${escA(fmtD(dISO))}">
+      <div class="dnum"><span class="dn">${d.getDate()}</span>${dayMin ? `<span class="dmin">${fmtMin(dayMin)}</span>` : ""}<button class="calplus" aria-label="Nueva tarea el ${escA(fmtD(dISO))}" title="Nueva tarea el ${escA(fmtD(dISO))}" onclick="event.stopPropagation();openQuickTask('${dISO}')">+</button></div>${items.join("")}<div class="cdots">${dots}</div></div>`;
   }
-  h += "</div><p class='tiny calhint' style='margin-top:8px'>Clic en un día para ver su resumen (materias, horas por materia y total) · clic en un evento para abrirlo.</p>";
+  h += "</div><p class='tiny calhint' style='margin-top:8px'>Clic en un día para ver su resumen · clic en una tarea o parcial para abrirlo · pasá por encima de un día y tocá + para crear una tarea ahí.</p>";
   h += calDayList(sel);
   return h;
 }
