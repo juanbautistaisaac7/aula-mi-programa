@@ -333,6 +333,17 @@ body.is-dragging,body.is-dragging *{cursor:grabbing!important;user-select:none;-
 .evstat:first-child{border-left:none}
 .evsn{font-weight:700;font-size:1rem;font-variant-numeric:tabular-nums;white-space:nowrap}
 .evsl{font-size:.66rem;color:var(--tx3)}
+/* X5 · botones del detalle del parcial: juntos y sin partirse */
+.vacts{display:flex;gap:8px;flex-wrap:nowrap}
+.vacts .btn,.evplanh .btn{white-space:nowrap}
+.evplanh{flex-wrap:wrap;row-gap:10px}
+.evplant{white-space:nowrap}
+@media(max-width:600px){
+  .evplanh .evplant{flex-basis:100%}
+  .evplanh .grow{display:none}
+  .tpadd{flex-wrap:wrap}
+  .tpadd .tpname{flex-basis:100% !important}
+}
 /* calendario */
 .cal{display:grid;grid-template-columns:repeat(7,1fr);gap:5px}
 .cal .dow{font-size:.64rem;text-transform:uppercase;letter-spacing:.06em;color:var(--tx3);font-weight:700;text-align:center;padding:4px 0}

@@ -171,3 +171,12 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
 
 - [x] **X4 · Pulido de series después de C3** *(agregado por el agente)*
   Por qué: al revisar las capturas de C3: (1) el editor de una tarea de serie seguía ofreciendo el viejo "Recurrencia", que convertiría una ocurrencia en otra repetición infinita (confuso y peligroso); (2) el modal de una serie "sin fin" no decía cada cuánto se repetía ni cómo cambiar sus minutos u hora.
+
+- [x] **X5 · Detalle del parcial en el celu: botones partidos** *(agregado por el agente)*
+  Por qué: anotado en la corrida 07:06 al ver las capturas de X3: el encabezado dejaba "Nota" arriba y "Editar/Eliminar" abajo, "Tareas y plan de estudio" quedaba apretado con 3 botones partidos en dos renglones y el selector de dificultad del tema nuevo se cortaba ("Me‹").
+
+- [x] **X6 · `sw.js` quedó vacío** *(agregado por el agente)*
+  Por qué: en el commit de X3 (`59c67fa`) `sw.js` se commiteó vacío por accidente. Sin service worker la app no funciona offline y el celu no recibe bien las actualizaciones. Ningún test lo notó. Restaurado y con un test que verifica que exista, tenga sus handlers y que `CACHE_VERSION` coincida con `APP_VERSION`.
+
+- [x] **X7 · Al abrir un modal, el foco se robaba lo que estabas escribiendo** *(agregado por el agente)*
+  Por qué: el test de series "cambiar minutos de una…" fallaba ~1 de cada 3 veces (también en el commit anterior, no era nuevo). Causa: `openModal` enfoca el primer campo 30 ms después de abrir; si ya habías tocado otro campo (minutos), le sacaba el foco y lo que escribías caía en el título. Ahora solo enfoca si el foco no está ya dentro del modal.

@@ -4,6 +4,31 @@ Registro de todo lo que hicieron los agentes: hora, qué intentaron, qué salió
 
 Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, sin memoria de las anteriores. Lo único que comparten es este archivo, `BACKLOG.md`, `CLAUDE.md` y el historial de git.
 
+## Corrida 08:06–08:40 (hora ARG) — X5, X6, X7 y cierre de la noche
+
+**Resumen de la corrida:** era la última corrida (arrancó después de las 08:00), así que hice cosas chicas y seguras y reservé tiempo para publicar en `main`. Encontré **un problema serio que dejó la corrida anterior**: `sw.js` estaba **vacío** (X6). Además arreglé los botones partidos del detalle del parcial en el celu (X5) y un bug de foco que hacía fallar un test de series 1 de cada 3 veces (X7). Tests: de 190 a 196 pasaron, 0 fallaron. Versión 2.27.0 → 2.28.0. Sin cambios de forma de datos.
+
+**Plan:** el siguiente ítem del backlog era **E1a** (modelo + migración de recordatorios). **Decidí no empezarlo**: (1) toca la forma de `state` y necesita migración, y hacerla con apuro justo antes de publicar en `main` es el peor momento para arriesgar tus datos; (2) por sí solo agrega un campo "Avisarme 30 min antes" que **no avisa nada** hasta que esté E1b (ntfy): sería una promesa vacía en la interfaz. Queda E1 entero para otra noche. En su lugar tomé lo que la corrida anterior dejó anotado para F1 (X5).
+
+### X6 · `sw.js` vacío (lo más importante de esta corrida)
+**Qué pasó:** al buscar `CACHE_VERSION` para subir la versión, `sw.js` tenía 0 bytes. Con `git log` vi que el commit de X3 (`59c67fa`, corrida 07:06) lo commiteó vacío — probablemente un comando que lo truncó al intentar subir la versión. Ningún test lo detectó porque los tests bloquean el service worker. Sin él, la app instalada en el celu no anda offline y no limpia el caché viejo.
+**Arreglo:** lo restauré desde el commit anterior (`694c565`) con `CACHE_VERSION = aula-v2.28.0`. **Test nuevo** (`tests/sw.spec.js`): `sw.js` no está vacío, tiene `install`/`activate`/`fetch`, su versión coincide con `APP_VERSION` y todo lo que cachea existe. Falla con el estado anterior, pasa ahora.
+**Aprendizaje:** "los tests en verde" no alcanzan si nadie mira un archivo; ahora hay un test que lo mira.
+
+### X5 · Detalle del parcial en el celu sin botones partidos
+**Decisiones:** "Nota · Editar · Eliminar" van juntos en un grupo (si no entran al lado del título, bajan los tres al mismo renglón, en vez de "Nota" arriba y los otros abajo). En "Tareas y plan de estudio", en el celu el título va en su renglón y los botones abajo; "Replanificar pendientes" pasó a **"Replanificar"** (con la frase completa como tooltip) para que los tres entren en una fila. En "Temas", el campo "Nuevo tema…" ocupa todo el ancho y debajo dificultad, minutos y Agregar (antes el selector se cortaba en "Me‹"). En desktop queda igual que antes.
+**Tests:** +1 (×2) en `tests/parcial-detalle.spec.js`: ningún botón en dos renglones, acciones del encabezado en una fila, título de la tarjeta en un renglón, selector de dificultad legible, sin scroll horizontal. Falló antes del cambio, pasa después.
+**Capturas:** [antes (celu claro)](capturas/X3-eval-e-pe2-mobile-light.png) · [después (celu claro)](capturas/X5-eval-e-pe2-mobile-light.png) · [abajo: temas y plan (celu oscuro)](capturas/X5-plan-mobile-dark.png) · [desktop oscuro](capturas/X5-eval-e-pe2-desktop-dark.png)
+
+### X7 · El foco se robaba lo que escribías
+**Qué pasó:** la primera corrida completa de tests dio 1 rojo en `series-integradas` ("Cambiaste título" cuando solo se cambiaron minutos). No toqué series, así que lo repetí 8 veces **en el commit anterior** (sin mis cambios): fallaba igual, 6 de 16. Causa: `openModal` enfoca el primer campo 30 ms después de abrir; si en ese lapso ya enfocaste otro campo, le robaba el foco y lo tipeado iba al título. En el celu es difícil que pase (los dedos son más lentos que 30 ms), pero es real.
+**Arreglo:** solo enfoca si el foco no está ya dentro del modal. 16/16 después.
+**Tests:** +1 (×2) `tests/foco.spec.js` (escribir enseguida en minutos no cambia el título; si no tocás nada, el foco sí va al título). Falla sin el arreglo.
+
+**Salió mal / intentos fallidos:** el primer `sed` para subir la versión en `sw.js` "no hizo nada" — ahí descubrí que estaba vacío.
+**Tests de la corrida:** `npm test` final: 196 pasaron, 0 fallaron (16 saltados a propósito).
+**Para Bauti:** abrí un parcial en el celu y mirá el encabezado y "Tareas y plan de estudio". Si la app instalada se comportaba raro sin conexión desde anoche, era el `sw.js` vacío: con esta versión vuelve a andar offline (puede que tengas que abrirla dos veces para que tome el service worker nuevo).
+
 ---
 
 ## Corrida 07:06–07:28 (hora ARG) — D1b, D2a, D2b, X3

@@ -37,3 +37,31 @@ test("un parcial que ya pasó lo dice en el número grande", async ({ page }) =>
   await expect(page.locator("#view .evhero")).toContainText("ya pasó");
   expect(errors).toEqual([]);
 });
+
+// X5 · En el celu, los botones no se parten: cada botón en un renglón, sin cortar su texto.
+test("los botones del encabezado y de 'Tareas y plan' no se parten ni se apretujan", async ({ page }) => {
+  await seedState(page, fixture("estado-v2.6.json"));
+  const errors = await openApp(page);
+  await page.evaluate(() => go("eval", "e-pe2"));
+  await expect(page.locator("#view .evhero")).toBeVisible();
+  // ningún botón de la vista ocupa dos renglones
+  const multi = await page.locator("#view .vhead .btn, #view .evplanh .btn").evaluateAll(bs => bs
+    .filter(b => { const lh = parseFloat(getComputedStyle(b).lineHeight) || 16; return b.scrollHeight - parseFloat(getComputedStyle(b).paddingTop) - parseFloat(getComputedStyle(b).paddingBottom) > lh * 1.5; })
+    .map(b => b.textContent.trim()));
+  expect(multi).toEqual([]);
+  // las acciones del encabezado van juntas, en un mismo renglón
+  const tops = await page.locator("#view .vhead .vacts .btn").evaluateAll(bs => bs.map(b => Math.round(b.getBoundingClientRect().top)));
+  expect(tops.length).toBe(3);
+  expect(new Set(tops).size).toBe(1);
+  // el título de "Tareas y plan de estudio" no se parte en dos renglones
+  const t = page.locator("#view .evplanh .evplant");
+  const h = await t.evaluate(el => el.getBoundingClientRect().height);
+  const lh = await t.evaluate(el => parseFloat(getComputedStyle(el).lineHeight) || 18);
+  expect(h).toBeLessThan(lh * 1.5);
+  // el selector de dificultad del tema nuevo muestra su texto entero
+  const sel = await page.locator("#tp_diff").evaluate(s => s.getBoundingClientRect().width);
+  expect(sel).toBeGreaterThanOrEqual(80);
+  const over = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  expect(over).toBeLessThanOrEqual(0);
+  expect(errors).toEqual([]);
+});

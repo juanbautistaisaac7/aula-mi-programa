@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.27.0";
+const APP_VERSION = "2.28.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -2538,9 +2538,9 @@ function viewEvalDetail() {
     ${o ? `<span class="tag" style="background:${o.color}1c;color:${o.color}">${esc(o.short)}</span>` : ""}
     ${p ? `<a href="#/project/${p.id}" class="tiny">${esc(p.name)}</a>` : ""}
     <div class="grow"></div>
-    <button class="btn sm" onclick="openNoteEditor(null,'e:${e.id}')">Nota</button>
+    <div class="vacts"><button class="btn sm" onclick="openNoteEditor(null,'e:${e.id}')">Nota</button>
     <button class="btn sm" onclick="openEvalEditor('${e.id}')">Editar</button>
-    <button class="btn sm danger" onclick="deleteEval('${e.id}')">Eliminar</button></div>`;
+    <button class="btn sm danger" onclick="deleteEval('${e.id}')">Eliminar</button></div></div>`;
   // X3 · un número grande arriba (días que faltan + preparación) y el resto en una fila compacta
   const pc = prep === null ? "var(--tx3)" : prep < 40 ? "var(--bad)" : prep < 70 ? "var(--warn)" : "var(--ok)";
   const when = esc(fmtD(e.date)) + (e.time ? " · " + esc(fmtTime(e.time)) : "");
@@ -2575,14 +2575,14 @@ function viewEvalDetail() {
         ${[["nv", "No visto"], ["emp", "Empezado"], ["ent", "Entendido"], ["dom", "Dominado"]].map(([k, v]) => `<option value="${k}" ${tp.state === k ? "selected" : ""}>${v}</option>`).join("")}
       </select>
       <button class="btn sm ghost" title="Eliminar tema" onclick="delTopic('${e.id}','${tp.id}')">×</button></div>`).join("");
-  h += `<div class="mrow" style="margin-top:8px">
-      <div style="flex:2"><input id="tp_new" placeholder="Nuevo tema…" style="width:100%;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:8px"></div>
+  h += `<div class="mrow tpadd" style="margin-top:8px">
+      <div class="tpname" style="flex:2"><input id="tp_new" placeholder="Nuevo tema…" style="width:100%;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:8px"></div>
       <div><select id="tp_diff" style="width:100%;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:8px"><option value="1">Fácil</option><option value="2" selected>Media</option><option value="3">Difícil</option></select></div>
       <div><input id="tp_min" type="number" value="90" min="10" step="10" title="Minutos estimados" style="width:100%;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:8px"></div>
       <button class="btn" onclick="addTopic('${e.id}')">Agregar</button></div></div>`;
-  h += `<div class="card"><h3>Tareas y plan de estudio<div class="grow"></div>
+  h += `<div class="card"><h3 class="evplanh"><span class="evplant">Tareas y plan de estudio</span><div class="grow"></div>
     <button class="btn sm" onclick="openQuickTaskForEval('${e.id}')">+ Tarea</button>
-    ${plan.length ? `<button class="btn sm" onclick="replanPending('${e.id}')">Replanificar pendientes</button>` : ""}
+    ${plan.length ? `<button class="btn sm" title="Replanificar las tareas pendientes" onclick="replanPending('${e.id}')">Replanificar</button>` : ""}
     <button class="btn sm primary" onclick="openPlanWizard('${e.id}')">${plan.length ? "Regenerar plan" : "Generar plan"}</button></h3>`;
   if (plan.length) {
     let cur = "";
@@ -3842,7 +3842,8 @@ function openModal(html, wide, noFocus) {
   bg.classList.add("open");
   // noFocus: cuando lo primero es una lista para elegir, enfocar un botón confunde ("¿está elegido Todas?")
   const f = noFocus ? null : box.querySelector("input,select,textarea") || box.querySelector("button"); // primero un campo: un botón de arriba (p. ej. "Ver la serie") no se lleva el foco
-  if (f) setTimeout(() => f.focus(), 30);
+  // si mientras tanto ya tocaste otro campo del modal, no robarle el foco (lo que escribías iba a parar al título)
+  if (f) setTimeout(() => { if (!box.contains(document.activeElement)) f.focus(); }, 30);
 }
 function closeModal() { byId("modalbg").classList.remove("open"); }
 /* B3 · En los selectores no aparecen parciales cerrados (rendido / aprobado /
