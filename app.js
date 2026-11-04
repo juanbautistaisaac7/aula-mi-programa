@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.19.0";
+const APP_VERSION = "2.19.1";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -1662,7 +1662,7 @@ function seriesLabel(s) {
 function viewSeries() {
   const all = buildSeries();
   const act = all.filter(s => s.active), old = all.filter(s => !s.active);
-  let h = `<div class="vhead"><h2>Series y repeticiones</h2><span class="sub">tareas que se repiten día a día hasta una fecha</span>
+  let h = `<div class="vhead"><h2>Series y repeticiones</h2><span class="sub">tareas creadas con “Repetir”</span>
     <div class="grow"></div><button class="btn primary" onclick="openQuickTask()">Nueva serie</button></div>`;
   const card = s => {
     const lb = seriesLabel(s);
@@ -1684,7 +1684,7 @@ function viewSeries() {
       </div></div>`;
   };
   h += act.length ? `<div class="grid2">${act.map(card).join("")}</div>`
-    : `<div class="card"><div class="empty">No tenés series activas.<br>Creá una tarea con la opción “Todos los días (período)” y aparece acá para gestionarla entera.</div></div>`;
+    : `<div class="card"><div class="empty">No tenés series activas.<br>Al crear una tarea, elegí “Repetir” y la serie aparece acá para gestionarla entera.</div></div>`;
   if (old.length) h += `<div class="card" style="margin-top:14px"><h3>Terminadas</h3><div class="grid2" style="margin-top:8px">${old.map(card).join("")}</div></div>`;
   return h;
 }

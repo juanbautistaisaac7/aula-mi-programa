@@ -6,7 +6,12 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
-## Corrida 05:05–… (hora ARG) — B4, B5, C1
+## Corrida 05:05–05:42 (hora ARG) — B4, B5, C1
+
+**Resumen de la corrida:** 3 ítems cerrados (B4 mover tareas de día, B5 lista que se limpia sola, C1 Repetir con vista previa). Tests: de 100 a 140, todos en verde en cada commit. Versión: 2.16.0 → 2.19.1. Sin cambios de esquema de datos (no hizo falta migrar nada). Al final corregí un texto viejo de "Series y repeticiones" que todavía hablaba de "Todos los días (período)", que ya no existe (2.19.1). Partí **C2** en C2a y C2b en el backlog: es el ítem más delicado (lo que más te frustra) y no quería empezarlo con 15 minutos y dejarlo a medias; la próxima corrida arranca C2a de cero.
+
+**Commits:** `2eaaab9` B4 · `cd6cf0f` B5 · `5e19398` C1 · el de cierre (texto de Series + backlog + bitácora).
+
 
 ### C1 · Crear repeticiones sin pensar
 
