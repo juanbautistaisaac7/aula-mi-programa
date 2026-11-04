@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.6.0";
+const APP_VERSION = "2.7.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -179,6 +179,43 @@ function normalizeState(s) {
   return s;
 }
 
+/* ===================== MIGRACIONES VERSIONADAS =====================
+   state.meta.schema dice qué forma tienen los datos. Los guardados por la 2.6
+   o antes no lo tienen: cuentan como esquema 1.
+   Reglas para agregar un paso (ver CLAUDE.md):
+   - Cada paso lleva de (to - 1) a `to`, es idempotente y NUNCA borra campos ni datos.
+   - Antes de correr pasos, loadState guarda una copia del estado viejo en
+     "Copias de seguridad" (clave premig-…) para poder volver atrás.
+   - Cada paso agrega un test que carga tests/fixtures/estado-v2.6.json. */
+const SCHEMA_VERSION = 2;
+const MIGRATIONS = [
+  { to: 2, desc: "Esquema versionado (Aula 2.7)", run: () => {} }
+];
+function schemaOf(s) { return (s && s.meta && Number(s.meta.schema)) || 1; }
+function needsMigration(s) { return schemaOf(s) < SCHEMA_VERSION; }
+/* Corre los pasos pendientes sobre un estado ya normalizado. Devuelve {from, to}. */
+function migrateState(s) {
+  const from = schemaOf(s);
+  for (const m of MIGRATIONS) {
+    if (schemaOf(s) < m.to) { m.run(s); s.meta.schema = m.to; }
+  }
+  return { from, to: schemaOf(s) };
+}
+/* Normaliza + migra, guardando antes una copia del JSON original tal cual estaba. */
+async function prepareLoaded(s, raw) {
+  s = normalizeState(s);
+  if (needsMigration(s)) {
+    const from = schemaOf(s);
+    const copy = { ts: Date.now(), label: "Antes de actualizar a Aula " + APP_VERSION, version: APP_VERSION, schema: from, data: raw };
+    try {
+      if (db) await idbPut("backups", "premig-v" + from + "-" + Date.now(), copy);
+      else if (typeof localStorage !== "undefined") localStorage.setItem("aula-premig-v" + from, raw);
+    } catch (e) { console.warn("No se pudo guardar la copia previa a la migración", e); }
+    migrateState(s);
+  }
+  return s;
+}
+
 /* ================== MIGRACIÓN DESDE LA VERSIÓN 1 ================== */
 function migrateV1(newState) {
   let old = null;
@@ -259,23 +296,26 @@ async function loadState() {
   if (db) { try { raw = await idbGet("kv", "state"); } catch (e) {} }
   if (!raw && typeof localStorage !== "undefined") raw = localStorage.getItem("aula-state-fallback");
   if (raw) {
-    try { const s = JSON.parse(raw); if (validState(s)) { state = normalizeState(s); return; } } catch (e) { console.warn("Estado dañado, intentando backups…"); }
+    let s = null;
+    try { s = JSON.parse(raw); } catch (e) { console.warn("Estado dañado, intentando backups…"); }
+    if (validState(s)) { state = await prepareLoaded(s, raw); return; }
   }
   if (db) {
     try {
       const keys = (await idbKeys("backups")).sort().reverse();
       for (const k of keys) {
-        try { const b = await idbGet("backups", k); const s = JSON.parse(b.data); if (validState(s)) { state = normalizeState(s); toast("Datos recuperados desde una copia de seguridad"); return; } } catch (e) {}
+        try { const b = await idbGet("backups", k); const s = JSON.parse(b.data); if (validState(s)) { state = await prepareLoaded(s, b.data); toast("Datos recuperados desde una copia de seguridad"); return; } } catch (e) {}
       }
     } catch (e) {}
   }
   try {
     const em = typeof localStorage !== "undefined" ? localStorage.getItem(EMERGENCY_KEY) : null;
-    if (em) { const s = JSON.parse(em); if (validState(s)) { state = normalizeState(s); toast("Datos recuperados desde la copia de emergencia"); return; } }
+    if (em) { const s = JSON.parse(em); if (validState(s)) { state = await prepareLoaded(s, em); toast("Datos recuperados desde la copia de emergencia"); return; } }
   } catch (e) {}
   state = baseState();
   state.subjects = initialSubjects();
   try { if (typeof localStorage !== "undefined" && localStorage.getItem(OLD_LS_KEY) && migrateV1(state)) toast("Datos de la versión anterior migrados correctamente"); } catch (e) { console.warn("Fallo de migración", e); }
+  migrateState(state); // estado nuevo (o recién migrado de la v1): sin datos previos que respaldar
 }
 
 /* ============================ LOOKUPS ============================ */
@@ -3167,7 +3207,7 @@ function viewBackups() {
     <p class="muted" style="margin-bottom:10px">Elegí un archivo JSON exportado desde Aula (o desde la versión anterior). Antes de aplicar se valida el contenido y podés elegir fusionar o reemplazar.</p>
     <input type="file" id="impfile" accept=".json,application/json" onchange="importJSON(event)" style="font-size:.8rem" aria-label="Importar archivo JSON"></div>
   <div class="card"><h3>Copias locales automáticas</h3>
-    <p class="tiny" style="margin-bottom:8px">Se crea una por día al abrir la aplicación (se conservan las últimas 10, más 10 manuales). Se guardan en este navegador.</p>
+    <p class="tiny" style="margin-bottom:8px">Se crea una por día al abrir la aplicación (se conservan las últimas 10, más 10 manuales) y otra antes de cada actualización que cambia la forma de tus datos. Se guardan en este navegador.</p>
     <div id="bklist"><div class="empty">Cargando…</div></div></div>
   <div class="card"><h3>Estado del almacenamiento</h3>
     <p class="muted">Almacenamiento principal: <b>${db ? "IndexedDB (activo)" : "localStorage (IndexedDB no disponible)"}</b> · Copia de emergencia en localStorage: activa.</p></div>`;
@@ -3197,7 +3237,7 @@ async function restoreBackup(key) {
         const b = await idbGet("backups", key);
         const s = JSON.parse(b.data);
         if (!validState(s)) { toast("La copia está dañada"); return; }
-        state = normalizeState(s); change(); render(); toast("Copia restaurada");
+        state = normalizeState(s); migrateState(state); change(); render(); toast("Copia restaurada");
       } catch (e) { toast("No se pudo restaurar"); }
     }
   });
@@ -3216,7 +3256,7 @@ function importJSON(ev) {
     if (isV1) {
       askConfirm({
         title: "Archivo de la versión anterior", body: "Este archivo es de la app anterior. Se migrará su contenido y se agregará al estado actual.", okLabel: "Migrar e importar",
-        onOk: () => { try { localStorage.setItem(OLD_LS_KEY, JSON.stringify(s)); } catch (e) {} const tmp = normalizeState(baseState()); tmp.subjects = state.subjects.length ? JSON.parse(JSON.stringify(state.subjects)) : initialSubjects(); if (migrateV1(tmp)) { mergeStates(state, tmp); change(); render(); toast("Datos de la versión anterior importados"); } else toast("No se pudo migrar el archivo"); }
+        onOk: () => { try { localStorage.setItem(OLD_LS_KEY, JSON.stringify(s)); } catch (e) {} const tmp = normalizeState(baseState()); tmp.subjects = state.subjects.length ? JSON.parse(JSON.stringify(state.subjects)) : initialSubjects(); if (migrateV1(tmp)) { migrateState(tmp); mergeStates(state, tmp); change(); render(); toast("Datos de la versión anterior importados"); } else toast("No se pudo migrar el archivo"); }
       });
       ev.target.value = ""; return;
     }
@@ -3229,12 +3269,12 @@ function importJSON(ev) {
       <div class="mfoot"><button class="btn" onclick="closeConfirm()">Cancelar</button>
       <button class="btn" id="impMerge">Fusionar</button>
       <button class="btn danger" id="impReplace">Reemplazar todo</button></div>`;
-    byId("impMerge").onclick = () => { mergeStates(state, normalizeState(s)); closeConfirm(); change(); render(); toast("Datos fusionados"); };
+    byId("impMerge").onclick = () => { const src = normalizeState(s); migrateState(src); mergeStates(state, src); closeConfirm(); change(); render(); toast("Datos fusionados"); };
     byId("impReplace").onclick = () => {
       closeConfirm();
       askConfirm({
         title: "Reemplazar todo", body: "Se descartará el estado actual y se usará el del archivo. Esta acción no se puede deshacer (se guarda una copia previa).", okLabel: "Reemplazar", danger: true,
-        onOk: async () => { try { if (db) await idbPut("backups", "pre-import-" + Date.now(), { ts: Date.now(), label: "Antes de importar", data: JSON.stringify(state) }); } catch (e) {} state = normalizeState(s); change(); render(); toast("Datos reemplazados"); }
+        onOk: async () => { try { if (db) await idbPut("backups", "pre-import-" + Date.now(), { ts: Date.now(), label: "Antes de importar", data: JSON.stringify(state) }); } catch (e) {} state = normalizeState(s); migrateState(state); change(); render(); toast("Datos reemplazados"); }
       });
     };
   };
@@ -3302,7 +3342,7 @@ function viewConfig() {
       <button class="btn sm" onclick="exportCSV()">Exportar estadísticas CSV</button>
       <button class="btn sm danger" onclick="resetApp()">Reiniciar aplicación</button></div>
     <div class="hr"></div>
-    <p class="tiny">Versión ${APP_VERSION} · ${state.meta.migratedV1 ? "Datos migrados de la versión anterior el " + (state.meta.migratedAt || "").slice(0, 10) : "Instalación nueva"} · Guardado principal: ${db ? "IndexedDB" : "localStorage"}</p>
+    <p class="tiny">Versión ${APP_VERSION} (datos v${schemaOf(state)}) · ${state.meta.migratedV1 ? "Datos migrados de la versión anterior el " + (state.meta.migratedAt || "").slice(0, 10) : "Instalación nueva"} · Guardado principal: ${db ? "IndexedDB" : "localStorage"}</p>
     <button class="btn sm ghost" style="margin-top:6px" onclick="showShortcuts()">Ver atajos de teclado</button>
     <span id="installSlot"></span>
   </div>
@@ -3358,7 +3398,7 @@ function resetApp() {
     second: { title: "¿Estás completamente seguro?", body: "Esta acción es definitiva. Antes se creará una última copia de seguridad local por si te arrepentís (en Copias de seguridad).", okLabel: "Sí, borrar todo" },
     onOk: async () => {
       try { if (db) await idbPut("backups", "pre-reset-" + Date.now(), { ts: Date.now(), label: "Antes de reiniciar", data: JSON.stringify(state) }); } catch (e) {}
-      state = baseState(); state.subjects = initialSubjects(); state.meta.migratedV1 = true;
+      state = baseState(); state.subjects = initialSubjects(); state.meta.migratedV1 = true; migrateState(state);
       change(); render(); toast("Aplicación reiniciada");
     }
   });
