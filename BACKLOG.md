@@ -47,7 +47,7 @@ Las palabras de Bauti están citadas tal cual en "Pedido", para no perder lo que
 
 ## B. Tareas: hora, comentarios, vínculos, mover días
 
-- [ ] **B1 · Hora en tareas y eventos**
+- [x] **B1 · Hora en tareas y eventos**
   Pedido: *"permitir poner horario a las tareas"*.
   Listo cuando:
   - Las tareas tienen hora opcional (`time: "HH:MM"`), al crearlas (modal rápido) y al editarlas. Los parciales ya tienen fecha; verificar que también tengan hora.

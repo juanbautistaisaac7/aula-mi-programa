@@ -6,7 +6,25 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
-## Corrida 04:08–(en curso) (hora ARG) — A1, X1, A2, A3, A4a, A4b
+## Corrida 04:08–(en curso) (hora ARG) — A1, X1, A2, A3, A4a, A4b, B1
+
+### B1 · Hora en tareas
+
+**Plan:** campo opcional `t.time` ("HH:MM"), en el modal rápido y en el editor, y que Hoy, Semana, Calendario y el resumen del día ordenen por hora.
+
+**Decisiones:**
+- **No hizo falta migración:** las tareas viejas simplemente no tienen hora (= "sin hora"). Ningún campo existente cambia.
+- **Orden:** primero las que tienen hora, de la más temprana a la más tarde; después las sin hora con el orden de siempre (el que armaste a mano arrastrando, y si no, prioridad y duración). Lo cambié en un solo lugar (`orderedTasks`), así que vale para todas las vistas.
+- **Las tareas con hora no se arrastran:** su lugar lo decide la hora. No muestran la manija ni ↑↓ (dejé el espacio de la manija para que las casillas queden alineadas) y si se intenta moverlas, aviso: "Las tareas con hora se ordenan solas por hora".
+- **Cómo se ve:** la hora va antes del título, en color de acento y números tabulares (estilo Calendario de iOS). Respeta el ajuste de formato 24 h / 12 h ("6:30 p. m.").
+- **En el modal rápido** la hora aparece al lado de la fecha y se esconde si elegís "Sin fecha". Un período o "Agregar días" copian la hora a todas las tareas de la serie.
+- **Parciales:** ya tenían hora (`ev_time`); ahora también se ve en Semana y Calendario.
+
+**Salió bien:** todo verde.
+**Salió mal / intentos fallidos:** en las capturas aparecieron dos cosas que arreglé: (1) sin la manija, las tareas con hora quedaban corridas a la izquierda respecto de las otras; (2) en el editor, la fila "fecha / hora / fecha límite / estimado" en 4 columnas cortaba las fechas en el celu ("11/04/" y "mm/d"). La partí en dos filas de 2.
+**Tests:** +7 (×2 = 14): crear con hora y persistir; sin fecha no hay hora; editar y borrar la hora; orden en Hoy, Semana y Calendario; las con hora no se arrastran; formato 12 h; parciales con hora en la semana. `npm test`: 76/76.
+**Capturas:** [Hoy con horas (mobile claro)](capturas/B1-hoy-mobile-light.png) · [nueva tarea (mobile oscuro)](capturas/B1-nueva-mobile-dark.png) · [editor (mobile claro)](capturas/B1-editor-mobile-light.png) · [semana (desktop claro)](capturas/B1-semana-desktop-light.png) · [calendario (desktop oscuro)](capturas/B1-calendario-desktop-dark.png)
+**Para Bauti:** los campos de hora y fecha los dibuja el navegador; en tu celu en español van a decir "dd/mm/aaaa" (en las capturas salen en inglés porque el navegador de prueba está en inglés).
 
 ### A4b · Menú más corto y Configuración ordenada
 
