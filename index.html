@@ -283,6 +283,43 @@ body.is-dragging,body.is-dragging *{cursor:grabbing!important;user-select:none;-
 .sheetcancel{margin-top:8px;background:var(--card2);border-radius:12px;border:none;justify-content:center;font-weight:700}
 @media (prefers-reduced-motion:reduce){#sheet{animation:none}.task.lifted,.dropzone{transition:none}.dragghost{transform:none}}
 .task.dropafter{box-shadow:inset 0 -3px 0 -1px var(--acc)}
+/* D2 · Progreso: una pregunta por tarjeta, un número grande, barras simples */
+.pg{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;align-items:start}
+.pg-card{margin:0;padding:16px 18px;display:flex;flex-direction:column;gap:6px}
+.pg-q{font-size:.78rem;font-weight:700;color:var(--tx2);display:flex;gap:6px;align-items:baseline}
+.pg-big{font-size:2.1rem;font-weight:800;letter-spacing:-.03em;line-height:1.1;font-variant-numeric:tabular-nums}
+.pg-sub{font-size:.8rem;color:var(--tx2);line-height:1.4}
+.pg-row{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+.pg-row>:last-child{white-space:nowrap}
+.pg-mini{margin-top:6px;display:flex;flex-direction:column;gap:5px;font-size:.78rem;color:var(--tx2)}
+.pg-card .btn{align-self:flex-start;margin-top:4px}
+.pg-bars{display:grid;grid-template-columns:repeat(7,1fr);gap:8px;margin-top:10px}
+.pg-bcol{display:flex;flex-direction:column;align-items:center;gap:5px}
+.pg-bcol span{font-size:.66rem;font-weight:600;color:var(--tx3)}
+.pg-bcol.today span{color:var(--acc);font-weight:800}
+.pg-btrack{height:96px;width:100%;max-width:30px;background:var(--card2);border-radius:7px;display:flex;align-items:flex-end;overflow:hidden}
+.pg-bcol.fut .pg-btrack{opacity:.45}
+.pg-btrack i{display:block;width:100%;background:var(--acc);border-radius:7px;transform-origin:bottom;animation:pgGrow .25s ease-out both}
+.pg-exam,.pg-srow{display:flex;gap:12px;align-items:center;padding:9px 0;border-top:1px solid var(--line);cursor:pointer;min-height:44px}
+.pg-q+.pg-exam,.pg-q+.pg-srow{border-top:none}
+.pg-card .pbar{flex:none;width:100%}
+.pg-srow{flex-direction:column;align-items:stretch;gap:5px}
+.pg-days{min-width:46px;text-align:center;display:flex;flex-direction:column;line-height:1}
+.pg-days b{font-size:1.5rem;font-weight:800;font-variant-numeric:tabular-nums}
+.pg-days span{font-size:.62rem;color:var(--tx3);font-weight:600}
+.pg-einfo{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}
+.pg-ename,.pg-sname{font-weight:600;font-size:.86rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;gap:7px}
+.pg-sdot{width:8px;height:8px;border-radius:50%;flex-shrink:0;display:inline-block}
+.pg-strack{height:8px;background:var(--card2);border-radius:99px;overflow:hidden}
+.pg-strack i{display:block;height:100%;border-radius:99px;transform-origin:left;animation:pgGrowX .25s ease-out both}
+.pg-dots{display:grid;grid-template-columns:repeat(14,1fr);gap:5px;margin-top:8px}
+.pg-dot{aspect-ratio:1;border-radius:50%;background:var(--card2);display:block}
+.pg-dot.on{background:var(--ok)}
+.pg-dot.now{box-shadow:0 0 0 2px var(--acc-soft)}
+@keyframes pgGrow{from{transform:scaleY(0)}}
+@keyframes pgGrowX{from{transform:scaleX(0)}}
+@media (prefers-reduced-motion:reduce){.pg-btrack i,.pg-strack i{animation:none}}
+@media(max-width:720px){.pg{grid-template-columns:1fr}.pg-big{font-size:1.9rem}}
 /* calendario */
 .cal{display:grid;grid-template-columns:repeat(7,1fr);gap:5px}
 .cal .dow{font-size:.64rem;text-transform:uppercase;letter-spacing:.06em;color:var(--tx3);font-weight:700;text-align:center;padding:4px 0}

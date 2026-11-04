@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.24.0";
+const APP_VERSION = "2.25.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -2041,7 +2041,7 @@ const VIEWS = [
   ["home", "Inicio"], ["today", "Hoy"], ["calendar", "Calendario"], ["week", "Semana"],
   ["subjects", "Materias"], ["evals", "Parciales y finales"], ["projects", "Proyectos"], ["series", "Series"],
   ["plans", "Planes de estudio"], ["notes", "Notas"], ["habits", "Hábitos"],
-  ["stats", "Estadísticas"], ["history", "Historial"], ["backups", "Copias de seguridad"], ["config", "Configuración"]
+  ["stats", "Progreso"], ["history", "Historial"], ["backups", "Copias de seguridad"], ["config", "Configuración"]
 ];
 function go(view, id) { location.hash = "#/" + view + (id ? "/" + id : ""); }
 function parseHash() {
@@ -3141,14 +3141,99 @@ function chartRing(pct, C, size, color, label, sub) {
 }
 
 /* ========================== VISTA COMPLETA ========================== */
+/* ============================ D2 · PROGRESO ============================
+   Pocos gráficos, cada uno responde una pregunta real de un estudiante:
+   ¿cuánto estudié esta semana? ¿voy al día? ¿llego a los parciales?
+   ¿a qué materia le dedico tiempo? ¿soy constante? Lo viejo queda en
+   "Estadísticas detalladas" (#/stats/detalle). */
+const EV_CLOSED = ["rendido", "aprob", "desaprob"];
+function progressData() {
+  const today = todayISO(), ws = state.settings.weekStart;
+  const byDate = {};
+  for (const s of state.sessions) byDate[s.date] = (byDate[s.date] || 0) + (s.min || 0);
+  const w0 = weekStartOf(today, ws), lw0 = addDays(w0, -7);
+  const idx = Math.round((dToDate(today) - dToDate(w0)) / 864e5);
+  const days = [];
+  for (let i = 0; i < 7; i++) { const d = addDays(w0, i); days.push({ d, min: byDate[d] || 0, future: d > today, today: d === today }); }
+  let lastSame = 0, lastFull = 0;
+  for (let i = 0; i < 7; i++) { const m = byDate[addDays(lw0, i)] || 0; lastFull += m; if (i <= idx) lastSame += m; }
+  const week = { days, min: days.filter(x => !x.future).reduce((a, x) => a + x.min, 0), lastSame, lastFull };
+  // ¿voy al día? atrasadas + tareas de esta semana (hasta hoy) hechas
+  const od = overdueTasks();
+  let planned = 0, done = 0;
+  for (let i = 0; i <= idx; i++) { const d = addDays(w0, i); for (const t of tasksOn(d)) { planned++; if (isDoneOn(t, d)) done++; } }
+  // parciales por delante
+  const exams = state.evals.filter(e => e.date >= today && !EV_CLOSED.includes(e.status))
+    .sort((a, b) => a.date < b.date ? -1 : 1).slice(0, 4)
+    .map(e => ({ e, days: daysTo(e.date), prep: evalPrep(e), min: evalRealMin(e.id) }));
+  // por materia: últimos 14 días, con su próximo parcial
+  const from14 = addDays(today, -13);
+  const subjects = activeSubjects().map(s => {
+    const min = state.sessions.filter(x => x.subjectId === s.id && x.date >= from14 && x.date <= today).reduce((a, x) => a + (x.min || 0), 0);
+    const ne = state.evals.filter(e => e.subjectId === s.id && e.date >= today && !EV_CLOSED.includes(e.status)).sort((a, b) => a.date < b.date ? -1 : 1)[0];
+    return { s, min, next: ne || null, nextDays: ne ? daysTo(ne.date) : null };
+  }).filter(x => x.min > 0 || (x.next && x.nextDays <= 30))
+    .sort((a, b) => (a.nextDays ?? 999) - (b.nextDays ?? 999) || b.min - a.min);
+  // constancia
+  let streak = 0; { let d = today; if (!byDate[d]) d = addDays(d, -1); while (byDate[d]) { streak++; d = addDays(d, -1); } }
+  const last28 = []; for (let i = 27; i >= 0; i--) last28.push(!!byDate[addDays(today, -i)]);
+  return { week, overdue: od.length, overdueMin: od.reduce((a, t) => a + (t.estMin || 0), 0), planned, done, exams, subjects, streak, last28 };
+}
 function viewStats() {
+  if (route.id === "detalle") return viewStatsDetail();
+  const p = progressData();
+  const pctCol = v => v == null ? "var(--tx3)" : v < 40 ? "var(--bad)" : v < 70 ? "var(--warn)" : "var(--ok)";
+  let h = `<div class="vhead"><h2>Progreso</h2><span class="sub">${esc(capitalize(fmtD(todayISO())))}</span></div><div class="pg">`;
+  // 1 · esta semana
+  const W = p.week, diff = W.min - W.lastSame, maxD = Math.max(60, ...W.days.map(x => x.min));
+  const sub = !W.min ? "Todavía no registraste tiempo esta semana."
+    : !W.lastSame ? "La semana pasada a esta altura no tenías nada registrado."
+    : diff === 0 ? "Igual que a esta altura de la semana pasada."
+    : `<b style="color:${diff > 0 ? "var(--ok)" : "var(--warn)"}">${fmtMin(Math.abs(diff))} ${diff > 0 ? "más" : "menos"}</b> que a esta altura de la semana pasada.`;
+  h += `<section class="card pg-card pg-week"><div class="pg-q">¿Cuánto estudié esta semana?</div>
+    <div class="pg-big">${fmtMin(W.min)}</div><div class="pg-sub">${sub}</div>
+    <div class="pg-bars">${W.days.map((x, i) => `<div class="pg-bcol${x.today ? " today" : ""}${x.future ? " fut" : ""}" title="${escA(fmtD(x.d))}: ${fmtMin(x.min)}">
+      <div class="pg-btrack"><i style="height:${x.min ? Math.max(4, Math.round(x.min / maxD * 100)) : 0}%;animation-delay:${i * 30}ms"></i></div>
+      <span>${"DLMXJVS"[dToDate(x.d).getDay()]}</span></div>`).join("")}</div></section>`;
+  // 2 · ¿voy al día?
+  h += `<section class="card pg-card pg-late"><div class="pg-q">¿Voy al día?</div>
+    ${p.overdue ? `<div class="pg-big" style="color:var(--bad)">${p.overdue}</div><div class="pg-sub">tarea${p.overdue > 1 ? "s" : ""} atrasada${p.overdue > 1 ? "s" : ""}${p.overdueMin ? ` · ${fmtMin(p.overdueMin)} de trabajo` : ""}</div>
+      <button class="btn sm" onclick="go('today')">Ver atrasadas</button>`
+    : `<div class="pg-big" style="color:var(--ok)">Al día</div><div class="pg-sub">No tenés tareas atrasadas.</div>`}
+    ${p.planned ? `<div class="pg-mini"><div class="pg-row"><span>Tareas hechas esta semana</span><b>${p.done} de ${p.planned}</b></div>
+      <div class="pbar"><i style="width:${Math.round(p.done / p.planned * 100)}%;background:var(--ok)"></i></div></div>` : ""}</section>`;
+  // 3 · parciales
+  h += `<section class="card pg-card pg-exams"><div class="pg-q">¿Llego a los parciales?</div>
+    ${p.exams.length ? p.exams.map(x => { const o = ownerOf(x.e); return `<div class="pg-exam" onclick="go('eval','${x.e.id}')">
+      <div class="pg-days" style="color:${x.days <= 7 ? "var(--bad)" : "var(--tx)"}"><b>${x.days === 0 ? "Hoy" : x.days}</b>${x.days ? ` <span>${x.days === 1 ? "día" : "días"}</span>` : ""}</div>
+      <div class="pg-einfo"><div class="pg-ename">${o ? `<i class="pg-sdot" style="background:${o.color}"></i>` : ""}${esc(x.e.name)}</div>
+        <div class="pg-row tiny"><span>${x.prep == null ? "sin temas ni plan para medir" : `preparado ${x.prep}%`}</span><span>${x.min ? fmtMin(x.min) + " estudiado" : ""}</span></div>
+        ${x.prep != null ? `<div class="pbar"><i style="width:${x.prep}%;background:${pctCol(x.prep)}"></i></div>` : ""}</div></div>`; }).join("")
+    : `<div class="pg-sub">No tenés parciales por delante.</div>`}</section>`;
+  // 4 · por materia
+  const maxS = Math.max(1, ...p.subjects.map(x => x.min));
+  h += `<section class="card pg-card pg-subs"><div class="pg-q">¿A qué le dedico tiempo? <span class="tiny">últimos 14 días</span></div>
+    ${p.subjects.length ? p.subjects.map(x => `<div class="pg-srow" onclick="go('subject','${x.s.id}')">
+      <div class="pg-row"><span class="pg-sname"><i class="pg-sdot" style="background:${x.s.color}"></i>${esc(x.s.name)}</span><b>${x.min ? fmtMin(x.min) : "—"}</b></div>
+      <div class="pg-strack"><i style="width:${Math.round(x.min / maxS * 100)}%;background:${x.s.color}"></i></div>
+      ${x.next ? `<div class="tiny" style="color:${x.nextDays <= 14 && x.min < 120 ? "var(--warn)" : "var(--tx3)"}">${esc(x.next.name)} en ${x.nextDays} día${x.nextDays === 1 ? "" : "s"}${x.nextDays <= 14 && x.min < 120 ? " · le estás dando poco" : ""}</div>` : ""}</div>`).join("")
+    : `<div class="pg-sub">Cuando registres tiempo de estudio, acá vas a ver cuánto le das a cada materia.</div>`}</section>`;
+  // 5 · constancia
+  h += `<section class="card pg-card pg-streak"><div class="pg-q">¿Soy constante?</div>
+    <div class="pg-big">${p.streak} día${p.streak === 1 ? "" : "s"}</div><div class="pg-sub">${p.streak ? "seguidos estudiando" : "Hoy es buen día para arrancar una racha."}</div>
+    <div class="pg-dots" aria-label="Últimos 28 días">${p.last28.map((on, i) => `<i class="pg-dot${on ? " on" : ""}${i === 27 ? " now" : ""}"></i>`).join("")}</div>
+    <div class="pg-row tiny"><span>hace 4 semanas</span><span>hoy</span></div></section>`;
+  h += `</div><p style="margin-top:14px"><a class="tiny" href="#/stats/detalle">Estadísticas detalladas, informe y CSV ›</a></p>`;
+  return h;
+}
+function viewStatsDetail() {
   const R = getStatsRange();
   const st = computeStats(R);
   const C = chartColors();
   const dTot = st.total - st.prevTotal;
   const tab = (k, l) => `<button class="btn sm ${(ui.statsRange || "month") === k ? "primary" : ""}" onclick="setStatsRange('${k}')">${l}</button>`;
 
-  let h = `<div class="vhead"><h2>Estadísticas</h2><span class="sub">${esc(R.label)}</span><div class="grow"></div>
+  let h = `<div class="vhead"><button class="btn sm ghost" onclick="go('stats')" aria-label="Volver a Progreso">‹</button><h2>Estadísticas detalladas</h2><span class="sub">${esc(R.label)}</span><div class="grow"></div>
     <button class="btn primary" onclick="openPosterModal()">Descargar informe</button>
     <button class="btn ghost" onclick="exportRangeCSV()" title="Planilla con el resumen de este período">CSV</button></div>`;
 

@@ -115,7 +115,9 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
   Pedido: *"acomodar calendario"*.
   Listo cuando: el calendario mensual se lee bien en el celular (estilo Calendario de iOS: puntos de colores por día y la lista del día elegido abajo) y en desktop (tareas y parciales visibles en cada celda, sin desbordes). Se marcan hoy y los parciales. Tocar un día muestra sus tareas con hora. Se puede crear una tarea en ese día. Navegación fluida entre meses (botones + deslizar en el celu). Capturas antes y después en la bitácora.
 
-- [ ] **D2 · Gráficos que sirvan**
+- [ ] **D2 · Gráficos que sirvan** *(partido en D2a y D2b por el agente)*
+  - [x] **D2a** · Vista nueva "Progreso" (reemplaza a Estadísticas en el menú): 5 tarjetas que responden una pregunta cada una (esta semana vs la pasada a esta altura, ¿voy al día?, ¿llego a los parciales?, tiempo por materia en 14 días con su próximo parcial, constancia con racha y 28 días). Estado vacío, tests con el fixture. Lo viejo queda en "Estadísticas detalladas" (`#/stats/detalle`).
+  - [ ] **D2b** · Decidir qué se va de "Estadísticas detalladas" (KPIs repetidos, póster/informe, CSV) y borrarlo o integrarlo; pasar la lógica de semana a `computeStats` si conviene. Ver X3 (detalle del parcial) que encaja acá.
   Pedido: *"reacomodar gráficas solo las necesarias"* y *"los gráficos hoy son una mierda no me sirvan para nada"*.
   Listo cuando:
   - Se reemplaza la sección de estadísticas por **pocos gráficos que respondan preguntas reales** de un estudiante. Proponer y justificar en la bitácora. Punto de partida: ¿cuánto estudié esta semana vs la anterior? ¿Voy al día o atrasado? ¿Cuánto le dedico a cada materia vs lo que necesita según sus próximos parciales? ¿Cuántos días faltan para cada parcial y cuánto preparé? ¿Mi racha o constancia?
