@@ -72,7 +72,7 @@ test("el detalle del parcial muestra las tareas vinculadas a mano y su progreso"
   });
   await expect(page.locator("#view")).toContainText("Vinculada a mano 1");
   await expect(page.locator("#view")).toContainText("Vinculada a mano 2");
-  await expect(page.locator("#view .card", { hasText: "tareas del plan" }).locator(".statnum")).toHaveText("1/2");
+  await expect(page.locator("#view .evstat", { hasText: "tareas" }).locator(".evsn")).toHaveText("1/2"); // X3: la cifra vive en la fila compacta
   // "+ Tarea" desde el parcial deja el parcial elegido
   await page.locator("#view").getByRole("button", { name: "+ Tarea" }).click();
   await expect(page.locator("#qt_eval")).toHaveValue("e-bd1");

@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.26.0";
+const APP_VERSION = "2.27.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -2541,16 +2541,23 @@ function viewEvalDetail() {
     <button class="btn sm" onclick="openNoteEditor(null,'e:${e.id}')">Nota</button>
     <button class="btn sm" onclick="openEvalEditor('${e.id}')">Editar</button>
     <button class="btn sm danger" onclick="deleteEval('${e.id}')">Eliminar</button></div>`;
-  h += `<div class="grid3" style="margin-bottom:12px">
-    <div class="card" style="margin:0"><div class="statnum" style="color:${n <= 2 ? "var(--bad)" : "var(--tx)"}">${n < 0 ? "—" : n}</div><div class="statlab">${n < 0 ? "ya pasó (" + fmtD(e.date) + ")" : n === 0 ? "ES HOY · " + fmtD(e.date) : "días restantes · " + fmtD(e.date) + (e.time ? " " + esc(e.time) : "")}</div></div>
-    <div class="card" style="margin:0"><div class="statnum">${prep === null ? "—" : prep + "%"}</div><div class="statlab">nivel de preparación</div>${prep !== null ? `<div class="pbar" style="margin-top:6px"><i style="width:${prep}%;background:${prep < 40 ? "var(--bad)" : prep < 70 ? "var(--warn)" : "var(--ok)"}"></i></div>` : ""}</div>
-    <div class="card" style="margin:0"><div class="statnum">${fmtMin(real)}</div><div class="statlab">estudiado · ${fmtMin(pendMin)} pendiente estimado</div></div>
-  </div>`;
-  h += `<div class="grid3" style="margin-bottom:12px">
-    <div class="card" style="margin:0"><div class="statnum">${topicsDone}/${e.topics.length}</div><div class="statlab">temas entendidos o dominados</div></div>
-    <div class="card" style="margin:0"><div class="statnum">${planDone.length}/${plan.length}</div><div class="statlab">tareas del plan${planLate.length ? ` · <span style="color:var(--bad)">${planLate.length} atrasadas</span>` : ""}</div></div>
-    <div class="card" style="margin:0"><div class="statnum">${simul}</div><div class="statlab">simulacros / parciales hechos</div></div>
-  </div>`;
+  // X3 · un número grande arriba (días que faltan + preparación) y el resto en una fila compacta
+  const pc = prep === null ? "var(--tx3)" : prep < 40 ? "var(--bad)" : prep < 70 ? "var(--warn)" : "var(--ok)";
+  const when = esc(fmtD(e.date)) + (e.time ? " · " + esc(fmtTime(e.time)) : "");
+  h += `<div class="card evhero">
+    <div class="evleft">${n < 0 ? `<div class="evdays" style="color:var(--tx3)">—</div><div class="evdl">ya pasó · ${when}</div>`
+      : n === 0 ? `<div class="evdays" style="color:var(--bad)">Hoy</div><div class="evdl">${when}</div>`
+      : `<div class="evdays" style="color:${n <= 2 ? "var(--bad)" : "var(--tx)"}">${n}</div><div class="evdl">${n === 1 ? "día" : "días"} · ${when}</div>`}</div>
+    <div class="evright"><div class="evdl">preparación</div><div class="evprep" style="color:${pc}">${prep === null ? "—" : prep + "%"}</div>
+      ${prep !== null ? `<div class="pbar"><i style="width:${prep}%;background:${pc}"></i></div>` : `<div class="evdl">cargá temas o un plan</div>`}</div>
+  </div>
+  <div class="card evstats">
+    <div class="evstat"><span class="evsn">${fmtMin(real)}</span><span class="evsl">estudiado</span></div>
+    <div class="evstat"><span class="evsn">${topicsDone}/${e.topics.length}</span><span class="evsl">temas</span></div>
+    <div class="evstat"><span class="evsn">${planDone.length}/${plan.length}</span><span class="evsl">tareas${planLate.length ? ` · <b style="color:var(--bad)">${planLate.length} atras.</b>` : ""}</span></div>
+    <div class="evstat"><span class="evsn">${simul}</span><span class="evsl">simulacros</span></div>
+  </div>
+  ${pendMin ? `<p class="tiny" style="margin:-4px 2px 12px">Te quedan ${fmtMin(pendMin)} estimados de tareas pendientes.</p>` : ""}`;
   if (e.mode || e.place || e.targetGrade || e.grade !== "" || e.obs) {
     h += `<div class="card"><h3>Datos</h3><div class="muted" style="line-height:1.7">
       ${e.mode ? "Modalidad: <b>" + esc(e.mode) + "</b><br>" : ""}

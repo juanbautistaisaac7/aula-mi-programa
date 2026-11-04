@@ -320,6 +320,19 @@ body.is-dragging,body.is-dragging *{cursor:grabbing!important;user-select:none;-
 @keyframes pgGrowX{from{transform:scaleX(0)}}
 @media (prefers-reduced-motion:reduce){.pg-btrack i,.pg-strack i{animation:none}}
 @media(max-width:720px){.pg{grid-template-columns:1fr}.pg-big{font-size:1.9rem}}
+/* X3 · detalle del parcial: héroe + fila compacta */
+.evhero{display:flex;gap:18px;align-items:center;padding:16px 18px}
+.evleft{flex:1;min-width:0}
+.evdays{font-size:2.6rem;font-weight:800;letter-spacing:-.03em;line-height:1;font-variant-numeric:tabular-nums}
+.evdl{font-size:.76rem;color:var(--tx3);margin-top:4px}
+.evright{width:42%;max-width:220px;display:flex;flex-direction:column;gap:4px}
+.evprep{font-size:1.6rem;font-weight:800;letter-spacing:-.02em;line-height:1;font-variant-numeric:tabular-nums}
+.evright .pbar{flex:none;width:100%}
+.evstats{display:grid;grid-template-columns:repeat(4,1fr);padding:10px 4px}
+.evstat{display:flex;flex-direction:column;align-items:center;text-align:center;gap:2px;padding:2px 4px;min-width:0;border-left:1px solid var(--line)}
+.evstat:first-child{border-left:none}
+.evsn{font-weight:700;font-size:1rem;font-variant-numeric:tabular-nums;white-space:nowrap}
+.evsl{font-size:.66rem;color:var(--tx3)}
 /* calendario */
 .cal{display:grid;grid-template-columns:repeat(7,1fr);gap:5px}
 .cal .dow{font-size:.64rem;text-transform:uppercase;letter-spacing:.06em;color:var(--tx3);font-weight:700;text-align:center;padding:4px 0}
