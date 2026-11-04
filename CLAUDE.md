@@ -71,23 +71,23 @@ Usá horas reales (`TZ=America/Argentina/Buenos_Aires date +%H:%M`). Las entrada
 
 ## Última corrida de la noche (o cuando la app esté terminada)
 
-Si al arrancar ya son las **08:00 o más** (hora ARG), esta es la última corrida. Trabajá como siempre, pero reservá los últimos 15 minutos para el cierre:
+Si al arrancar ya es la **hora de cierre** indicada en el mensaje de la tarea programada (si no dice nada: 08:00, hora ARG), esta es la última corrida. Trabajá como siempre, pero reservá los últimos 15 minutos para el cierre:
 
 1. **Publicar en `main`** para que Bauti tenga la app nueva al levantarse. Solo si `npm test` da todo verde en `agente/mejoras`:
    ```bash
    git fetch origin main
-   git tag antes-del-agente origin/main && git push origin antes-del-agente   # punto de vuelta atrás
+   git push origin origin/main:refs/heads/antes-del-agente-$(TZ=America/Argentina/Buenos_Aires date +%F)   # punto de vuelta atrás (rama; el proxy rechaza tags)
    git checkout main && git pull origin main
    git merge --no-ff agente/mejoras -m "Mejoras de la noche (agente)"
    npm test   # tiene que seguir verde
    git push origin main
    ```
    Si algo falla o hay tests en rojo, **no** mergees: dejá todo en la rama y explicalo en el resumen. Si `.agente/LOCK` está en la rama, borralo antes de mergear.
-2. Escribí `docs/RESUMEN-NOCHE.md`, que es lo primero que Bauti va a abrir (y commitealo en las dos ramas):
+2. Escribí `docs/RESUMEN-NOCHE.md` (si ya existe uno de otra noche, movelo antes a `docs/resumenes/<fecha>.md`), que es lo primero que Bauti va a abrir (y commitealo en las dos ramas):
 - Qué quedó hecho, en una lista corta y concreta.
 - Qué quedó a medias o bloqueado, y por qué.
 - Cómo probarlo: qué tocar en la app, en qué orden, y qué mirar especialmente en el celular.
-- Si se publicó en `main` o no, y **cómo volver atrás** si algo no le gusta (tag `antes-del-agente` + la copia automática de datos en "Copias de seguridad").
+- Si se publicó en `main` o no, y **cómo volver atrás** si algo no le gusta (rama `antes-del-agente-<fecha>` + la copia automática de datos en "Copias de seguridad").
 - Estadísticas de la noche: corridas, commits y tests al principio vs al final.
 - Las 3 capturas más representativas.
 3. Creá `.agente/TERMINADO` para que no corra nada más.

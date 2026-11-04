@@ -126,6 +126,33 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
   - Funciona con 0 datos (estado vacío lindo) y con muchos datos (usar el fixture de A1).
   - Tests de que los números son correctos para el fixture.
 
+## Noche 2 (pedidos del 4/11 al mediodía) — HACER PRIMERO, en este orden: C4, G1, G2; después E1, F1, F2
+
+- [ ] **C4 · Tiempos de una serie por tramos, en segundos**
+  Pedido: *"las series todavía no son del todo cómodas, más que nada el tema de tiempos. si yo creo una tarea de hoy a un mes para adelante y quiero que las primeras 10 sean de una hora, luego 2 de 1h y media, luego de 2h y luego de 3.. es muy tedioso, haz ese paso más fácil, se me ocurre que se muestren todas en una lista y que puedas seleccionar rápido y cambiar horarios"*.
+  Listo cuando:
+  - Al **crear** una serie (control Repetir) y al **editarla**, hay una forma rápida de poner tiempos distintos por tramos. Propuesta (el agente puede mejorarla, documentando por qué): "Tiempos por tramos": filas del tipo `[10] tareas de [1 h]`, `[2] de [1 h 30]`, `[3] de [2 h]`, `el resto de [3 h]`, con "+ agregar tramo"; la vista previa de fechas muestra el tiempo de cada una al lado y el total de horas.
+  - En el editor de la serie, la lista de ocurrencias permite **selección rápida de rangos**: tocar la primera y Shift/clic o mantener apretado y arrastrar sobre la última en el celu selecciona todas las del medio; atajos "primeras N", "de la N a la M", "las que quedan". Con varias seleccionadas, poner el tiempo es 1 toque (chips: 30 m · 1 h · 1 h 30 · 2 h · 3 h · otro).
+  - Cada fila muestra sus minutos editables en el lugar (tocar el número y cambiarlo), sin abrir otra pantalla.
+  - Test con el caso exacto de Bauti: serie diaria de hoy a 30 días → 10 de 1 h, 2 de 1 h 30, el resto 2 h y las últimas 3 de 3 h; verificar los minutos de cada una. En desktop y mobile. Capturas.
+
+- [ ] **G1 · Años de cursado: un espacio nuevo por año** *(grande, toca el modelo: partirlo; datos sagrados)*
+  Pedido: *"esta app la quiero seguir usando el año que viene y todos los que me queden de facultad así que habrá que tener una forma de dividir el año ... y también separar por año osea que se cree como un nuevo espacio de trabajo totalmente nuevo para 4to yo poder crearlo"*.
+  Listo cuando:
+  - Existe el concepto **año / ciclo** (ej. "3.º año · 2026", "4.º año · 2027"): nombre, fechas de inicio y fin. Migración: todo lo actual pasa al primer ciclo ("3.º año · 2026" o "Año 2026" si no se sabe; editable), con copia previa.
+  - **Crear un ciclo nuevo** desde Configuración (o desde el selector de año): asistente corto que pregunta nombre y fechas y deja elegir qué traer: nada / materias que siguen (por ejemplo, las anuales o las que no aprobé) / hábitos / notas. Por defecto, espacio limpio.
+  - Un **selector de año** visible pero discreto (como el de cuentas de una app de Apple) para cambiar de espacio. Todas las vistas, Progreso y búsqueda muestran solo el año activo; los años viejos quedan en modo consulta (se pueden ver, no molestan).
+  - Las copias de seguridad incluyen todos los años.
+  - Tests: migración del fixture al primer año sin perder nada; crear 4.º año limpio; cambiar de año y ver solo lo suyo; volver al viejo y que todo esté intacto; recargar y que se mantenga el año activo.
+
+- [ ] **G2 · Resumen del año estilo "Spotify Wrapped"** (depende de G1)
+  Pedido: *"quiero poder ver por año el resumen del mismo como un spotify resumen bien interesante"*.
+  Listo cuando:
+  - Para cada año hay un **"Tu año en Aula"**: historia de pantallas a pantalla completa que se pasan tocando (como las stories), con animaciones y colores lindos. Ideas: horas totales estudiadas y su equivalente divertido, la materia a la que más le dedicaste, el mes y el día más productivo, parciales aprobados y mejor nota, racha más larga, tareas completadas, a qué hora estudiás más ("sos de estudiar de noche"), la serie más larga que completaste, una frase de cierre. Solo datos reales; si falta un dato se salta esa pantalla.
+  - Se puede **compartir/guardar** cada pantalla como imagen (canvas → PNG; en iPhone, `navigator.share` con archivo si está disponible, si no descarga).
+  - Disponible para el año en curso ("hasta ahora") y para los años cerrados. Con el fixture y con 0 datos (no se rompe).
+  - Tests de los números con el fixture y de que se navega entera sin errores; capturas de varias pantallas en mobile.
+
 ## E. Notificaciones al celular
 
 - [ ] **E1 · Recordatorios que llegan al celu** *(partido en E1a–E1c por el agente, corrida 07:05: es grande y toca el modelo)*
