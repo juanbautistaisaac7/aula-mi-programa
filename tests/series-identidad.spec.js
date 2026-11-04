@@ -21,8 +21,10 @@ test("un período de 5 días es una serie, con un seriesId compartido", async ({
   const errors = await openApp(page);
   await page.evaluate(() => openQuickTask("2026-11-05"));
   await page.fill("#qt_title", "Estudiar PE");
-  await page.selectOption("#qt_mode", "period");
-  await page.fill("#qt_date2", "2026-11-09");
+  // (C1) "Todos los días (período)" ahora es Repetir → Todos los días → hasta una fecha
+  await page.selectOption("#qt_rep", "daily");
+  await page.selectOption("#qt_repend", "until");
+  await page.fill("#qt_repuntil", "2026-11-09");
   await page.press("#qt_title", "Enter");
   const ids = await page.evaluate(() => [...new Set(state.tasks.filter(t => t.title === "Estudiar PE").map(t => t.seriesId))]);
   expect(ids).toHaveLength(1);

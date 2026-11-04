@@ -6,7 +6,29 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
-## Corrida 05:05–… (hora ARG) — B4, B5
+## Corrida 05:05–… (hora ARG) — B4, B5, C1
+
+### C1 · Crear repeticiones sin pensar
+
+**Plan:** un solo control "Repetir" al crear una tarea, con vista previa en vivo de las fechas exactas, y que sea imposible crear una serie sin querer.
+
+**Decisiones:**
+- **Dónde:** en "Nueva tarea", debajo de la fecha, solo cuando la programación es "Día fijo" (repetir una fecha límite o una tarea sin fecha no tiene sentido). Por defecto **"No se repite"**.
+- **Opciones:** No se repite / Todos los días / Cada N días / Ciertos días de la semana (botones redondos L M X J V S D, como el reloj del iPhone) / Cada semana / Cada mes. **Termina:** en una fecha / después de N veces / sin fin.
+- **Vista previa:** "Se van a crear 5 tareas (una serie): mar 10 nov · vie 13 nov · …", y el botón cambia a **"Crear 5 tareas"**: no hay forma de crear muchas sin verlo. Los errores aparecen ahí mismo en rojo y no dejan crear ("Elegí al menos un día", "La fecha final tiene que ser posterior…", máximo 120).
+- **Modelo interno (lo que pedía el backlog decidir):**
+  - **Con fin** → se crean tareas individuales con el mismo `seriesId`. Cada una se puede mover (B4), completar o editar sola, que es justamente lo que pedías ("a una de ellas sumarle 10 minutos").
+  - **Sin fin** → **una sola tarea** con `recur` (el modelo que ya existía), porque no se pueden crear infinitas.
+  - Las dos usan el **mismo cálculo de fechas** (`occursOn`), así la vista previa y lo que después aparece en el calendario no pueden diferir.
+  - "Cada mes" el día 31 se saltea los meses que no tienen 31 (igual que antes). Lo dejo anotado por si preferís "último día del mes".
+- **Saqué "Todos los días (período)"** de Programación: ahora es Repetir → Todos los días → Hasta una fecha (mismo resultado, una serie). Tuve que **actualizar un test viejo** (`series-identidad`, "un período de 5 días es una serie") para que use el control nuevo; lo que verifica no cambió.
+- **No hizo falta migración**: no cambia la forma de los datos.
+
+**Salió bien:** los tests nuevos pasaron a la primera.
+**Salió mal / intentos fallidos:** al correr todo, un test viejo del menú falló **una vez** (el menú todavía no estaba dibujado; no se repitió en 40 corridas). La causa era el test, no la app: `openApp` esperaba a que existiera `state`, pero la app dibuja recién después de guardar la copia diaria. Ahora el helper también espera al menú dibujado.
+**Tests:** +7 (×2 = 14): por defecto no repite; cada 3 días × 5 con fechas exactas, serie y deshacer; días de la semana hasta una fecha; diario/semanal/mensual (incluido el 31); sin fin crea una sola tarea que aparece los días correctos tras recargar; errores; los botones de días entran en el celu. `npm test`: 140 pasaron, 0 fallaron.
+**Capturas:** [cada 3 días, 5 veces (mobile claro)](capturas/C1-nueva-mobile-light.png) · [días de la semana, sin fin (mobile oscuro)](capturas/C1-dias-mobile-dark.png) · [desktop claro](capturas/C1-nueva-desktop-light.png)
+**Para Bauti:** lo siguiente es C2 (editar la serie: +1 h 30 a todas, +10 min a una sola). Con C1 ya podés crear "5 tareas cada 3 días" en un paso y ver las fechas antes.
 
 ### B5 · La lista completa se limpia sola
 

@@ -84,7 +84,7 @@ Pedido: *"hacer más intuitiva fácil y no tan compleja todo lo que sea series y
 
 Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTask`) y "recurrentes" (`t.recur`, ver `occursOn`), más el editor de series (`viewSeries`, `seriesApplyTime`, `seriesExtend`, `seriesTrim`...). Para el usuario tendría que ser **un solo concepto: "Repetir"**.
 
-- [ ] **C1 · Crear repeticiones sin pensar** (depende de A3)
+- [x] **C1 · Crear repeticiones sin pensar** (depende de A3)
   Listo cuando:
   - Al crear una tarea hay un control "Repetir" claro: no se repite / todos los días / cada N días / ciertos días de la semana / cada semana / cada mes. Fin: en una fecha / después de N veces / sin fin.
   - **Vista previa en vivo** mientras configurás: mini calendario o lista con las fechas exactas que se van a crear ("Se van a crear 5 tareas: lun 10, jue 13, dom 16, mié 19, sáb 22"). Cero sorpresas.

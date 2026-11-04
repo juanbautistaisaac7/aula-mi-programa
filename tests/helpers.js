@@ -7,7 +7,8 @@ async function openApp(page) {
   page.on("pageerror", e => errors.push("pageerror: " + e.message));
   page.on("console", m => { if (m.type() === "error") errors.push("console: " + m.text()); });
   await page.goto("/");
-  await page.waitForFunction(() => typeof state !== "undefined" && state && Array.isArray(state.tasks));
+  // state existe antes del primer render (init espera la copia diaria): esperamos también al menú dibujado
+  await page.waitForFunction(() => typeof state !== "undefined" && state && Array.isArray(state.tasks) && !!document.querySelector("#sidebar a"));
   return errors;
 }
 
@@ -29,7 +30,8 @@ async function createQuickTask(page, title, opts = {}) {
 /** Recarga y espera a que el estado vuelva desde IndexedDB. */
 async function reload(page) {
   await page.reload();
-  await page.waitForFunction(() => typeof state !== "undefined" && state && Array.isArray(state.tasks));
+  // state existe antes del primer render (init espera la copia diaria): esperamos también al menú dibujado
+  await page.waitForFunction(() => typeof state !== "undefined" && state && Array.isArray(state.tasks) && !!document.querySelector("#sidebar a"));
 }
 
 /** Lee un fixture de tests/fixtures (devuelve una copia nueva cada vez). */

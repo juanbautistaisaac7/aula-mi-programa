@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.18.0";
+const APP_VERSION = "2.19.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -3628,21 +3628,95 @@ function openQuickTask(date, subjectId, projectId) {
       <div><label for="qt_min">Tiempo estimado (min)</label><input id="qt_min" type="number" value="60" min="0" step="5"></div>
     </div>
     <div class="mrow">
-      <div><label for="qt_mode">Programación</label><select id="qt_mode" onchange="byId('qt_p2').style.display=this.value==='period'?'block':'none';byId('qt_timewrap').style.display=this.value==='none'?'none':'block'">
+      <div><label for="qt_mode">Programación</label><select id="qt_mode" onchange="byId('qt_timewrap').style.display=this.value==='none'?'none':'block';byId('qt_repwrap').style.display=this.value==='d'?'block':'none';repPreview()">
         <option value="d">Día fijo</option>
         <option value="due">Fecha límite (flexible)</option>
-        <option value="period">Todos los días (período)</option>
         <option value="none">Sin fecha</option></select></div>
-      <div><label for="qt_date">Fecha${""}</label><input id="qt_date" type="date" value="${date || todayISO()}"></div>
+      <div><label for="qt_date">Fecha${""}</label><input id="qt_date" type="date" value="${date || todayISO()}" onchange="repPreview()"></div>
       <div id="qt_timewrap"><label for="qt_time">Hora (opcional)</label><input id="qt_time" type="time"></div>
     </div>
-    <div id="qt_p2" style="display:none">
-      <label for="qt_date2">Hasta (inclusive)</label><input id="qt_date2" type="date" value="${date || todayISO()}">
-      <p class="tiny" style="margin-top:4px">Se crea una tarea igual por cada día del período, cada una con su tiempo estimado. Ideal para “practicar con parciales viejos, 1 h por día hasta el examen”.</p>
-    </div>
+    ${repeatControls(date || todayISO())}
     <div class="mfoot"><span class="tiny grow">Después podés abrirla para completar detalles avanzados.</span>
       <button class="btn" onclick="closeModal()">Cancelar</button>
-      <button class="btn primary" onclick="saveQuickTask()">Crear tarea</button></div>`);
+      <button class="btn primary" id="qt_save" onclick="saveQuickTask()">Crear tarea</button></div>`);
+  repPreview();
+}
+/* ---------- C1 · Repetir ----------
+   Un solo concepto para el usuario. Internamente:
+   - Con fin (fecha o cantidad): se crean tareas individuales con el mismo seriesId.
+     Así cada una se edita, se mueve o se completa por separado.
+   - Sin fin: UNA tarea con t.recur (el modelo que ya existía), porque no se pueden
+     crear infinitas. Las fechas de las dos salen del mismo cálculo (occursOn). */
+const REP_MAX = 120;
+function repeatControls(start) {
+  const wd = [[1, "L"], [2, "M"], [3, "X"], [4, "J"], [5, "V"], [6, "S"], [0, "D"]];
+  return `<div id="qt_repwrap">
+    <div class="mrow">
+      <div><label for="qt_rep">Repetir</label><select id="qt_rep" onchange="repPreview()">
+        <option value="none">No se repite</option><option value="daily">Todos los días</option><option value="interval">Cada N días</option>
+        <option value="days">Ciertos días de la semana</option><option value="weekly">Cada semana</option><option value="monthly">Cada mes</option></select></div>
+      <div class="repx" id="qt_repnwrap"><label for="qt_repn">Cada cuántos días</label><input id="qt_repn" type="number" min="2" max="60" value="2" oninput="repPreview()"></div>
+    </div>
+    <div class="repx" id="qt_repdayswrap"><label>Días</label><div class="wdpick" id="qt_repdays">${wd.map(([n, l]) => `<button type="button" data-wd="${n}" aria-pressed="false" onclick="this.setAttribute('aria-pressed',this.getAttribute('aria-pressed')==='true'?'false':'true');repPreview()">${l}</button>`).join("")}</div></div>
+    <div class="mrow repx" id="qt_rependwrap">
+      <div><label for="qt_repend">Termina</label><select id="qt_repend" onchange="repPreview()">
+        <option value="until">En una fecha</option><option value="count">Después de N veces</option><option value="never">Sin fin</option></select></div>
+      <div class="repx" id="qt_repuntilwrap"><label for="qt_repuntil">Hasta (inclusive)</label><input id="qt_repuntil" type="date" value="${addDays(start, 6)}" onchange="repPreview()"></div>
+      <div class="repx" id="qt_repcountwrap"><label for="qt_repcount">Cantidad de veces</label><input id="qt_repcount" type="number" min="1" max="${REP_MAX}" value="5" oninput="repPreview()"></div>
+    </div>
+    <div id="qt_preview" class="reppreview" role="status" aria-live="polite" hidden></div>
+  </div>`;
+}
+/* Fechas de una repetición. rule = {kind, n, days}; end = {type: until|count|never, date, n}.
+   Con "never" devuelve las primeras `peek` (para la vista previa). */
+function repeatDates(start, rule, end, peek) {
+  const fake = { recur: { kind: rule.kind, n: rule.n, days: rule.days || [], start } };
+  const max = end.type === "count" ? Math.min(end.n | 0, REP_MAX) : end.type === "never" ? (peek || 5) : REP_MAX + 1;
+  const out = [];
+  for (let d = start, i = 0; out.length < max && i < 3700; d = addDays(d, 1), i++) {
+    if (end.type === "until" && d > end.date) break;
+    if (occursOn(fake, d)) out.push(d);
+  }
+  return out;
+}
+/* Lee el formulario. Devuelve {rule, end, dates} o {error}. */
+function readRepeat() {
+  const kind = byId("qt_rep") ? byId("qt_rep").value : "none";
+  if (kind === "none" || byId("qt_mode").value !== "d") return null;
+  const start = byId("qt_date").value || todayISO();
+  const rule = { kind };
+  if (kind === "interval") { rule.n = parseInt(byId("qt_repn").value) || 0; if (rule.n < 2) return { error: "Poné cada cuántos días (2 o más)." }; }
+  if (kind === "days") {
+    rule.days = [...document.querySelectorAll('#qt_repdays [aria-pressed="true"]')].map(b => +b.dataset.wd);
+    if (!rule.days.length) return { error: "Elegí al menos un día de la semana." };
+  }
+  const et = byId("qt_repend").value, end = { type: et };
+  if (et === "until") { end.date = byId("qt_repuntil").value; if (!end.date || end.date < start) return { error: "La fecha final tiene que ser igual o posterior al inicio (" + fmtD(start) + ")." }; }
+  if (et === "count") { end.n = parseInt(byId("qt_repcount").value) || 0; if (end.n < 1) return { error: "Poné cuántas veces." }; if (end.n > REP_MAX) return { error: "Máximo " + REP_MAX + " veces. Si es para siempre, elegí “Sin fin”." }; }
+  const dates = repeatDates(start, rule, end, 5);
+  if (et !== "never" && dates.length > REP_MAX) return { error: "Serían más de " + REP_MAX + " tareas. Acortá el período o elegí “Sin fin”." };
+  if (!dates.length) return { error: "Con esta configuración no cae ningún día." };
+  return { start, rule, end, dates };
+}
+function repPreview() {
+  const kind = byId("qt_rep") ? byId("qt_rep").value : "none";
+  const show = (id, on) => { const el = byId(id); if (el) el.style.display = on ? "" : "none"; };
+  show("qt_repnwrap", kind === "interval");
+  show("qt_repdayswrap", kind === "days");
+  show("qt_rependwrap", kind !== "none");
+  const et = byId("qt_repend") ? byId("qt_repend").value : "until";
+  show("qt_repuntilwrap", et === "until"); show("qt_repcountwrap", et === "count");
+  const pv = byId("qt_preview"), btn = byId("qt_save");
+  if (!pv) return;
+  const r = readRepeat();
+  pv.hidden = !r; pv.classList.toggle("bad", !!(r && r.error));
+  if (btn) btn.textContent = r && !r.error && r.end.type !== "never" ? "Crear " + r.dates.length + " tareas" : "Crear tarea";
+  if (!r) return;
+  if (r.error) { pv.innerHTML = esc(r.error); return; }
+  const list = r.dates.slice(0, 14).map(d => `<span class="repdate">${fmtD(d)}</span>`).join("") + (r.dates.length > 14 ? `<span class="repdate more">y ${r.dates.length - 14} más</span>` : "");
+  pv.innerHTML = r.end.type === "never"
+    ? `<b>Sin fin:</b> una sola tarea que se repite. Próximas: <div class="repdates">${list}<span class="repdate more">…</span></div>`
+    : `<b>Se van a crear ${r.dates.length} tarea${r.dates.length > 1 ? "s" : ""}</b>${r.dates.length > 1 ? " (una serie)" : ""}: <div class="repdates">${list}</div>`;
 }
 function saveQuickTask() {
   const title = byId("qt_title").value.trim();
@@ -3655,15 +3729,19 @@ function saveQuickTask() {
     projectId: link.startsWith("p:") ? link.slice(2) : null,
     evalId: byId("qt_eval").value || null // planId queda reservado al generador de planes: "Regenerar plan" solo borra esas
   };
-  if (mode === "period") {
-    const d2 = byId("qt_date2").value || date;
-    if (d2 < date) { toast("La fecha final debe ser igual o posterior a la inicial"); return; }
-    const total = Math.round((dToDate(d2) - dToDate(date)) / 864e5) + 1;
-    if (total > 120) { toast("Máximo 120 días por período"); return; }
-    const ids = [], seriesId = "sr-" + uid();
-    for (let d = date; d <= d2; d = addDays(d, 1)) ids.push(quickAddTask(Object.assign({ date: d, seriesId }, base)).id);
+  const r = readRepeat();
+  if (r && r.error) { toast(r.error); repPreview(); return; }
+  if (r && r.end.type === "never") {
+    const t = quickAddTask(Object.assign({ date: null, recur: Object.assign({ start: r.start }, r.rule, { days: r.rule.days || [] }) }, base));
     closeModal(); render();
-    toast(total + " tareas creadas: " + fmtD(date) + " a " + fmtD(d2), () => { state.tasks = state.tasks.filter(x => !ids.includes(x.id)); change(); render(); });
+    toast("Tarea que se repite creada", () => { state.tasks = state.tasks.filter(x => x.id !== t.id); change(); render(); });
+    return;
+  }
+  if (r) {
+    const ids = [], seriesId = r.dates.length > 1 ? "sr-" + uid() : null;
+    for (const d of r.dates) ids.push(quickAddTask(Object.assign({ date: d, seriesId }, base)).id);
+    closeModal(); render();
+    toast(ids.length + " tareas creadas: " + fmtD(r.dates[0]) + " a " + fmtD(r.dates[r.dates.length - 1]), () => { state.tasks = state.tasks.filter(x => !ids.includes(x.id)); change(); render(); });
     return;
   }
   const t = quickAddTask(Object.assign({ date: mode === "d" ? date : null, due: mode === "due" ? date : null }, base));
