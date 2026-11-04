@@ -6,7 +6,14 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
-## Corrida 04:08–(en curso) (hora ARG) — A1, X1, A2, A3, A4a, A4b, B1, B2, X2, B3
+## Corrida 04:08–04:49 (hora ARG) — A1, X1, A2, A3, A4a, A4b, B1, B2, X2, B3
+
+**Resumen de la corrida:** 10 ítems cerrados (7 del backlog + 3 que encontré yo: X1, X2, y A4 partido en dos). Tests: de 6 a 100 (50 tests × desktop y mobile), todos en verde en cada commit. Versión de la app: 2.6.0 → 2.16.0; esquema de datos: v1 → v3 (con copia automática antes de migrar). Lo siguiente en el backlog es **B4** (mover tareas a otro día arrastrando con el dedo + "Mover a…"); no lo empecé porque quedaban menos de 10 minutos y es un ítem grande: mejor arrancarlo entero en la próxima corrida. Quedan anotados **X3** (detalle del parcial en el celu) y los detalles feos de la vista Series (para C1–C3).
+
+**Commits:** `153013f` A1 · `a5923f1` X1 · `7620e4b` A2 · `a811399` A3 · `8bf9409` A4a · `ab2c6d4` A4b · `7706584` B1 · `27d575c` B2 · `4ba1ff5` X2 · `935c46f` B3 (más los de candado).
+
+**Cómo trabajé (para aprender):** cada ítem siguió el mismo ciclo: leer el código involucrado con `grep` por secciones, escribir los tests y comprobar que **fallan con el código viejo** (lo verifiqué con `git stash` en A2, A3 y X2), implementar, correr todo, sacar capturas desktop/mobile × claro/oscuro y mirarlas. Las capturas encontraron 7 problemas que los tests no veían (selector ilegible en oscuro, filas desalineadas, campos cortados en el celu, botones pesados, el fixture mal armado…). Por eso la revisión visual no es opcional.
+
 
 ### B3 · Tareas → parciales → materias
 
