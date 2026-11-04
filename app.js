@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.25.0";
+const APP_VERSION = "2.26.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -3249,17 +3249,9 @@ function viewStatsDetail() {
   const kpi = (v, l, extra) => `<div class="card"><div class="statnum">${v}</div><div class="statlab">${l}</div>${extra || ""}</div>`;
   h += `<div class="statgrid">
     ${kpi(hClock(st.total), "total estudiado" + (st.prevTotal ? ` · <span style="color:${dTot >= 0 ? "var(--ok)" : "var(--bad)"}">${dTot >= 0 ? "▲" : "▼"} ${hClock(Math.abs(dTot))} vs período anterior</span>` : ""))}
-    ${kpi(hClock(st.avgCalendar), "promedio por día (todos los días)")}
-    ${kpi(hClock(st.avgActive), "promedio por día activo")}
-    ${kpi(hClock(st.median), "mediana diaria")}
-    ${kpi(st.best.d ? hClock(st.best.m) : "—", st.best.d ? "mejor día · " + fmtD(st.best.d) : "mejor día")}
     ${kpi(st.activeDays + "<span style='font-size:1rem;color:var(--tx3)'>/" + st.elapsed.length + "</span>", "días con actividad (" + st.coverage + "% de constancia)")}
-    ${kpi(st.streak, "racha actual · mejor: " + st.bestStreak + " días")}
-    ${kpi(st.sess.length, "sesiones de estudio registradas")}
-    ${kpi(hClock(st.sessionAvg), "duración media por sesión")}
+    ${kpi(st.best.d ? hClock(st.best.m) : "—", st.best.d ? "mejor día · " + fmtD(st.best.d) : "mejor día")}
     ${kpi(st.doneR.length, "tareas completadas" + (st.prevDone ? ` · ${st.doneR.length >= st.prevDone ? "▲" : "▼"} ${Math.abs(st.doneR.length - st.prevDone)} vs anterior` : ""))}
-    ${kpi(st.withLim ? Math.round(st.onTime / st.withLim * 100) + "%" : "—", "completadas en fecha (" + st.onTime + "/" + st.withLim + ")")}
-    ${kpi(st.overdue, st.overdue ? `tareas atrasadas <span style="color:var(--bad)">a resolver</span>` : "tareas atrasadas · estás al día")}
   </div>`;
 
   /* --- Evolución --- */
@@ -3289,21 +3281,9 @@ function viewStatsDetail() {
     ...st.projs.map(x => ({ label: x.p.name, short: x.p.name.slice(0, 6), v: x.min, color: C.tx3 }))
   ];
   if (distItems.length) {
-    h += `<div class="grid2">
-      <div class="card" style="margin:0"><h3>Distribución del tiempo</h3>${chartDonut(distItems, C, 440, 210, { center: hClock(st.total), sub: R.short.toLowerCase() })}</div>
-      <div class="card" style="margin:0"><h3>Horas por materia</h3>
-        ${chartHBars(distItems.slice(0, 9).map(x => ({ label: x.short, color: x.color, v: x.v, full: x.label + " · " + fmtMin(x.v) })), C, 430, Math.max(80, distItems.slice(0, 9).length * 28 + 14))}</div>
-    </div>`;
+    h += `<div class="card"><h3>Horas por materia</h3>
+      ${chartHBars(distItems.slice(0, 9).map(x => ({ label: x.short, color: x.color, v: x.v, full: x.label + " · " + fmtMin(x.v) })), C, 860, Math.max(80, distItems.slice(0, 9).length * 28 + 14))}</div>`;
   }
-
-  /* --- Composición del tiempo --- */
-  const compParts = [
-    { label: "Con temporizador (antes)", v: st.comp.pomo, color: C.acc },
-    { label: "Tareas completadas", v: st.comp.auto, color: C.ok },
-    { label: "Manual", v: st.comp.manual, color: C.warn },
-    { label: "Otras", v: st.comp.otro, color: C.tx3 }
-  ].filter(p => p.v > 0);
-  if (compParts.length) h += `<div class="card"><h3>¿De dónde vienen las horas?<div class="grow"></div><span class="tiny">cómo se registró cada minuto</span></h3>${chartStack(compParts, C, 860, 54)}</div>`;
 
   /* --- Precisión de estimación --- */
   if (st.timed.length) {
@@ -3322,19 +3302,6 @@ function viewStatsDetail() {
     h += `</div>`;
   }
 
-  /* --- Tareas --- */
-  const typeItems = Object.entries(st.byType).sort((a, b) => b[1] - a[1]).map(([k, v], i) => ({ label: TASK_TYPES[k] || k, v, color: SUBJ_COLORS[i % SUBJ_COLORS.length] }));
-  h += `<div class="grid2">
-    <div class="card" style="margin:0"><h3>Tareas del período<div class="grow"></div><span class="tiny">${st.createdR.length} creadas · ${st.doneR.length} completadas</span></h3>
-      <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
-        <div style="width:112px">${chartRing(st.createdR.length ? clamp(st.doneR.length / Math.max(st.createdR.length, 1) * 100, 0, 100) : 0, C, 112, C.acc, (st.createdR.length ? Math.round(st.doneR.length / st.createdR.length * 100) : 0) + "%", "cerradas")}</div>
-        <div style="flex:1;min-width:150px" class="tiny">
-          ${Object.entries(st.statusCount).filter(([, v]) => v > 0).map(([k, v]) => `<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--line2)"><span>${TASK_STATUS[k]}</span><b>${v}</b></div>`).join("")}
-        </div></div></div>
-    <div class="card" style="margin:0"><h3>Qué tipo de trabajo hiciste</h3>
-      ${typeItems.length ? chartHBars(typeItems.map(x => ({ label: x.label.length > 12 ? x.label.slice(0, 11) + "…" : x.label, v: x.v, color: x.color, vLabel: x.v + (x.v === 1 ? " tarea" : " tareas"), full: x.label + ": " + x.v })), C, 430, Math.max(70, typeItems.length * 26 + 12), { labelW: 100 }) : '<div class="empty">Sin tareas completadas en este período.</div>'}</div>
-  </div>`;
-
   /* --- Notas y evaluaciones --- */
   if (st.graded.length) {
     const apr = st.graded.filter(x => x.g >= 4).length;
@@ -3342,37 +3309,9 @@ function viewStatsDetail() {
       <span class="tiny">promedio ${st.gradeAvg} · ${apr}/${st.graded.length} aprobadas</span></h3>${chartGrades(st.graded.slice(-14), C, 860, 190)}</div>`;
   }
 
-  /* --- Hábitos --- */
-  const hb = st.habits.filter(x => x.due > 0);
-  if (hb.length) {
-    h += `<div class="card"><h3>Cumplimiento de hábitos<div class="grow"></div><span class="tiny">en ${esc(R.label.toLowerCase())}</span></h3>
-      ${chartHBars(hb.map(x => ({ label: x.h.name.length > 14 ? x.h.name.slice(0, 13) + "…" : x.h.name, v: x.pct, color: x.pct >= 80 ? C.ok : x.pct >= 50 ? C.warn : C.bad, vLabel: x.pct + "% (" + x.ok + "/" + x.due + ")", full: x.h.name })), C, 860, Math.max(70, hb.length * 28 + 12), { labelW: 120 })}</div>`;
-  }
-
   /* --- Mapa de calor --- */
   h += `<div class="card"><h3>Mapa de actividad<div class="grow"></div><span class="tiny">último año · cada cuadrito es un día</span></h3>
     <div style="overflow-x:auto">${chartHeat(C, 800, 130, todayISO(), 53)}</div></div>`;
-
-  /* --- Ranking de materias (tabla) --- */
-  if (st.subs.length) {
-    h += `<div class="card"><h3>Detalle por materia</h3>
-      <div style="overflow-x:auto"><table class="stt">
-      <thead><tr><th>Materia</th><th style="text-align:right">Horas</th><th style="text-align:right">% del total</th>
-        <th style="text-align:right">Sesiones</th><th style="text-align:right">Completadas</th>
-        <th style="text-align:right">Pendientes</th><th style="text-align:right">Prom./día activo</th></tr></thead><tbody>`;
-    for (const x of st.subs) {
-      const dAct = new Set(st.sess.filter(s => s.subjectId === x.s.id).map(s => s.date)).size;
-      h += `<tr style="cursor:pointer" onclick="go('subject','${x.s.id}')">
-        <td><span class="tag" style="background:${x.s.color}1c;color:${x.s.color}">${esc(x.s.short)}</span> ${esc(x.s.name)}</td>
-        <td style="text-align:right;font-variant-numeric:tabular-nums"><b>${hClock(x.min)}</b></td>
-        <td style="text-align:right;color:var(--tx3)">${st.total ? Math.round(x.min / st.total * 100) : 0}%</td>
-        <td style="text-align:right;color:var(--tx3)">${x.sessions}</td>
-        <td style="text-align:right;color:var(--ok)">${x.done}</td>
-        <td style="text-align:right;color:${x.pend ? "var(--warn)" : "var(--tx3)"}">${x.pend}</td>
-        <td style="text-align:right;color:var(--tx3)">${dAct ? hClock(x.min / dAct) : "—"}</td></tr>`;
-    }
-    h += `</tbody></table></div></div>`;
-  }
 
   /* --- Conclusiones automáticas --- */
   const ins = buildInsights(st, C);

@@ -66,3 +66,19 @@ test("Progreso con atrasadas: las cuenta y lleva a resolverlas", async ({ page }
   await expect(page).toHaveURL(/#\/today/);
   expect(errors).toEqual([]);
 });
+
+// D2b · Estadísticas detalladas: solo lo que responde algo; fuera lo repetido y lo del temporizador viejo.
+test("Estadísticas detalladas queda corta: 4 números, evolución y horas por materia", async ({ page }) => {
+  await seedState(page, fixture("estado-v2.6.json"));
+  const errors = await openApp(page);
+  await page.evaluate(() => go("stats", "detalle"));
+  const v = page.locator("#view");
+  await expect(v.locator(".statgrid .card")).toHaveCount(4);
+  await expect(v).toContainText("Evolución");
+  await expect(v).toContainText("Horas por materia");
+  for (const fuera of ["¿De dónde vienen las horas?", "temporizador", "Distribución del tiempo", "Detalle por materia", "Qué tipo de trabajo", "Cumplimiento de hábitos", "mediana diaria"])
+    await expect(v).not.toContainText(fuera);
+  await v.getByRole("button", { name: "Volver a Progreso" }).click();
+  await expect(v.locator("h2")).toHaveText("Progreso");
+  expect(errors).toEqual([]);
+});
