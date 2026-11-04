@@ -162,3 +162,5 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
 - [ ] **X3 · Detalle del parcial en el celu: 6 tarjetas de números antes de lo importante**
   Por qué: en la captura de B3 (mobile) el detalle de un parcial apila 6 tarjetas grandes (días, preparación, estudiado, temas, tareas, simulacros) y las tareas quedan varias pantallas más abajo. Estilo Apple: un número grande arriba (días que faltan + preparación) y el resto compacto en una fila. Encaja en D2/F1.
 
+- [x] **X4 · Pulido de series después de C3** *(agregado por el agente)*
+  Por qué: al revisar las capturas de C3: (1) el editor de una tarea de serie seguía ofreciendo el viejo "Recurrencia", que convertiría una ocurrencia en otra repetición infinita (confuso y peligroso); (2) el modal de una serie "sin fin" no decía cada cuánto se repetía ni cómo cambiar sus minutos u hora.

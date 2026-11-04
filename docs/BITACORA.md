@@ -6,7 +6,14 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
-## Corrida 06:06–… (hora ARG) — C2a, C2b, C3, …
+## Corrida 06:06–… (hora ARG) — C2a, C2b, C3, X4
+
+### X4 · Pulido de series (lo vi en las capturas de C3)
+
+- En el editor de una tarea que es parte de una serie **ya no aparece "Recurrencia"** (la vieja): ponerle "Todos los días" a una ocurrencia la convertía en otra repetición infinita dentro de la serie. Para repetir está "Repetir" al crear y el editor de la serie.
+- El modal de una serie **sin fin** ahora dice su regla y sus minutos ("todos los días, sin fin · 20 m cada vez") y tiene **"Editar la tarea"**, que es donde se cambian los minutos, la hora y cada cuánto se repite. El botón de borrar dice "Eliminar" (es una sola tarea) y "Guardar nombre y materia" pasó a "Guardar" (se partía en dos renglones).
+- **Tests:** +1 (×2) y una verificación más en el de C3. `npm test`: 170 pasaron, 0 fallaron.
+- **Capturas:** [serie sin fin (mobile oscuro)](capturas/C3-sinfin-mobile-dark.png)
 
 ### C3 · Series bien integradas
 

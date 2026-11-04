@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.22.0";
+const APP_VERSION = "2.22.1";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -1744,7 +1744,7 @@ function refreshSeriesModal() {
 function seriesModalHTML(s) {
   const lb = seriesLabel(s), recur = s.kind === "recur", today = todayISO();
   let h = `<h3>${esc(s.title)}</h3>
-    <p class="tiny">${lb ? esc(lb.full) + " · " : ""}${recur ? "tarea que se repite sin fin" : `${s.tasks.length} tareas · ${s.doneN} hechas · ${fmtMin(s.totMin)} en total`}</p>`;
+    <p class="tiny">${lb ? esc(lb.full) + " · " : ""}${recur ? esc(recurLabel(s.tasks[0].recur)) + ", sin fin · " + fmtMin(s.tasks[0].estMin) + " cada vez" : `${s.tasks.length} tareas · ${s.doneN} hechas · ${fmtMin(s.totMin)} en total`}</p>`;
   if (!recur) {
     const ids = new Set(s.tasks.map(t => t.id));
     ui.srSel = new Set([...ui.srSel].filter(id => ids.has(id))); // las borradas ya no cuentan
@@ -1805,16 +1805,19 @@ function seriesModalHTML(s) {
     </details>`;
     h += `<details class="srmore"><summary>Más opciones</summary>`;
   } else {
-    h += `<details class="srmore" open><summary>Opciones</summary>`;
+    // sin fin es una sola tarea: sus minutos, hora y regla se cambian en su editor
+    h += `<div class="serbanner" style="margin-top:12px"><span>Minutos, hora y cada cuánto se repite</span>
+      <button type="button" class="btn sm" onclick="closeModal();openTaskEditor('${escA(s.tasks[0].id)}')">Editar la tarea</button></div>
+      <details class="srmore" open><summary>Nombre y materia</summary>`;
   }
   h += `<label for="sr_title">Renombrar</label><input id="sr_title" value="${escA(s.title)}">
     <label for="sr_link">Materia / proyecto</label><select id="sr_link">${linkOptions(s.subjectId ? "s:" + s.subjectId : s.projectId ? "p:" + s.projectId : "")}</select>
     <div class="mrow" style="margin-top:10px">
       <div><label for="sr_prio">Prioridad</label><select id="sr_prio">${PRIO.map((p, i) => `<option value="${i}"${(s.tasks[0].prio ?? 1) === i ? " selected" : ""}>${p}</option>`).join("")}</select></div>
-      <div style="display:flex;align-items:flex-end"><button class="btn" style="width:100%" onclick="seriesApplyMeta()">Guardar nombre y materia</button></div>
+      <div style="display:flex;align-items:flex-end"><button class="btn" style="width:100%" onclick="seriesApplyMeta()">Guardar</button></div>
     </div></details>`;
   h += `<div class="mfoot">
-    <button class="btn danger" onclick="seriesDelete(true)">Eliminar toda la serie</button>
+    <button class="btn danger" onclick="seriesDelete(true)">${recur ? "Eliminar" : "Eliminar toda la serie"}</button>
     <div class="grow"></div>
     <button class="btn" onclick="closeModal()">Listo</button></div>`;
   return h;
@@ -4008,7 +4011,7 @@ function openTaskEditor(id) {
     </div>
     <div class="mrow">
       <div><label for="te_tags">Etiquetas (separadas por coma)</label><input id="te_tags" value="${escA((t.tags || []).join(", "))}"></div>
-      <div><label for="te_rec">Recurrencia</label><select id="te_rec" onchange="byId('te_recdays').style.display=(this.value==='days')?'block':'none';byId('te_recn').style.display=(this.value==='interval')?'block':'none'">
+      <div${sp ? ' style="display:none"' : ""}><label for="te_rec">Recurrencia</label><select id="te_rec" onchange="byId('te_recdays').style.display=(this.value==='days')?'block':'none';byId('te_recn').style.display=(this.value==='interval')?'block':'none'">
         <option value="">No se repite</option>
         <option value="daily" ${rec.kind === "daily" ? "selected" : ""}>Todos los días</option>
         <option value="days" ${rec.kind === "days" ? "selected" : ""}>Días específicos</option>

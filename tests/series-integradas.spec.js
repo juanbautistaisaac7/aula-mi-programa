@@ -20,12 +20,15 @@ test("el editor de una tarea muestra 'Parte de una serie · 3 de 5' y abre la se
   const ids = await serie(page);
   await page.evaluate(id => openTaskEditor(id), ids[2]);
   await expect(page.locator(".serbanner")).toContainText("Parte de una serie · 3 de 5");
+  // la "Recurrencia" vieja no se ofrece en una tarea de serie (convertiría una ocurrencia en otra repetición)
+  await expect(page.locator("#te_rec")).toBeHidden();
   await page.getByRole("button", { name: "Ver la serie" }).click();
   await expect(page.locator("#sr_occ .occ")).toHaveCount(5);
   // una tarea suelta no muestra nada
   const solo = await page.evaluate(() => quickAddTask({ title: "Suelta", date: "2026-11-10" }).id);
   await page.evaluate(id => openTaskEditor(id), solo);
   await expect(page.locator(".serbanner")).toHaveCount(0);
+  await expect(page.locator("#te_rec")).toBeVisible();
   expect(errors).toEqual([]);
 });
 
@@ -96,5 +99,19 @@ test("la vista Series es una lista simple; tocar una fila abre su editor", async
   await expect(row).toContainText("2/5 hechas");
   await row.click();
   await expect(page.locator("#sr_occ .occ")).toHaveCount(5);
+  expect(errors).toEqual([]);
+});
+
+test("una serie sin fin dice su regla y lleva a editar la tarea", async ({ page }) => {
+  await seedState(page, fixture("estado-v2.6.json"));
+  const errors = await openApp(page);
+  await page.evaluate(() => go("series"));
+  const row = page.locator(".serrow", { hasText: "Leer apunte del día" });
+  await expect(row).toContainText("todos los días, sin fin");
+  await row.click();
+  await expect(page.locator("#modalbox")).toContainText("todos los días, sin fin");
+  await page.getByRole("button", { name: "Editar la tarea" }).click();
+  await expect(page.locator("#modalbox h3").first()).toHaveText("Editar tarea");
+  await expect(page.locator("#te_title")).toHaveValue("Leer apunte del día");
   expect(errors).toEqual([]);
 });
