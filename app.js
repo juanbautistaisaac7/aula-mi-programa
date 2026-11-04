@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.17.0";
+const APP_VERSION = "2.18.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -57,7 +57,8 @@ function defaultSettings() {
     theme: "auto", accent: "#4338ca", weekStart: 1,
     pomo: { f: 25, s: 5, l: 15, c: 4 },
     sounds: true, notif: false, hourFmt: 24, showDone: true,
-    upcomingDays: 7, tags: ["repaso", "importante", "entrega"], dayEnd: "04:00"
+    upcomingDays: 7, tags: ["repaso", "importante", "entrega"], dayEnd: "04:00",
+    doneKeepDays: 7 // B5: la Lista completa oculta las hechas hace más de N días (0 = nunca)
   };
 }
 function baseState() {
@@ -2112,6 +2113,8 @@ function viewCalendar() {
 }
 
 /* ========================== VISTA: LISTA ========================== */
+/* Día en que se completó. Datos viejos pueden no tener doneAt: se usa su fecha. */
+function doneDay(t) { return t.doneAt || t.date || t.due || t.createdAt || ""; }
 function viewList() {
   const f = ui.listFilters;
   const opts = (obj, sel) => Object.entries(obj).map(([k, v]) => `<option value="${k}" ${sel === k ? "selected" : ""}>${v}</option>`).join("");
@@ -2126,6 +2129,15 @@ function viewList() {
   if (f.from) list = list.filter(t => (t.date || t.due || "9999") >= f.from);
   if (f.to) list = list.filter(t => (t.date || t.due || "0000") <= f.to);
   if (!state.settings.showDone && !f.status) list = list.filter(t => t.status !== "done");
+  // B5 · las hechas hace mucho se ocultan solas (no se borran: siguen en Historial y estadísticas)
+  const keep = state.settings.doneKeepDays | 0;
+  let oldDone = 0;
+  if (state.settings.showDone && keep > 0 && !f.status) {
+    const cut = addDays(todayISO(), -keep);
+    const isOld = t => t.status === "done" && doneDay(t) < cut;
+    oldDone = list.filter(isOld).length;
+    if (!ui.showOldDone) list = list.filter(t => !isOld(t));
+  }
   list.sort((a, b) => ((a.date || a.due || "9999") + a.title).localeCompare((b.date || b.due || "9999") + b.title));
   const totMin = list.filter(t => t.status !== "done").reduce((a, t) => a + (t.estMin || 0), 0);
   let h = `<div class="vhead"><h2>Lista completa</h2><span class="sub">${list.length} tareas · ${fmtMin(totMin)} pendientes</span>
@@ -2146,6 +2158,8 @@ function viewList() {
     <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--tx2)"><input type="checkbox" style="width:auto" ${f.archived === "1" ? "checked" : ""} onchange="ui.listFilters.archived=this.checked?'1':'';render()">archivadas</label>
     <button class="btn sm ghost" onclick="ui.listFilters={};render()">Limpiar filtros</button></div>`;
   h += `<div class="card">${list.length ? list.map(t => taskRow(t, { showDate: true })).join("") : '<div class="empty">No hay tareas con estos filtros.</div>'}</div>`;
+  if (oldDone) h += `<p class="oldDone tiny">${ui.showOldDone ? `Mostrando ${oldDone} hecha${oldDone > 1 ? "s" : ""} hace más de ${keep} días.` : `${oldDone} tarea${oldDone > 1 ? "s" : ""} hecha${oldDone > 1 ? "s" : ""} hace más de ${keep} días no se muestra${oldDone > 1 ? "n" : ""}.`}
+    <button class="btn sm ghost" onclick="ui.showOldDone=!ui.showOldDone;render()">${ui.showOldDone ? "Ocultar hechas antiguas" : "Mostrar hechas antiguas"}</button></p>`;
   return h;
 }
 
@@ -3452,6 +3466,10 @@ function viewConfig() {
     <p class="tiny" style="margin-top:6px">Lo que marques antes de esa hora cuenta para el día anterior. Ideal si estudiás hasta tarde.</p>
     <div class="hr"></div>
     <label style="display:flex;gap:8px;align-items:center;font-size:.8rem;cursor:pointer"><input type="checkbox" style="width:auto" ${chk(st.showDone)} onchange="state.settings.showDone=this.checked;change();render()">Mostrar tareas completadas en la lista</label>
+    <label class="tiny" style="font-weight:700;display:block;margin-top:12px" for="cfg_donekeep">Sacar de la lista las hechas hace más de</label>
+    <select id="cfg_donekeep" style="margin-top:6px;width:100%;max-width:220px;min-height:40px;background:var(--card2);color:var(--tx);border:1px solid var(--line);border-radius:8px;padding:7px" onchange="state.settings.doneKeepDays=parseInt(this.value)||0;change();render()">
+      ${[3, 5, 7, 10, 14, 30, 0].map(n => `<option value="${n}" ${(st.doneKeepDays | 0) === n ? "selected" : ""}>${n ? n + " días" : "Nunca"}</option>`).join("")}</select>
+    <p class="tiny" style="margin-top:6px">No se borran: siguen en Historial y en Estadísticas.</p>
     <div class="hr"></div>
     <label class="tiny" style="font-weight:700">Formato horario</label>
     <div style="display:flex;gap:8px;margin-top:6px">

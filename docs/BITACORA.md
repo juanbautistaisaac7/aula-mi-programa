@@ -6,7 +6,23 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
-## Corrida 05:05–… (hora ARG) — B4
+## Corrida 05:05–… (hora ARG) — B4, B5
+
+### B5 · La lista completa se limpia sola
+
+**Plan:** que las hechas hace más de N días (por defecto 7) no aparezcan en "Lista completa", sin borrar nada.
+
+**Decisiones:**
+- **Es un filtro de vista, no un borrado.** Las tareas quedan igual en los datos, en Historial y en Estadísticas. Por eso no hace falta migración: el ajuste nuevo `doneKeepDays` (7 por defecto) se completa solo en los datos viejos, como el resto de los ajustes.
+- **"Hace más de 7 días"** se cuenta desde el día en que la completaste (`doneAt`, que respeta "Mi día termina a las…"). Si una tarea vieja no tiene `doneAt` (datos de versiones anteriores), uso su fecha.
+- **Abajo de la lista** dice cuántas se ocultaron ("2 tareas hechas hace más de 7 días no se muestran") con el botón **"Mostrar hechas antiguas"**. Así nunca parece que algo desapareció sin explicación. Elegí ponerlo abajo y no como otro filtro arriba, porque arriba ya hay 10 controles.
+- **Si filtrás por estado "Hecha", se ven todas**, también las antiguas: si las estás buscando, las querés ver.
+- **En Configuración → Preferencias**, debajo de "Mostrar tareas completadas en la lista": "Sacar de la lista las hechas hace más de" 3 / 5 / 7 / 10 / 14 / 30 días / Nunca.
+
+**Salió bien:** sin sorpresas.
+**Salió mal / intentos fallidos:** en el test usé la ruta `settings` en vez de `config`; nada de la app.
+**Tests:** +5 (×2 = 10), con reloj simulado: qué se oculta y qué no (incluido el borde de 7 días justos y una tarea sin `doneAt`), que nada se borra, mostrar/ocultar antiguas, filtro por estado, ajuste que persiste y "Nunca", y que una tarea hecha hoy desaparece sola cuando el reloj avanza 8 días. `npm test`: 126 pasaron, 0 fallaron.
+**Capturas:** [lista con el aviso (mobile claro)](capturas/B5-list-mobile-light.png) · [ajuste en Configuración (mobile oscuro)](capturas/B5-config-mobile-dark.png)
 
 ### B4 · Pasar tareas a otro día, fácil
 

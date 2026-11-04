@@ -74,7 +74,7 @@ Las palabras de Bauti están citadas tal cual en "Pedido", para no perder lo que
   - Además, cada tarea tiene una acción rápida "Mover a…": mañana, pasado mañana, en 3 días, próximo lunes, en 1 semana, elegir fecha. Que se pueda hacer con una mano.
   - Con deshacer. Tests de arrastre (desktop y mobile) y del menú.
 
-- [ ] **B5 · La lista completa se limpia sola**
+- [x] **B5 · La lista completa se limpia sola**
   Pedido: *"que la lista completa se vaya actualizando o borrando sola por ejemplo cuando pasan 5/10 días de una tarea hecha"*.
   Listo cuando: las tareas hechas hace más de N días (ajustable; por defecto 7) dejan de aparecer en "Lista completa". **No se borran**: siguen en Historial y en estadísticas. Hay una opción "mostrar hechas antiguas". Tests con reloj simulado.
 
