@@ -34,9 +34,9 @@ Las palabras de Bauti están citadas tal cual en "Pedido", para no perder lo que
   - Test: dos tareas simples con el mismo título **no** son serie; un período de 5 días sí lo es.
   - (Se complementa con C1/C2: este ítem solo arregla la identidad de las series.)
 
-- [~] **A4 · Sacar pomodoros y limpiar** *(partido en A4a y A4b por el agente)*
+- [x] **A4 · Sacar pomodoros y limpiar** *(partido en A4a y A4b por el agente)*
   - [x] **A4a** · Sacar el pomodoro de la interfaz y su código muerto, conservar sesiones, "Registrar tiempo" en la tarea.
-  - [ ] **A4b** · Menú lateral más corto (y Configuración ordenada) + borrar `MANIFE~1.WEB`.
+  - [x] **A4b** · Menú lateral más corto (y Configuración ordenada) + borrar `MANIFE~1.WEB`.
   Pedido: *"eliminar pomoodores para /y limpiar un poco todo"*.
   Listo cuando:
   - No hay más pomodoro en la interfaz: vista, menú, botones en tareas, atajos, ajustes, contadores de "pomodoros" en tareas y estadísticas.

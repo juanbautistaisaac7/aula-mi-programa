@@ -6,7 +6,28 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
-## Corrida 04:08–(en curso) (hora ARG) — A1, X1, A2, A3, A4a
+## Corrida 04:08–(en curso) (hora ARG) — A1, X1, A2, A3, A4a, A4b
+
+### A4b · Menú más corto y Configuración ordenada
+
+**Plan:** el menú tenía 16 entradas en 4 grupos ("Planificar / Organizar / Estudiar / Sistema"). Ya sin Pomodoro quedaban 15.
+
+**Decisiones:**
+- **Tres grupos según para qué abrís la app**, más Configuración aparte abajo:
+  - *Planificar:* Inicio, Hoy, Semana, Calendario, Lista completa (lo de todos los días).
+  - *Facultad:* Materias, Parciales y finales, Proyectos (lo que da estructura).
+  - *Estudio:* Series y repeticiones, Planes de estudio, Notas, Hábitos, Estadísticas.
+  - Configuración, separada por una línea.
+- **Historial y Copias de seguridad pasan adentro de Configuración** (tarjeta "Datos"), con un "‹ Configuración" estilo iOS arriba del título para volver. Se usan poco y no merecían estar siempre a la vista. Mientras estás en ellas, en el menú queda marcada Configuración (lo mismo con el detalle de una materia, parcial o proyecto, que marca su lista).
+- Resultado: 14 entradas en vez de 16. No bajé más a propósito: "Series y repeticiones" probablemente desaparezca o cambie en C3, y la barra de navegación inferior para el celu la evalúo en F1; achicar más ahora sería trabajo que esos ítems van a rehacer.
+- **Configuración:** "Primer día de la semana" y "Mi día termina a las" pasaron de *Apariencia* a *Preferencias* (no son apariencia). Apariencia quedó con tema y color.
+- Borré `MANIFE~1.WEB` (copia de `manifest.webmanifest` con nombre corto de Windows; no lo referenciaba nada).
+
+**Salió bien:** sin sorpresas; ningún test viejo dependía de la estructura del menú.
+**Salió mal / intentos fallidos:** la primera versión del botón para volver era un botón con borde al lado del título y se veía como un chip más. Lo cambié por texto en color de acento arriba del título, con 44 px de alto táctil.
+**Tests:** +4 (×2 = 8): el menú tiene 3 grupos y ≤ 14 entradas sin Historial/Copias; se entra y se vuelve de Historial y Copias desde Configuración (y queda marcada Configuración); preferencias de tiempo en "Preferencias"; el archivo basura no existe. `npm test`: 62/62.
+**Capturas:** [menú (mobile claro)](capturas/A4b-menu-mobile-light.png) · [Configuración (desktop oscuro)](capturas/A4b-config-desktop-dark.png) · [Historial con "‹ Configuración" (mobile claro)](capturas/A4b-history-mobile-light.png)
+**Para Bauti:** si extrañás Historial o Copias en el menú, decime; es mover una línea (`NAV` en `app.js`).
 
 ### A4a · Sacar el pomodoro
 

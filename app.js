@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.11.0";
+const APP_VERSION = "2.12.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -1673,17 +1673,25 @@ function toggleSidebar(force) {
   byId("sbBackdrop").style.display = open && small ? "block" : "none";
   try { localStorage.setItem("aula-sb", open ? "1" : "0"); } catch (e) {}
 }
+/* Menú lateral (A4b): tres grupos según para qué entrás a la app, y Configuración
+   aparte. Historial y Copias de seguridad viven dentro de Configuración (se usan
+   poco). Las vistas que no están en el menú marcan a su "padre". */
+const NAV = [
+  ["Planificar", ["home", "today", "week", "calendar", "list"]],
+  ["Facultad", ["subjects", "evals", "projects"]],
+  ["Estudio", ["series", "plans", "notes", "habits", "stats"]]
+];
+const NAV_PARENT = { subject: "subjects", eval: "evals", project: "projects", history: "config", backups: "config" };
 function renderSidebar() {
   const sb = byId("sidebar");
-  const item = (v, label) => `<a href="#/${v}" class="${route.view === v || (v === "subjects" && route.view === "subject") || (v === "evals" && route.view === "eval") || (v === "projects" && route.view === "project") ? "on" : ""}">${label}</a>`;
-  sb.innerHTML =
-    '<div class="sec">Planificar</div>' + VIEWS.slice(0, 4).map(v => item(v[0], v[1])).join("") +
-    item("list", "Lista completa") +
-    '<div class="sec">Organizar</div>' + VIEWS.slice(4, 9).map(v => item(v[0], v[1])).join("") +
-    '<div class="sec">Estudiar</div>' + VIEWS.slice(9, 12).map(v => item(v[0], v[1])).join("") +
-    '<div class="sec">Sistema</div>' + VIEWS.slice(12).map(v => item(v[0], v[1])).join("") +
+  const cur = NAV_PARENT[route.view] || route.view;
+  const label = v => v === "list" ? "Lista completa" : (VIEWS.find(x => x[0] === v) || [v, v])[1];
+  const item = v => `<a href="#/${v}" class="${cur === v ? "on" : ""}">${label(v)}</a>`;
+  sb.innerHTML = NAV.map(([sec, vs]) => `<div class="sec">${sec}</div>` + vs.map(item).join("")).join("") +
+    '<div class="hr" style="margin:10px 6px"></div>' + item("config") +
     '<div style="padding:14px 10px" class="tiny">Aula v' + APP_VERSION + "</div>";
 }
+const backToConfig = `<button class="backlink" onclick="go('config')">‹ Configuración</button>`;
 function renderTop() {
   const today = todayISO(), d = dToDate(today);
   const late = today !== iso(new Date()); // pasada la medianoche, antes de que termine tu día
@@ -3139,7 +3147,7 @@ function viewHistory() {
   const done = state.tasks.filter(t => t.status === "done" && t.doneAt).sort((a, b) => b.doneAt.localeCompare(a.doneAt));
   const sess = [...state.sessions].sort((a, b) => b.ts - a.ts).slice(0, 40);
   const arch = state.tasks.filter(t => t.archived);
-  let h = `<div class="vhead"><h2>Historial</h2></div>`;
+  let h = `${backToConfig}<div class="vhead"><h2>Historial</h2></div>`;
   h += `<div class="card"><h3>Tareas completadas (${done.length})</h3>`;
   let cur = "";
   for (const t of done.slice(0, 60)) {
@@ -3164,7 +3172,7 @@ function viewHistory() {
 
 /* ==================== VISTA: COPIAS DE SEGURIDAD ==================== */
 function viewBackups() {
-  return `<div class="vhead"><h2>Copias de seguridad</h2><div class="grow"></div>
+  return `${backToConfig}<div class="vhead"><h2>Copias de seguridad</h2><div class="grow"></div>
     <button class="btn" onclick="manualBackup()">Crear copia ahora</button>
     <button class="btn primary" onclick="exportJSON()">Exportar JSON</button></div>
   <div class="card"><h3>Importar datos</h3>
@@ -3266,14 +3274,6 @@ function viewConfig() {
       ${SUBJ_COLORS.slice(0, 8).map(c => `<button title="${c}" style="width:26px;height:26px;border-radius:8px;background:${c};border:2px solid ${st.accent === c ? "var(--tx)" : "transparent"};cursor:pointer" onclick="setAccent('${c}')" aria-label="Color ${c}"></button>`).join("")}
       <input type="color" value="${st.accent}" onchange="setAccent(this.value)" title="Color personalizado" style="width:34px;height:26px;border:none;background:none;cursor:pointer;padding:0">
     </div>
-    <label class="tiny" style="font-weight:700">Primer día de la semana</label>
-    <div style="display:flex;gap:8px;margin-top:6px">
-      <button class="btn sm ${st.weekStart === 1 ? "primary" : ""}" onclick="state.settings.weekStart=1;change();render()">Lunes</button>
-      <button class="btn sm ${st.weekStart === 0 ? "primary" : ""}" onclick="state.settings.weekStart=0;change();render()">Domingo</button></div>
-    <label class="tiny" style="font-weight:700;display:block;margin-top:12px" for="cfg_dayend">Mi día termina a las</label>
-    <select id="cfg_dayend" style="margin-top:6px;width:100%;max-width:220px;min-height:40px;background:var(--card2);color:var(--tx);border:1px solid var(--line);border-radius:8px;padding:7px" onchange="state.settings.dayEnd=this.value;change();render()">
-      ${["00:00", "01:00", "02:00", "03:00", "04:00", "05:00", "06:00"].map(h => `<option value="${h}" ${st.dayEnd === h ? "selected" : ""}>${h === "00:00" ? "Medianoche" : h}</option>`).join("")}</select>
-    <p class="tiny" style="margin-top:6px">Lo que marques antes de esa hora cuenta para el día anterior. Ideal si estudiás hasta tarde.</p>
   </div>
   <div class="card" style="margin:0"><h3>Notificaciones</h3>
     <label style="display:flex;gap:8px;align-items:center;font-size:.8rem;cursor:pointer"><input type="checkbox" style="width:auto" ${chk(st.notif)} onchange="toggleNotif(this.checked)">Notificaciones locales (vencimientos y parciales)</label>
@@ -3283,6 +3283,15 @@ function viewConfig() {
     <input type="number" min="1" max="30" value="${st.upcomingDays}" onchange="state.settings.upcomingDays=parseInt(this.value)||7;change();render()" style="width:90px;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:7px;margin-top:4px" aria-label="Días próximos">
   </div>
   <div class="card" style="margin:0"><h3>Preferencias</h3>
+    <label class="tiny" style="font-weight:700;display:block">Primer día de la semana</label>
+    <div style="display:flex;gap:8px;margin-top:6px">
+      <button class="btn sm ${st.weekStart === 1 ? "primary" : ""}" onclick="state.settings.weekStart=1;change();render()">Lunes</button>
+      <button class="btn sm ${st.weekStart === 0 ? "primary" : ""}" onclick="state.settings.weekStart=0;change();render()">Domingo</button></div>
+    <label class="tiny" style="font-weight:700;display:block;margin-top:12px" for="cfg_dayend">Mi día termina a las</label>
+    <select id="cfg_dayend" style="margin-top:6px;width:100%;max-width:220px;min-height:40px;background:var(--card2);color:var(--tx);border:1px solid var(--line);border-radius:8px;padding:7px" onchange="state.settings.dayEnd=this.value;change();render()">
+      ${["00:00", "01:00", "02:00", "03:00", "04:00", "05:00", "06:00"].map(h => `<option value="${h}" ${st.dayEnd === h ? "selected" : ""}>${h === "00:00" ? "Medianoche" : h}</option>`).join("")}</select>
+    <p class="tiny" style="margin-top:6px">Lo que marques antes de esa hora cuenta para el día anterior. Ideal si estudiás hasta tarde.</p>
+    <div class="hr"></div>
     <label style="display:flex;gap:8px;align-items:center;font-size:.8rem;cursor:pointer"><input type="checkbox" style="width:auto" ${chk(st.showDone)} onchange="state.settings.showDone=this.checked;change();render()">Mostrar tareas completadas en la lista</label>
     <div class="hr"></div>
     <label class="tiny" style="font-weight:700">Formato horario</label>
@@ -3298,6 +3307,7 @@ function viewConfig() {
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button class="btn sm" onclick="exportJSON()">Exportar JSON</button>
       <button class="btn sm" onclick="go('backups')">Copias de seguridad</button>
+      <button class="btn sm" onclick="go('history')">Historial</button>
       <button class="btn sm" onclick="exportCSV()">Exportar estadísticas CSV</button>
       <button class="btn sm danger" onclick="resetApp()">Reiniciar aplicación</button></div>
     <div class="hr"></div>
