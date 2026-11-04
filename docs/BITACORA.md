@@ -6,7 +6,24 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
-## Corrida 06:06–… (hora ARG) — C2a, C2b, C3, X4
+## Corrida 06:06–… (hora ARG) — C2a, C2b, C3, X4, D1a
+
+### D1a · Calendario en el celu, estilo iOS
+
+**Plan:** las capturas "antes" mostraron que en el celu el calendario **no entraba**: la grilla de 7 columnas con las tareas escritas se salía de la pantalla y solo se veían lunes a miércoles. Lo arreglé primero en el celu (que es donde lo usás) y dejé el desktop para D1b.
+
+**Decisiones:**
+- **En el celu (≤ 720 px)** cada día es un número con **hasta 4 puntitos**: rojo para parciales (primero), y uno por tarea con el color de su materia (las hechas, apagadas). Hoy en azul; el día elegido con un círculo relleno, como en iOS.
+- **Abajo, la lista del día elegido** con las filas de tareas de siempre (se pueden completar, abrir, arrastrar) y los parciales con su hora, el total de minutos del día y el botón **"+ Tarea para el jue 12 nov"**, que abre "Nueva tarea" con esa fecha.
+- **Deslizar** a izquierda/derecha cambia de mes (si el gesto es más vertical que horizontal, es scroll y no hace nada). Los botones ‹ Hoy › siguen y tienen 40 px.
+- **En desktop no cambia nada todavía**: celdas con las tareas escritas y el clic abre el resumen del día, como antes. Eso es D1b.
+- Es todo CSS + una lista nueva: no toca datos.
+
+**Salió bien:** la diferencia es enorme (mirá antes/después).
+**Salió mal / intentos fallidos:** la primera versión partía el encabezado en dos renglones en el celu (la flecha › caía abajo); lo dejé en una sola línea.
+**Tests:** +4 (`tests/calendario.spec.js`; 3 solo mobile y 1 solo desktop): nada se sale del ancho y hay puntos; tocar un día muestra parcial y tareas con hora y crea una tarea ese día; deslizar y botones; en desktop sigue el resumen. `npm test`: 174 pasaron, 0 fallaron.
+**Capturas:** [antes (mobile claro)](capturas/D1-antes-mobile-light.png) · [después (mobile claro)](capturas/D1-calendar-mobile-light.png) · [después (mobile oscuro)](capturas/D1-calendar-mobile-dark.png)
+**Para Bauti:** abrí Calendario en el celu, tocá un día con puntos rojos y deslizá para cambiar de mes.
 
 ### X4 · Pulido de series (lo vi en las capturas de C3)
 

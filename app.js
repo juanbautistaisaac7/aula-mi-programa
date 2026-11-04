@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.22.1";
+const APP_VERSION = "2.23.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -2308,12 +2308,14 @@ function viewCalendar() {
   const ws = state.settings.weekStart;
   const startOffset = (first.getDay() - ws + 7) % 7;
   const gridStart = new Date(Y, M - 1, 1 - startOffset);
-  const prev = iso(new Date(Y, M - 2, 1)).slice(0, 7), next = iso(new Date(Y, M, 1)).slice(0, 7);
-  let h = `<div class="vhead"><h2>Calendario</h2><span class="sub">${capitalize(MESL[M - 1])} ${Y}</span><div class="grow"></div>
-    <button class="btn sm" onclick="ui.calMonth='${prev}';render()">‹</button>
-    <button class="btn sm" onclick="ui.calMonth='${today.slice(0, 7)}';render()">Hoy</button>
-    <button class="btn sm" onclick="ui.calMonth='${next}';render()">›</button></div>`;
-  h += '<div class="cal">';
+  // D1 · día elegido (en el celu se ve su lista abajo); por defecto hoy, o el 1 si mirás otro mes
+  if (!ui.calDay || ui.calDay.slice(0, 7) !== ui.calMonth) ui.calDay = today.slice(0, 7) === ui.calMonth ? today : ui.calMonth + "-01";
+  const sel = ui.calDay;
+  let h = `<div class="vhead calhead"><h2>Calendario</h2><span class="sub">${capitalize(MESL[M - 1])} ${Y}</span><div class="grow"></div>
+    <button class="btn sm calnav" aria-label="Mes anterior" onclick="calShift(-1)">‹</button>
+    <button class="btn sm calnav" onclick="ui.calMonth='${today.slice(0, 7)}';ui.calDay='${today}';render()">Hoy</button>
+    <button class="btn sm calnav" aria-label="Mes siguiente" onclick="calShift(1)">›</button></div>`;
+  h += `<div class="cal" ontouchstart="calSwipe(event,0)" ontouchend="calSwipe(event,1)">`;
   for (let i = 0; i < 7; i++) h += `<div class="dow">${DAYS[(ws + i) % 7]}</div>`;
   for (let i = 0; i < 42; i++) {
     const d = new Date(gridStart); d.setDate(gridStart.getDate() + i);
@@ -2332,11 +2334,43 @@ function viewCalendar() {
     if (moreN > 0) items.push(`<div class="more">+${moreN} más</div>`);
     if (habs.length) items.push(`<div class="more" style="color:var(--ok)">${habs.length} hábito${habs.length > 1 ? "s" : ""} ✓</div>`);
     const dayMin = ts.reduce((a, t) => a + (t.estMin || 0), 0);
-    h += `<div class="day ${inMonth ? "" : "out"} ${dISO === today ? "today" : ""}" onclick="openDayPreview('${dISO}')" title="Ver el resumen del ${escA(fmtD(dISO))}">
-      <div class="dnum">${d.getDate()}${dayMin ? `<span class="dmin">${hClock(dayMin)}</span>` : ""}</div>${items.join("")}</div>`;
+    // D1 · en el celu: puntos de colores (parcial en rojo primero, después las tareas por materia)
+    const dots = evs.map(() => `<i style="background:var(--bad)"></i>`).concat(ts.map(t => { const o = ownerOf(t); return `<i style="background:${o ? o.color : "var(--tx3)"}${isDoneOn(t, dISO) ? ";opacity:.35" : ""}"></i>`; })).slice(0, 4).join("");
+    h += `<div class="day ${inMonth ? "" : "out"} ${dISO === today ? "today" : ""} ${dISO === sel ? "selday" : ""}" data-date="${dISO}" onclick="calTap('${dISO}')" title="Ver el resumen del ${escA(fmtD(dISO))}">
+      <div class="dnum"><span class="dn">${d.getDate()}</span>${dayMin ? `<span class="dmin">${hClock(dayMin)}</span>` : ""}</div>${items.join("")}<div class="cdots">${dots}</div></div>`;
   }
-  h += "</div><p class='tiny' style='margin-top:8px'>Clic en un día para ver su resumen (materias, horas por materia y total) · clic en un evento para abrirlo.</p>";
+  h += "</div><p class='tiny calhint' style='margin-top:8px'>Clic en un día para ver su resumen (materias, horas por materia y total) · clic en un evento para abrirlo.</p>";
+  h += calDayList(sel);
   return h;
+}
+
+/* D1 · En el celu (como Calendario de iOS) tocar un día lo elige y muestra su
+   lista abajo; en desktop abre el resumen del día como antes. */
+const calIsPhone = () => window.matchMedia("(max-width:720px)").matches;
+function calTap(d) {
+  if (!calIsPhone()) { openDayPreview(d); return; }
+  ui.calDay = d; ui.calMonth = d.slice(0, 7); render();
+}
+function calShift(n) {
+  const [Y, M] = ui.calMonth.split("-").map(Number);
+  ui.calMonth = iso(new Date(Y, M - 1 + n, 1)).slice(0, 7); ui.calDay = null; render();
+}
+function calSwipe(e, end) {
+  const p = e.changedTouches && e.changedTouches[0]; if (!p) return;
+  if (!end) { ui.calTouch = { x: p.clientX, y: p.clientY }; return; }
+  const s = ui.calTouch; ui.calTouch = null; if (!s) return;
+  const dx = p.clientX - s.x, dy = p.clientY - s.y;
+  if (Math.abs(dx) > 60 && Math.abs(dy) < Math.abs(dx) * 0.6) calShift(dx < 0 ? 1 : -1);
+}
+function calDayList(d) {
+  const ts = tasksOn(d), evs = state.evals.filter(e => e.date === d);
+  const evRow = e => `<div class="task calev" onclick="go('eval','${e.id}')"><span class="calevdot"></span><div class="tinfo"><div class="tt">${e.time ? `<span class="ttime">${esc(fmtTime(e.time))}</span>` : ""}${esc(e.name)}</div><div class="tmeta"><span class="tiny">parcial / final</span></div></div></div>`;
+  const tot = ts.reduce((a, t) => a + (t.estMin || 0), 0);
+  return `<div class="card calday" id="calday">
+    <h3>${capitalize(fmtD(d))}${d === todayISO() ? ' <span class="sub">hoy</span>' : ""}<div class="grow"></div>${tot ? `<span class="tiny">${fmtMin(tot)}</span>` : ""}</h3>
+    ${evs.map(evRow).join("")}${ts.map(t => taskRow(t, { date: d, noSel: true })).join("")}
+    ${!evs.length && !ts.length ? '<div class="empty" style="padding:14px 0">Nada para este día.</div>' : ""}
+    <button class="btn calnew" onclick="openQuickTask('${d}')">+ Tarea para el ${esc(fmtD(d))}</button></div>`;
 }
 
 /* ========================== VISTA: LISTA ========================== */

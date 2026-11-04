@@ -293,6 +293,33 @@ body.is-dragging,body.is-dragging *{cursor:grabbing!important;user-select:none;-
 .cal .dnum{font-weight:700;font-size:.7rem;color:var(--tx2);margin-bottom:3px}
 .cal .ev{border-radius:5px;padding:1.5px 5px;margin-bottom:2px;font-size:.62rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;cursor:pointer}
 .cal .more{color:var(--tx3);font-size:.6rem;padding-left:4px}
+/* D1 · calendario en el celu: estilo Calendario de iOS */
+.cal .cdots,.calday{display:none}
+@media(max-width:720px){
+  .cal{gap:0;background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:6px 4px 8px;touch-action:pan-y}
+  .cal .day{min-height:52px;border:none;background:none;padding:4px 0;display:flex;flex-direction:column;align-items:center;gap:4px;border-radius:0;box-shadow:none}
+  .cal .day.today{box-shadow:none}
+  .cal .day:hover{border-color:transparent}
+  .cal .day .ev,.cal .day .more,.cal .dmin{display:none}
+  .cal .dnum{margin:0;font-size:.95rem;font-weight:500;color:var(--tx)}
+  .cal .dn{display:flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:50%;font-variant-numeric:tabular-nums;transition:background-color .15s,color .15s}
+  .cal .day.today .dn{color:var(--acc);font-weight:700}
+  .cal .day.selday .dn{background:var(--tx);color:var(--card);font-weight:700}
+  .cal .day.selday.today .dn{background:var(--acc);color:#fff}
+  .cal .day.out{opacity:.35}
+  .cal .cdots{display:flex;gap:3px;height:6px;justify-content:center}
+  .cal .cdots i{width:6px;height:6px;border-radius:50%;display:block}
+  .calhint{display:none}
+  .calday{display:block;margin-top:12px}
+  .calday h3{display:flex;align-items:center}
+  .calnew{width:100%;min-height:44px;margin-top:10px;color:var(--acc)}
+  .vhead.calhead{flex-wrap:nowrap;gap:8px}
+  .calhead .sub{white-space:nowrap}
+  .calnav{min-width:40px;min-height:40px;padding:0 10px}
+}
+.calev{cursor:pointer}
+.calevdot{width:10px;height:10px;border-radius:50%;background:var(--bad);flex:none;margin:6px 6px 0 7px}
+@media (prefers-reduced-motion:reduce){.cal .dn{transition:none}}
 /* semana */
 .week{display:grid;grid-template-columns:repeat(7,1fr);gap:8px}
 @media(max-width:900px){.week{grid-template-columns:1fr}}
