@@ -26,7 +26,7 @@ Las palabras de Bauti están citadas tal cual en "Pedido", para no perder lo que
   - En el detalle de la tarea se puede ver y **editar "completada el"**.
   - Tests con reloj simulado (`setClock`): tarea del martes marcada miércoles 00:10 → cuenta martes; marcada miércoles 15:00 → cuenta miércoles; tareas recurrentes (`recurDone`) igual.
 
-- [ ] **A3 · Una tarea simple aparece como "serie"**
+- [x] **A3 · Una tarea simple aparece como "serie"**
   Pedido: *"ahora creo una tarea simple y aveces se me carga como serie nada que ver"*.
   Causa encontrada: `buildSeries()` (~línea 1419) agrupa como serie a **cualquier par de tareas con el mismo título y la misma materia**. Dos "Repasar" sueltas se vuelven serie.
   Listo cuando:

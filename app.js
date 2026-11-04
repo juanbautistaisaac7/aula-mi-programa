@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.9.0";
+const APP_VERSION = "2.10.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -209,10 +209,61 @@ function normalizeState(s) {
    - Antes de correr pasos, loadState guarda una copia del estado viejo en
      "Copias de seguridad" (clave premig-…) para poder volver atrás.
    - Cada paso agrega un test que carga tests/fixtures/estado-v2.6.json. */
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const MIGRATIONS = [
-  { to: 2, desc: "Esquema versionado (Aula 2.7)", run: () => {} }
+  { to: 2, desc: "Esquema versionado (Aula 2.7)", run: () => {} },
+  { to: 3, desc: "Series explícitas con seriesId (Aula 2.10)", run: s => inferSeriesIds(s.tasks) }
 ];
+/* A3 · Antes, cualquier par de tareas con el mismo título y materia se mostraba como
+   "serie". Ahora una serie es explícita (t.seriesId). Para los datos viejos se
+   reconstruye con una heurística conservadora. Las únicas formas de crear series
+   sin repetición eran "Todos los días (período)" y "Agregar días", y las dos crean
+   tareas DIARIAS con el mismo título, materia y fecha de creación. Entonces:
+   - Se agrupan tareas con fecha, no recurrentes, por materia + proyecto + título + día de creación.
+   - El grupo es serie si sus fechas son distintas y casi todas seguidas (paso de 1 día;
+     se toleran huecos de días borrados a mano). Si son solo 2, además tienen que tener
+     los mismos minutos (si no, no hay forma de distinguirlas de dos tareas sueltas).
+   - Las tareas agregadas después con "Agregar días" (otro día de creación) se suman a
+     la serie si empiezan justo al día siguiente de su última fecha.
+   - Lo demás queda como tarea suelta. Nunca se toca una tarea que ya tenga seriesId. */
+function inferSeriesIds(tasks) {
+  const norm = x => String(x || "").trim().toLowerCase();
+  const tkey = t => (t.subjectId || "") + "|" + (t.projectId || "") + "|" + norm(t.title);
+  const groups = new Map();
+  for (const t of tasks) {
+    if (t.recur || !t.date || t.seriesId) continue;
+    const k = tkey(t) + "|" + (t.createdAt || "");
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(t);
+  }
+  const runs = [];
+  for (const g of groups.values()) {
+    g.sort((a, b) => a.date.localeCompare(b.date));
+    let series = false;
+    if (g.length >= 2) {
+      const diffs = g.slice(1).map((t, i) => Math.round((dToDate(t.date) - dToDate(g[i].date)) / 864e5));
+      const ones = diffs.filter(d => d === 1).length;
+      series = diffs.every(d => d >= 1) && ones * 2 >= diffs.length && (g.length > 2 || (g[0].estMin || 0) === (g[1].estMin || 0));
+    }
+    runs.push({ k: tkey(g[0]), created: g[0].createdAt || "", tasks: g, series });
+  }
+  runs.sort((a, b) => a.tasks[0].date.localeCompare(b.tasks[0].date));
+  for (const a of runs) {
+    if (!a.series || a.merged) continue;
+    for (let found = true; found;) {
+      found = false;
+      const next = addDays(a.tasks[a.tasks.length - 1].date, 1);
+      for (const b of runs) {
+        if (b === a || b.merged || b.k !== a.k || b.created <= a.created) continue;
+        if ((b.series || b.tasks.length === 1) && b.tasks[0].date === next) {
+          a.tasks = a.tasks.concat(b.tasks); b.merged = true; found = true; break;
+        }
+      }
+    }
+    const sid = "sr-" + uid();
+    for (const t of a.tasks) t.seriesId = sid;
+  }
+}
 function schemaOf(s) { return (s && s.meta && Number(s.meta.schema)) || 1; }
 function needsMigration(s) { return schemaOf(s) < SCHEMA_VERSION; }
 /* Corre los pasos pendientes sobre un estado ya normalizado. Devuelve {from, to}. */
@@ -617,6 +668,7 @@ function duplicateTask(id) {
   const t = taskById(id); if (!t) return;
   const c = JSON.parse(JSON.stringify(t));
   c.id = uid(); c.title = t.title + " (copia)"; c.status = "pend"; c.doneAt = null; c.realMin = 0; c.pomos = 0; c.recurDone = {}; c.createdAt = todayISO();
+  delete c.seriesId; // la copia es una tarea suelta, no otra ocurrencia de la serie
   state.tasks.push(c); change(); render(); toast("Tarea duplicada");
 }
 function archiveTask(id) {
@@ -639,6 +691,7 @@ function quickAddTask(data) {
     tags: data.tags || [], subtasks: [], notes: "", recur: data.recur || null, recurDone: {}, realMin: 0, pomos: 0,
     createdAt: todayISO(), doneAt: null, archived: false
   };
+  if (data.seriesId) t.seriesId = data.seriesId;
   state.tasks.push(t); change();
   return t;
 }
@@ -1507,8 +1560,8 @@ function buildSeries() {
       map.set("r:" + t.id, { key: "r:" + t.id, kind: "recur", title: t.title, subjectId: t.subjectId, projectId: t.projectId, tasks: [t] });
       continue;
     }
-    if (!t.date) continue;
-    const k = "s:" + (t.subjectId || "") + "|" + (t.projectId || "") + "|" + String(t.title).trim().toLowerCase();
+    if (!t.date || !t.seriesId) continue; // solo series explícitas (A3)
+    const k = "s:" + t.seriesId;
     if (!map.has(k)) map.set(k, { key: k, kind: "group", title: t.title, subjectId: t.subjectId, projectId: t.projectId, tasks: [] });
     map.get(k).tasks.push(t);
   }
@@ -1642,7 +1695,7 @@ function seriesExtend() {
   while (d <= until && n < 365) {
     ids.push(quickAddTask({
       title: base.title, desc: base.desc, subjectId: base.subjectId, projectId: base.projectId,
-      evalId: base.evalId, date: d, estMin: base.estMin, type: base.type, prio: base.prio, tags: [...(base.tags || [])]
+      evalId: base.evalId, date: d, estMin: base.estMin, type: base.type, prio: base.prio, tags: [...(base.tags || [])], seriesId: base.seriesId
     }).id);
     d = addDays(d, 1); n++;
   }
@@ -3530,8 +3583,8 @@ function saveQuickTask() {
     if (d2 < date) { toast("La fecha final debe ser igual o posterior a la inicial"); return; }
     const total = Math.round((dToDate(d2) - dToDate(date)) / 864e5) + 1;
     if (total > 120) { toast("Máximo 120 días por período"); return; }
-    const ids = [];
-    for (let d = date; d <= d2; d = addDays(d, 1)) ids.push(quickAddTask(Object.assign({ date: d }, base)).id);
+    const ids = [], seriesId = "sr-" + uid();
+    for (let d = date; d <= d2; d = addDays(d, 1)) ids.push(quickAddTask(Object.assign({ date: d, seriesId }, base)).id);
     closeModal(); render();
     toast(total + " tareas creadas: " + fmtD(date) + " a " + fmtD(d2), () => { state.tasks = state.tasks.filter(x => !ids.includes(x.id)); change(); render(); });
     return;

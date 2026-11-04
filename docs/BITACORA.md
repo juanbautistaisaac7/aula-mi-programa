@@ -6,7 +6,28 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
-## Corrida 04:08–(en curso) (hora ARG) — A1, X1, A2
+## Corrida 04:08–(en curso) (hora ARG) — A1, X1, A2, A3
+
+### A3 · Una tarea simple aparece como "serie"
+
+**Plan:** que una serie sea algo explícito (`t.seriesId`), no una deducción por título. Y para los datos viejos, reconstruir los `seriesId` con una heurística que no invente series.
+
+**Decisiones:**
+- **`buildSeries()` ahora agrupa solo por `seriesId`.** "Todos los días (período)" y "Agregar días" ponen el mismo `seriesId` a todas sus tareas. "Duplicar" una ocurrencia crea una tarea suelta (le saco el `seriesId`).
+- **Migración (paso 2→3), heurística documentada en `inferSeriesIds()`:** me fijé en el código cómo se creaban las series sin repetición, y las dos únicas formas (período y "Agregar días") crean tareas **diarias** con el mismo título, materia y **día de creación**. Así que:
+  - se agrupan por materia + proyecto + título + día de creación;
+  - es serie si las fechas son distintas y casi todas seguidas (se toleran huecos de días que borraste a mano);
+  - si son solo 2, además tienen que tener los mismos minutos (si no, no hay forma de distinguirlas de dos tareas que cargaste por separado);
+  - lo que se agregó después con "Agregar días" se suma a la serie si arranca justo al día siguiente de su última fecha;
+  - todo lo demás queda suelto.
+- **Me aparté un poco del backlog:** pedía "mismos minutos" siempre. No lo exigí para grupos de 3 o más porque el editor viejo permitía "Fijar en 120 las últimas 3", y con esa regla una serie real editada se partía. El día de creación + fechas seguidas ya es una señal muy fuerte.
+- Una tarea que ya tiene `seriesId` nunca se toca (idempotencia).
+
+**Salió bien:** con el fixture, el período "Repasar unidad 3" (5 días) queda como serie y las dos "Repasar" de BD (el bug de Bauti) quedan sueltas. Cero datos perdidos (`expectNothingLost`).
+**Salió mal / intentos fallidos:** nada en este ítem. Pero en la captura se ve que la vista "Series y repeticiones" tiene cosas feas que no son de este ítem: muestra "0.3 h cada día", "0/1" en las recurrentes y "cada día" en una semanal. Esa vista se rehace en C1–C3, así que no la toqué ahora.
+**Tests:** +5 (×2 = 10): dos tareas iguales no son serie; un período sí (y una suelta con el mismo título no se mete); extender suma a la misma serie y duplicar no; migración del fixture; 7 casos borde de la heurística. Los 4 que dependen del arreglo fallan con el código viejo. `npm test`: 44/44.
+**Capturas:** [Series (desktop oscuro)](capturas/A3-series-desktop-dark.png) · [Series (mobile claro)](capturas/A3-series-mobile-light.png)
+**Para Bauti:** fijate en "Series y repeticiones" que estén tus series reales y no aparezcan tareas sueltas. Si alguna serie vieja quedó partida o falta, avisame (o editala: cuando esté C2 vas a poder armarla a mano).
 
 ### A2 · La tarea que hice anoche figura como hecha hoy
 
