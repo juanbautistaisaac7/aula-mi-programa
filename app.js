@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.15.0";
+const APP_VERSION = "2.16.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -909,7 +909,8 @@ function delTopic(evId, tpId) {
   const e = evalById(evId); if (!e) return;
   e.topics = e.topics.filter(x => x.id !== tpId); change(); render();
 }
-function evalPlanTasks(evId) { return state.tasks.filter(t => t.planId === evId && !t.archived); }
+/* Tareas de un parcial: las de su plan y las vinculadas a mano (B3). */
+function evalPlanTasks(evId) { return state.tasks.filter(t => (t.planId === evId || t.evalId === evId) && !t.archived); }
 function evalPrep(e) {
   const topics = e.topics || [];
   const tW = topics.length ? topics.reduce((a, t) => a + (t.state === "dom" ? 1 : t.state === "ent" ? .75 : t.state === "emp" ? .35 : 0), 0) / topics.length : null;
@@ -2154,7 +2155,8 @@ function viewEvalDetail() {
       <div><select id="tp_diff" style="width:100%;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:8px"><option value="1">Fácil</option><option value="2" selected>Media</option><option value="3">Difícil</option></select></div>
       <div><input id="tp_min" type="number" value="90" min="10" step="10" title="Minutos estimados" style="width:100%;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:8px"></div>
       <button class="btn" onclick="addTopic('${e.id}')">Agregar</button></div></div>`;
-  h += `<div class="card"><h3>Plan de estudio<div class="grow"></div>
+  h += `<div class="card"><h3>Tareas y plan de estudio<div class="grow"></div>
+    <button class="btn sm" onclick="openQuickTaskForEval('${e.id}')">+ Tarea</button>
     ${plan.length ? `<button class="btn sm" onclick="replanPending('${e.id}')">Replanificar pendientes</button>` : ""}
     <button class="btn sm primary" onclick="openPlanWizard('${e.id}')">${plan.length ? "Regenerar plan" : "Generar plan"}</button></h3>`;
   if (plan.length) {
@@ -3389,19 +3391,54 @@ function openModal(html, wide) {
   if (f) setTimeout(() => f.focus(), 30);
 }
 function closeModal() { byId("modalbg").classList.remove("open"); }
+/* B3 · En los selectores no aparecen parciales cerrados (rendido / aprobado /
+   desaprobado) ni proyectos terminados o archivados, salvo el que ya está
+   elegido: una tarea vinculada a algo cerrado sigue mostrando su vínculo. */
+const EVAL_CLOSED = ["rendido", "aprob", "desaprob"];
+const PROJ_CLOSED = ["done", "arch"];
+function evalMatchesLink(e, link) {
+  if (!link) return true;
+  if (link.startsWith("s:")) return e.subjectId === link.slice(2);
+  if (link.startsWith("p:")) return e.projectId === link.slice(2);
+  return true;
+}
+/* Opciones de "Parcial / final" para una materia o proyecto (link "s:…"/"p:…"/""). */
+function evalOptions(link, keepId) {
+  const list = state.evals.filter(e => e.id === keepId || (!EVAL_CLOSED.includes(e.status) && evalMatchesLink(e, link)))
+    .sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
+  return `<option value="">— Ninguno —</option>` + list.map(e => `<option value="${e.id}" ${e.id === keepId ? "selected" : ""}>${esc(e.name)}${e.date ? " · " + fmtD(e.date) : ""}${EVAL_CLOSED.includes(e.status) ? " (" + EVAL_STATUS[e.status].toLowerCase() + ")" : ""}</option>`).join("");
+}
+/* Al cambiar la materia: se recalculan los parciales; si el elegido no es de esa materia, se limpia. */
+function refreshEvalSelect(linkId, evalId) {
+  const l = byId(linkId).value, es = byId(evalId); if (!es) return;
+  const cur = evalById(es.value);
+  es.innerHTML = evalOptions(l, cur && evalMatchesLink(cur, l) ? cur.id : null);
+}
+/* Al elegir un parcial sin materia elegida, se completa la materia del parcial. */
+function evalPicked(linkId, evalId) {
+  const e = evalById(byId(evalId).value), ls = byId(linkId);
+  if (!e || !ls || ls.value) return;
+  const want = e.subjectId ? "s:" + e.subjectId : e.projectId ? "p:" + e.projectId : "";
+  if (want && [...ls.options].some(o => o.value === want)) ls.value = want;
+}
 function linkOptions(sel, includeTasks) {
   let h = `<option value="">— Sin vínculo —</option><optgroup label="Materias">`;
   h += activeSubjects().map(s => `<option value="s:${s.id}" ${sel === "s:" + s.id ? "selected" : ""}>${esc(s.name)}</option>`).join("");
   h += `</optgroup><optgroup label="Proyectos">`;
-  h += state.projects.filter(p => p.status !== "arch").map(p => `<option value="p:${p.id}" ${sel === "p:" + p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("");
+  h += state.projects.filter(p => !PROJ_CLOSED.includes(p.status) || sel === "p:" + p.id).map(p => `<option value="p:${p.id}" ${sel === "p:" + p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("");
   h += `</optgroup>`;
   if (includeTasks) {
-    h += `<optgroup label="Evaluaciones">` + state.evals.map(e => `<option value="e:${e.id}" ${sel === "e:" + e.id ? "selected" : ""}>${esc(e.name)}</option>`).join("") + `</optgroup>`;
+    h += `<optgroup label="Evaluaciones">` + state.evals.filter(e => !EVAL_CLOSED.includes(e.status) || sel === "e:" + e.id).map(e => `<option value="e:${e.id}" ${sel === "e:" + e.id ? "selected" : ""}>${esc(e.name)}</option>`).join("") + `</optgroup>`;
     h += `<optgroup label="Tareas">` + state.tasks.filter(t => !t.archived && t.status !== "done").slice(0, 40).map(t => `<option value="t:${t.id}" ${sel === "t:" + t.id ? "selected" : ""}>${esc(t.title.slice(0, 44))}</option>`).join("") + `</optgroup>`;
   }
   return h;
 }
 
+function openQuickTaskForEval(evId) {
+  const e = evalById(evId); if (!e) return;
+  openQuickTask(null, e.subjectId, e.projectId);
+  const es = byId("qt_eval"); if (es) { es.innerHTML = evalOptions(byId("qt_link").value, evId); es.value = evId; }
+}
 /* ---------- Agregado rápido ---------- */
 function openQuick() {
   openModal(`<h3>Agregado rápido</h3>
@@ -3425,7 +3462,10 @@ function openQuickTask(date, subjectId, projectId) {
   openModal(`<h3>Nueva tarea</h3>
     <label for="qt_title">Título</label><input id="qt_title" placeholder="Ej: resolver práctica de límites" onkeydown="if(event.key==='Enter')saveQuickTask()">
     <div class="mrow">
-      <div><label for="qt_link">Materia / proyecto</label><select id="qt_link">${linkOptions(sel)}</select></div>
+      <div><label for="qt_link">Materia / proyecto</label><select id="qt_link" onchange="refreshEvalSelect('qt_link','qt_eval')">${linkOptions(sel)}</select></div>
+      <div><label for="qt_eval">Parcial / final (opcional)</label><select id="qt_eval" onchange="evalPicked('qt_link','qt_eval')">${evalOptions(sel, null)}</select></div>
+    </div>
+    <div class="mrow">
       <div><label for="qt_min">Tiempo estimado (min)</label><input id="qt_min" type="number" value="60" min="0" step="5"></div>
     </div>
     <div class="mrow">
@@ -3453,7 +3493,8 @@ function saveQuickTask() {
     title, estMin: parseInt(byId("qt_min").value) || 0,
     time: mode !== "none" && hmToMin(byId("qt_time").value) != null ? byId("qt_time").value : null,
     subjectId: link.startsWith("s:") ? link.slice(2) : null,
-    projectId: link.startsWith("p:") ? link.slice(2) : null
+    projectId: link.startsWith("p:") ? link.slice(2) : null,
+    evalId: byId("qt_eval").value || null // planId queda reservado al generador de planes: "Regenerar plan" solo borra esas
   };
   if (mode === "period") {
     const d2 = byId("qt_date2").value || date;
@@ -3480,8 +3521,8 @@ function openTaskEditor(id) {
     <label for="te_title">Título</label><input id="te_title" value="${escA(t.title)}">
     <label for="te_desc">Descripción</label><textarea id="te_desc" rows="2">${esc(t.desc || "")}</textarea>
     <div class="mrow">
-      <div><label for="te_link">Materia / proyecto</label><select id="te_link">${linkOptions(sel)}</select></div>
-      <div><label for="te_eval">Evaluación / plan</label><select id="te_eval"><option value="">—</option>${state.evals.map(e => `<option value="${e.id}" ${t.evalId === e.id ? "selected" : ""}>${esc(e.name)}</option>`).join("")}</select></div>
+      <div><label for="te_link">Materia / proyecto</label><select id="te_link" onchange="refreshEvalSelect('te_link','te_eval')">${linkOptions(sel)}</select></div>
+      <div><label for="te_eval">Parcial / final</label><select id="te_eval" onchange="evalPicked('te_link','te_eval')">${evalOptions(sel, t.evalId)}</select></div>
     </div>
     <div class="mrow">
       <div><label for="te_date">Fecha programada</label><input id="te_date" type="date" value="${t.date || ""}"></div>
@@ -3605,7 +3646,13 @@ function saveTaskEditor(id) {
   const link = byId("te_link").value;
   t.subjectId = link.startsWith("s:") ? link.slice(2) : null;
   t.projectId = link.startsWith("p:") ? link.slice(2) : null;
-  const ev = byId("te_eval").value; t.evalId = ev || null; if (!ev) t.planId = null; else if (!t.planId) t.planId = ev;
+  const ev = byId("te_eval").value || null;
+  if (ev !== (t.evalId || null)) {
+    t.evalId = ev;
+    // planId lo pone solo el generador de planes ("Regenerar plan" borra esas tareas).
+    // Vincular a mano NO la mete en el plan; si la cambiás de parcial, sale del plan viejo.
+    if (t.planId && t.planId !== ev) t.planId = null;
+  }
   const prevDate = t.date;
   t.date = byId("te_date").value || null;
   const tm = byId("te_time").value;

@@ -145,12 +145,18 @@
       "topics": [
         {
           "id": "tp1",
-          "t": "Distribuciones",
-          "done": true
+          "name": "Distribuciones",
+          "diff": 2,
+          "estMin": 120,
+          "state": "ent",
+          "done": false
         },
         {
           "id": "tp2",
-          "t": "Intervalos",
+          "name": "Intervalos de confianza",
+          "diff": 3,
+          "estMin": 180,
+          "state": "nv",
           "done": false
         }
       ],

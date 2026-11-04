@@ -6,7 +6,24 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
-## Corrida 04:08–(en curso) (hora ARG) — A1, X1, A2, A3, A4a, A4b, B1, B2, X2
+## Corrida 04:08–(en curso) (hora ARG) — A1, X1, A2, A3, A4a, A4b, B1, B2, X2, B3
+
+### B3 · Tareas → parciales → materias
+
+**Plan:** que al crear o editar una tarea se elija la materia y, dentro de ella, un parcial; que no aparezcan cosas cerradas; y que el parcial muestre sus tareas.
+
+**Decisiones:**
+- **Un solo helper (`evalOptions`)** para el modal rápido y el editor: muestra los parciales *abiertos* de la materia (o proyecto) elegida. Sin materia, muestra todos los abiertos; si elegís uno, se completa la materia sola. Si cambiás de materia y el parcial elegido no es de esa materia, se limpia (para no guardar un vínculo cruzado sin darte cuenta).
+- **Cerrados = rendido, aprobado o desaprobado** (parciales) y **terminado o archivado** (proyectos). No se ofrecen, **salvo el que la tarea ya tiene**: se sigue viendo, con su estado entre paréntesis ("Primer parcial Economía · vie 2 oct (aprobado)"), y guardar sin tocarlo no lo pierde.
+- **Los parciales ya pertenecían a una materia** (`e.subjectId`, se elige al crearlo); no hizo falta cambiar el modelo.
+- **Encontré un riesgo y lo evité:** "Regenerar plan" borra las tareas pendientes con `planId` igual al parcial. El editor viejo ponía `planId` al vincular a mano, así que regenerar un plan podía **borrar tareas que vinculaste vos**. Ahora vincular a mano solo pone `evalId`; `planId` queda reservado para las tareas que crea el generador. Hay un test que llama al `generatePlan` real y verifica que la tarea manual sobrevive. (Las tareas que ya vinculaste con la versión vieja siguen teniendo `planId`; no las toqué para no cambiar datos sin necesidad.)
+- **Detalle del parcial:** la sección se llama "Tareas y plan de estudio", incluye las tareas vinculadas a mano (antes solo las del plan generado) y tiene un botón "+ Tarea" que abre el modal con la materia y el parcial ya elegidos. El contador "tareas del plan" y el % de preparación las cuentan.
+
+**Salió bien:** sin regresiones.
+**Salió mal / intentos fallidos:** la captura del parcial mostraba los temas sin nombre: el error era **mío, del fixture** (usé `{t, done}` para los temas, y la app usa `{name, diff, estMin, state}`). Lo corregí leyendo `addTopic`. También vi que en el celu el detalle del parcial apila 6 tarjetas de números antes de llegar a las tareas: lo anoté como **X3**.
+**Tests:** +6 (×2 = 12): el modal filtra por materia y oculta cerrados; cambiar materia limpia / elegir parcial completa materia; un vínculo a un parcial aprobado se conserva; proyectos cerrados ocultos salvo el vinculado; el detalle muestra las tareas manuales con su progreso y "+ Tarea"; regenerar el plan no borra lo manual. `npm test`: 100/100.
+**Capturas:** [nueva tarea con parcial (mobile claro)](capturas/B3-nueva-mobile-light.png) · [detalle del parcial (desktop oscuro)](capturas/B3-eval-e-pe2-desktop-dark.png) · [detalle (mobile claro)](capturas/B3-eval-e-pe2-mobile-light.png)
+**Para Bauti:** probá crear una tarea, elegir la materia y fijate que en "Parcial / final" solo estén los que todavía no rendiste.
 
 ### X2 · En el celu, las filas de tareas usaban la mitad del ancho
 

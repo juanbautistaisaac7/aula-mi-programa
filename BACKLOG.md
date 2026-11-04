@@ -58,7 +58,7 @@ Las palabras de Bauti están citadas tal cual en "Pedido", para no perder lo que
   Pedido: *"poder poner comentarios a las tareas"*.
   Listo cuando: en el detalle de una tarea hay un hilo de comentarios (texto + fecha y hora), con agregar, editar y borrar (con deshacer). Un indicador sutil en la fila de la tarea muestra que tiene comentarios. Con tests.
 
-- [ ] **B3 · Tareas → parciales → materias**
+- [x] **B3 · Tareas → parciales → materias**
   Pedido: *"poder asignar tareas a parciales parciales a materias. cuando se termine un proyecto o parcial que esté aprobado o estado finalizado que no aparezca más como opción para meterle tareas"*.
   Listo cuando:
   - Al crear o editar una tarea se elige la materia y, dentro de ella, opcionalmente un parcial o final (`evalId` ya existe en el modelo; revisar cómo se usa). Los parciales pertenecen a una materia.
@@ -156,4 +156,7 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
 
 - [x] **X2 · En el celu, las filas de tareas usan solo la mitad del ancho**
   Por qué: en las capturas mobile de Hoy (B1/B2) el título y los datos de cada tarea se cortan a mitad de pantalla ("Leer apunte de / límites", "Segundo parcial / PE") aunque sobra lugar a la derecha. Probablemente la zona de acciones (`.tactions`) ocupa espacio aunque no se vea. Ver en F1 o antes si sobra tiempo.
+
+- [ ] **X3 · Detalle del parcial en el celu: 6 tarjetas de números antes de lo importante**
+  Por qué: en la captura de B3 (mobile) el detalle de un parcial apila 6 tarjetas grandes (días, preparación, estudiado, temas, tareas, simulacros) y las tareas quedan varias pantallas más abajo. Estilo Apple: un número grande arriba (días que faltan + preparación) y el resto compacto en una fila. Encaja en D2/F1.
 
