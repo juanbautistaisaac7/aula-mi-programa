@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.16.0";
+const APP_VERSION = "2.17.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -465,49 +465,199 @@ function orderedTasks(list) {
     return (b.prio - a.prio) || ((a.estMin || 0) - (b.estMin || 0)) || String(a.createdAt || "").localeCompare(String(b.createdAt || ""));
   });
 }
-/* Reordenamiento por arrastre (escritorio) y botones ↑ ↓ (todos los dispositivos) */
-let dragId = null, dragAfter = false;
-function dragArm(el) { const p = el.closest && el.closest(".task"); if (p) p.draggable = true; }
-function dragDisarm(el) { const p = el.closest && el.closest(".task"); if (p) p.draggable = false; }
+/* ===================== MOVER Y ARRASTRAR TAREAS (B4) =====================
+   Un solo sistema con pointer events para mouse y dedo:
+   - Mouse: se agarra la manija ⣿ y se arrastra.
+   - Dedo: mantener apretada la fila (~0,4 s). Si movés el dedo, arrastrás; si
+     soltás sin mover, se abre "Mover a…". Si el dedo se mueve antes, es scroll.
+   Se puede soltar sobre cualquier sección con data-dropdate (Hoy, Mañana): si es
+   el mismo día cambia el orden (campo ord), si es otro día cambia la fecha. */
+const LONGPRESS_MS = 400;
+let drag = null;
 function clearDropMarks() {
   document.querySelectorAll(".task.dropbefore,.task.dropafter").forEach(x => x.classList.remove("dropbefore", "dropafter"));
+  document.querySelectorAll("[data-dropdate].over").forEach(x => x.classList.remove("over"));
 }
-function taskDragStart(ev, id) {
-  dragId = id; dragAfter = false;
-  try { ev.dataTransfer.effectAllowed = "move"; ev.dataTransfer.setData("text/plain", id); } catch (e) {}
-  const el = ev.currentTarget;
-  setTimeout(() => { if (el && el.classList) el.classList.add("dragging"); }, 0);
+function canMoveTask(t) { return !!t && !t.recur; }
+function touchUI() { try { return matchMedia("(hover:none)").matches; } catch (e) { return false; } }
+function dragPointerDown(ev) {
+  if (ev.button !== 0 || drag || ui.selMode || selSet().size) return;
+  const row = ev.target.closest && ev.target.closest("#view .task[data-id]");
+  if (!row || ev.target.closest(".cb,.tactions,button,a,input,select,textarea")) return;
+  const t = taskById(row.dataset.id);
+  if (!t || (!canMoveTask(t) && !row.dataset.date)) return; // las que se repiten solo se reordenan dentro del día
+  const handle = ev.target.closest(".drag[title]");
+  if (!handle && ev.pointerType === "mouse") return; // con mouse, el clic en la fila abre el editor
+  drag = { id: t.id, row, pid: ev.pointerId, x0: ev.clientX, y0: ev.clientY, x: ev.clientX, y: ev.clientY,
+    from: row.dataset.date || null, state: handle ? "armed" : "press", timer: null, ghost: null, target: null };
+  if (!handle) drag.timer = setTimeout(dragLift, LONGPRESS_MS);
+  window.addEventListener("pointermove", dragPointerMove, { passive: false });
+  window.addEventListener("pointerup", dragPointerUp);
+  window.addEventListener("pointercancel", dragCancel);
 }
-function taskDragEnd(ev) {
-  const el = ev.currentTarget;
-  if (el && el.classList) { el.classList.remove("dragging"); el.draggable = false; }
-  clearDropMarks(); dragId = null;
+function dragLift() {
+  if (!drag || drag.state !== "press") return;
+  drag.state = "lifted";
+  drag.row.classList.add("lifted");
+  try { if (navigator.vibrate) navigator.vibrate(8); } catch (e) {}
 }
-function taskDragOver(ev, id) {
-  if (!dragId || id === dragId) return;
-  ev.preventDefault();
-  try { ev.dataTransfer.dropEffect = "move"; } catch (e) {}
-  const el = ev.currentTarget, r = el.getBoundingClientRect();
-  dragAfter = (ev.clientY - r.top) > r.height / 2;
+function dragPointerMove(ev) {
+  if (!drag || ev.pointerId !== drag.pid) return;
+  drag.x = ev.clientX; drag.y = ev.clientY;
+  const dist = Math.hypot(ev.clientX - drag.x0, ev.clientY - drag.y0);
+  if (drag.state === "press") { if (dist > 10) dragCancel(); return; } // se movió antes: es scroll
+  if (drag.state === "armed" || drag.state === "lifted") {
+    if (dist < (drag.state === "armed" ? 4 : 6)) return;
+    dragBegin();
+  }
+  if (drag.state === "dragging") { ev.preventDefault(); dragUpdate(); }
+}
+function dragBegin() {
+  const r = drag.row.getBoundingClientRect();
+  const g = drag.row.cloneNode(true);
+  g.classList.remove("lifted", "sel"); g.classList.add("dragghost");
+  g.removeAttribute("data-id"); g.setAttribute("aria-hidden", "true");
+  g.style.width = r.width + "px"; g.style.left = r.left + "px"; g.style.top = r.top + "px";
+  document.body.appendChild(g);
+  drag.ghost = g; drag.dx = drag.x0 - r.left; drag.dy = drag.y0 - r.top;
+  drag.row.classList.remove("lifted"); drag.row.classList.add("dragging");
+  document.body.classList.add("is-dragging");
+  drag.state = "dragging";
+  dragAutoScroll();
+}
+function dragUpdate() {
+  const d = drag;
+  d.ghost.style.left = (d.x - d.dx) + "px"; d.ghost.style.top = (d.y - d.dy) + "px";
   clearDropMarks();
-  el.classList.add(dragAfter ? "dropafter" : "dropbefore");
+  d.target = null;
+  const el = document.elementFromPoint(d.x, d.y);
+  const zone = el && el.closest && el.closest("#view [data-dropdate]");
+  if (!zone) return;
+  zone.classList.add("over");
+  const row = el.closest(".task[data-id]");
+  let before = null, after = false;
+  if (row && zone.contains(row) && row !== d.row) {
+    const r = row.getBoundingClientRect();
+    after = (d.y - r.top) > r.height / 2;
+    before = row.dataset.id;
+    row.classList.add(after ? "dropafter" : "dropbefore");
+  }
+  d.target = { date: zone.dataset.dropdate, near: before, after };
 }
-function taskDragLeave(ev) { const el = ev.currentTarget; if (el && el.classList) el.classList.remove("dropbefore", "dropafter"); }
-function taskDrop(ev, targetId, date) {
-  ev.preventDefault(); ev.stopPropagation();
+function dragAutoScroll() {
+  if (!drag || drag.state !== "dragging") return;
+  const m = 70, y = drag.y, h = window.innerHeight;
+  const v = y < m ? -Math.ceil((m - y) / 5) : y > h - m ? Math.ceil((y - (h - m)) / 5) : 0;
+  if (v) { window.scrollBy(0, v); dragUpdate(); }
+  requestAnimationFrame(dragAutoScroll);
+}
+function dragEnd() {
+  window.removeEventListener("pointermove", dragPointerMove, { passive: false });
+  window.removeEventListener("pointerup", dragPointerUp);
+  window.removeEventListener("pointercancel", dragCancel);
+  if (!drag) return;
+  clearTimeout(drag.timer);
+  if (drag.ghost) drag.ghost.remove();
+  drag.row.classList.remove("lifted", "dragging");
+  document.body.classList.remove("is-dragging");
   clearDropMarks();
-  const src = dragId; dragId = null;
-  if (!src || src === targetId) return;
-  const st = taskById(src); if (st && st.time) { toast("Las tareas con hora se ordenan solas por hora"); return; }
-  const ids = tasksOn(date).map(t => t.id);
-  const from = ids.indexOf(src);
-  if (from < 0) return;
-  ids.splice(from, 1);
-  let at = ids.indexOf(targetId);
-  if (at < 0) return;
-  applyOrder(ids, at + (dragAfter ? 1 : 0), src);
-  toast("Orden actualizado");
+  drag = null;
 }
+function dragCancel() { dragEnd(); }
+/* Después de mantener apretado o arrastrar, el navegador manda un "click": no tiene que abrir el editor. */
+function swallowNextClick() {
+  // En táctil el "tap" cae donde está el dedo: sobre la lista o sobre el fondo de la hoja
+  // recién abierta (que la cerraría). El "Deshacer" del aviso tiene que andar enseguida.
+  const kill = e => { if (e.target.closest && e.target.closest("#view,#sheetbg")) { e.stopPropagation(); e.preventDefault(); window.removeEventListener("click", kill, { capture: true }); } };
+  window.addEventListener("click", kill, { capture: true });
+  setTimeout(() => window.removeEventListener("click", kill, { capture: true }), 400);
+}
+function dragPointerUp(ev) {
+  if (!drag || ev.pointerId !== drag.pid) return;
+  const d = drag;
+  dragEnd();
+  if (d.state === "lifted") { swallowNextClick(); openMoveSheet(d.id); return; }
+  if (d.state !== "dragging") return;
+  swallowNextClick();
+  if (d.target) dropTask(d.id, d.from, d.target);
+}
+function dropTask(id, from, tg) {
+  const t = taskById(id); if (!t) return;
+  if (tg.date === from) {
+    if (t.time) { toast("Las tareas con hora se ordenan solas por hora"); return; }
+    if (!tg.near) return;
+    const ids = tasksOn(from).map(x => x.id);
+    const i = ids.indexOf(id); if (i < 0) return;
+    ids.splice(i, 1);
+    const at = ids.indexOf(tg.near); if (at < 0) return;
+    applyOrder(ids, at + (tg.after ? 1 : 0), id);
+    toast("Orden actualizado");
+    return;
+  }
+  if (!canMoveTask(t)) { toast("Las tareas que se repiten no se mueven de día"); return; }
+  moveTaskTo(id, tg.date, tg.near ? { near: tg.near, after: tg.after } : null);
+}
+/* Cambia el día de una tarea (no las que se repiten). Si viene `pos`, la ubica
+   antes/después de otra tarea de ese día; si no, al final. Siempre con deshacer. */
+function moveTaskTo(id, date, pos) {
+  const t = taskById(id);
+  if (!canMoveTask(t) || !date) return false;
+  if (t.date === date && !pos) return false;
+  const snap = state.tasks.filter(x => x === t || occursOn(x, date)).map(x => [x, x.date, x.ord, x.status]);
+  t.date = date;
+  if (t.status === "post") t.status = "pend";
+  t.ord = null;
+  if (pos && !t.time) {
+    const ids = tasksOn(date).map(x => x.id).filter(x => x !== id);
+    const at = ids.indexOf(pos.near);
+    if (at >= 0) { ids.splice(at + (pos.after ? 1 : 0), 0, id); ids.forEach((x, k) => { const y = taskById(x); if (y) y.ord = k; }); }
+  }
+  change(); render();
+  toast("Movida a " + dayName(date), () => {
+    for (const [x, dt, ord, st] of snap) { x.date = dt; x.ord = ord; x.status = st; }
+    change(); render();
+  });
+  return true;
+}
+/* "hoy", "mañana" o "jue 5 nov" */
+function dayName(d) {
+  const t = todayISO();
+  return d === t ? "hoy" : d === addDays(t, 1) ? "mañana" : fmtD(d);
+}
+function nextMonday(d) { const w = dToDate(d).getDay(); return addDays(d, ((8 - w) % 7) || 7); }
+function moveOptions() {
+  const t = todayISO();
+  return [["Hoy", t], ["Mañana", addDays(t, 1)], ["Pasado mañana", addDays(t, 2)], ["En 3 días", addDays(t, 3)],
+    ["Próximo lunes", nextMonday(t)], ["En 1 semana", addDays(t, 7)]];
+}
+/* Hoja "Mover a…": abajo en el celu (al alcance del pulgar), centrada en desktop. */
+function openMoveSheet(id) {
+  const t = taskById(id);
+  if (!canMoveTask(t)) { if (t) toast("Las tareas que se repiten no se mueven de día"); return; }
+  const bg = byId("sheetbg"), sh = byId("sheet");
+  const now = t.date ? "Ahora: " + dayName(t.date) + (t.date === todayISO() || t.date === addDays(todayISO(), 1) ? " · " + fmtD(t.date) : "") : t.due ? "Sin día · vence " + fmtD(t.due) : "Sin fecha";
+  const opts = moveOptions().filter(([n, d]) => !(n === "Hoy" && t.date === d));
+  sh.innerHTML = `<div class="sheetgrip" aria-hidden="true"></div>
+    <div class="sheethead"><div class="sheettitle">Mover “${esc(t.title.slice(0, 60))}”</div><div class="tiny">${esc(now)}</div></div>
+    <div class="sheetlist">
+      ${opts.map(([n, d]) => `<button class="sheetopt${t.date === d ? " cur" : ""}" ${t.date === d ? 'aria-current="date" disabled' : ""} onclick="closeMoveSheet();moveTaskTo('${t.id}','${d}')">
+        <span>${n}</span><span class="sheetdate">${t.date === d ? "✓ " : ""}${fmtD(d)}</span></button>`).join("")}
+      <button class="sheetopt" id="mv_pick" onclick="moveSheetPick()"><span>Elegir fecha…</span><span class="sheetdate">›</span></button>
+      <div class="sheetpick" id="mv_pickrow" hidden>
+        <input type="date" id="mv_date" value="${t.date || addDays(todayISO(), 1)}" aria-label="Fecha">
+        <button class="btn primary" onclick="const v=byId('mv_date').value;if(v){closeMoveSheet();moveTaskTo('${t.id}',v)}">Mover</button>
+      </div>
+    </div>
+    <button class="sheetopt sheetcancel" onclick="closeMoveSheet()">Cancelar</button>`;
+  bg.classList.add("open");
+  setTimeout(() => { const b = sh.querySelector(".sheetopt:not(.cur)"); if (b && matchMedia("(hover:hover)").matches) b.focus(); }, 30);
+}
+function moveSheetPick() {
+  const r = byId("mv_pickrow"); if (!r) return;
+  r.hidden = false; byId("mv_pick").hidden = true;
+  const i = byId("mv_date"); if (i) i.focus();
+}
+function closeMoveSheet() { const bg = byId("sheetbg"); if (bg) bg.classList.remove("open"); }
 function moveTaskOrder(id, dir, date) {
   const mt = taskById(id); if (mt && mt.time) { toast("Las tareas con hora se ordenan solas por hora"); return; }
   const ids = tasksOn(date).map(t => t.id);
@@ -661,15 +811,6 @@ function uncreditTaskDone(t, recurDate) {
     }
   }
   change();
-}
-function postponeTask(id) {
-  const t = taskById(id); if (!t || t.recur) return;
-  if (t.date) t.date = addDays(t.date < todayISO() ? todayISO() : t.date, 1);
-  else if (t.due) t.due = addDays(t.due < todayISO() ? todayISO() : t.due, 1);
-  else t.date = addDays(todayISO(), 1);
-  t.status = t.status === "done" ? t.status : "post";
-  t.ord = null; // al cambiar de día vuelve al final de ese día
-  change(); render(); toast("Pospuesta para " + fmtD(t.date || t.due));
 }
 function assignToday(id) {
   const t = taskById(id); if (!t || t.recur) return;
@@ -1750,11 +1891,10 @@ function taskRow(t, opts = {}) {
   const late = !t.recur && t.status !== "done" && ((t.date && t.date < todayISO()) || (!t.date && t.due && t.due < todayISO()));
   const canToday = !t.recur && !done && t.date !== todayISO();
   const srt = !!opts.sortable && !t.time; // las que tienen hora no se reordenan a mano
-  const dnd = srt ? ` ondragstart="taskDragStart(event,'${t.id}')" ondragend="taskDragEnd(event)" ondragover="taskDragOver(event,'${t.id}')" ondragleave="taskDragLeave(event)" ondrop="taskDrop(event,'${t.id}','${date}')"` : "";
+  const dd = opts.sortable || opts.date ? ` data-date="${date}"` : !t.recur && t.date ? ` data-date="${t.date}"` : "";
   if (!opts.noSel) { ui.selList = ui.selList || []; ui.selList.push(t.id); }
-  return `<div class="task ${done ? "done" : ""} ${isSel(t.id) ? "sel" : ""}" data-id="${t.id}"${dnd} onclick="taskClick(event,'${t.id}')">
-    ${srt ? `<span class="drag" title="Arrastrá para cambiar el orden del día" aria-hidden="true"
-      onclick="event.stopPropagation()" onmousedown="dragArm(this)" onmouseup="dragDisarm(this)" ontouchstart="dragArm(this)">⣿</span>` : opts.sortable ? '<span class="drag" aria-hidden="true" style="visibility:hidden">⣿</span>' : ""}
+  return `<div class="task ${done ? "done" : ""} ${isSel(t.id) ? "sel" : ""}" data-id="${t.id}"${dd} onclick="taskClick(event,'${t.id}')">
+    ${srt ? `<span class="drag" title="Arrastrá para ordenar o pasar a otro día" aria-hidden="true" onclick="event.stopPropagation()">⣿</span>` : opts.sortable ? '<span class="drag" aria-hidden="true" style="visibility:hidden">⣿</span>' : ""}
     <div class="cb ${done ? "on" : ""}" role="checkbox" aria-checked="${done}" tabindex="0" title="${done ? "Desmarcar" : "Completar"}"
       onclick="event.stopPropagation();toggleTask('${t.id}','${date}')"
       onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();toggleTask('${t.id}','${date}')}">${done ? "✓" : ""}</div>
@@ -1774,7 +1914,7 @@ function taskRow(t, opts = {}) {
       ${srt ? `<button title="Subir en el orden del día" onclick="moveTaskOrder('${t.id}',-1,'${date}')">↑</button>
       <button title="Bajar en el orden del día" onclick="moveTaskOrder('${t.id}',1,'${date}')">↓</button>` : ""}
       ${canToday ? `<button title="Asignar a hoy" onclick="assignToday('${t.id}')">Hoy</button>` : ""}
-      ${!t.recur ? `<button title="Posponer para mañana" onclick="postponeTask('${t.id}')">+1d</button>` : ""}
+      ${!t.recur ? `<button title="Mover a otro día" onclick="openMoveSheet('${t.id}')">Mover…</button>` : ""}
       <button title="Editar" onclick="openTaskEditor('${t.id}')">Editar</button>
       <button title="Eliminar definitivamente" style="color:var(--bad)" onclick="deleteTask('${t.id}')">×</button>
     </div>
@@ -1832,7 +1972,7 @@ function viewHome() {
     h += "</div>";
   }
 
-  h += `<div class="card"><h3>Para hoy<div class="grow"></div><span class="tiny">${dayTasks.length ? fmtMin(dayTasks.reduce((a, t) => a + (t.estMin || 0), 0)) + " en total" : ""}</span></h3>`;
+  h += `<div class="card dropzone" data-dropdate="${today}"><h3>Para hoy<div class="grow"></div><span class="tiny">${dayTasks.length ? fmtMin(dayTasks.reduce((a, t) => a + (t.estMin || 0), 0)) + " en total" : ""}</span></h3>`;
   h += dayTasks.length ? dayTasks.map(t => taskRow(t, { sortable: true })).join("") : `<div class="empty">Nada programado para hoy. Agregá una tarea o revisá las flexibles.</div>`;
   h += "</div>";
 
@@ -1898,11 +2038,12 @@ function viewToday() {
     <button class="btn ${ui.selMode ? "primary" : ""}" onclick="toggleSelMode()" title="Elegir varias tareas (o usá Ctrl+clic y Shift+clic)">Seleccionar</button>
     <button class="btn primary" onclick="openQuickTask('${today}')">Nueva tarea para hoy</button></div>`;
   if (od.length) h += `<div class="card"><h3>Atrasadas</h3>${od.map(t => taskRow(t, { showDate: true })).join("")}</div>`;
-  h += `<div class="card"><h3>Programadas para hoy<div class="grow"></div><span class="tiny">arrastrá ⣿ para ordenar tu día</span></h3>${dayTasks.length ? dayTasks.map(t => taskRow(t, { sortable: true })).join("") : '<div class="empty">Sin tareas programadas.</div>'}</div>`;
+  const hint = touchUI() ? "mantené apretada una tarea para moverla" : "arrastrá ⣿ para ordenar o pasar a mañana";
+  h += `<div class="card dropzone" data-dropdate="${today}"><h3>Programadas para hoy</h3><p class="tiny zonehint">${hint}</p>${dayTasks.length ? dayTasks.map(t => taskRow(t, { sortable: true })).join("") : '<div class="empty">Sin tareas programadas.</div>'}</div>`;
   if (flex.length) h += `<div class="card"><h3>Flexibles (vencen pronto)</h3>${flex.map(t => taskRow(t, { showDate: true })).join("")}</div>`;
   const tom = addDays(today, 1);
   const tomTasks = tasksOn(tom);
-  if (tomTasks.length) h += `<div class="card"><h3>Mañana<div class="grow"></div><span class="tiny">podés marcarlas hechas si las adelantaste</span></h3>${tomTasks.map(t => taskRow(t, { date: tom, showDate: true, sortable: true })).join("")}</div>`;
+  h += `<div class="card dropzone" data-dropdate="${tom}"><h3>Mañana<span class="sub">${fmtD(tom)}</span><div class="grow"></div>${tomTasks.length ? `<span class="tiny">${fmtMin(tomTasks.reduce((a, t) => a + (t.estMin || 0), 0))}</span>` : ""}</h3>${tomTasks.length ? tomTasks.map(t => taskRow(t, { date: tom, sortable: true })).join("") : `<div class="empty">Nada para mañana todavía. ${touchUI() ? "Mantené apretada una tarea y arrastrala hasta acá." : "Arrastrá una tarea hasta acá."}</div>`}</div>`;
   return h;
 }
 
@@ -3948,6 +4089,7 @@ function isTyping() {
 }
 function onKeydown(e) {
   if (e.key === "Escape") {
+    if (byId("sheetbg").classList.contains("open")) { closeMoveSheet(); return; }
     if (byId("confirmbg").classList.contains("open")) { closeConfirm(); return; }
     if (byId("searchbg").classList.contains("open")) { closeSearch(); return; }
     if (byId("modalbg").classList.contains("open")) { closeModal(); return; }
@@ -3966,7 +4108,7 @@ function onKeydown(e) {
 }
 function trapFocus(e) {
   if (e.key !== "Tab") return;
-  const tops = ["confirmbg", "searchbg", "modalbg"];
+  const tops = ["sheetbg", "confirmbg", "searchbg", "modalbg"];
   let cont = null;
   for (const id of tops) { const el = byId(id); if (el && el.classList.contains("open")) { cont = el; break; } }
   if (!cont) return;
@@ -3991,6 +4133,11 @@ async function init() {
   window.addEventListener("hashchange", () => { render(); if (window.innerWidth < 980) toggleSidebar(false); });
   document.addEventListener("keydown", onKeydown);
   document.addEventListener("keydown", trapFocus);
+  document.addEventListener("pointerdown", dragPointerDown);
+  // con la tarea levantada o arrastrándose, el dedo no scrollea la página ni abre el menú del sistema
+  document.addEventListener("touchmove", e => { if (drag && (drag.state === "lifted" || drag.state === "dragging")) e.preventDefault(); }, { passive: false });
+  document.addEventListener("contextmenu", e => { if (drag && drag.state !== "armed") e.preventDefault(); });
+  byId("sheetbg").addEventListener("click", e => { if (e.target.id === "sheetbg") closeMoveSheet(); });
   for (const id of ["modalbg", "searchbg"]) byId(id).addEventListener("mousedown", e => { if (e.target.id === id) (id === "searchbg" ? closeSearch : closeModal)(); });
   byId("confirmbg").addEventListener("mousedown", e => { if (e.target.id === "confirmbg") closeConfirm(); });
   await dailyBackup();

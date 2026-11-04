@@ -160,7 +160,6 @@ body.sb-open #sidebar{transform:translateX(0)}
 .drag{cursor:grab;color:var(--tx3);font-size:.72rem;line-height:1;padding:3px 2px;margin-top:2px;flex-shrink:0;opacity:.35;transition:.12s;letter-spacing:-2px;user-select:none;touch-action:none}
 .task:hover .drag{opacity:.9;color:var(--acc)}
 .drag:active{cursor:grabbing}
-.task.dragging{opacity:.4}
 /* selección múltiple */
 .task.sel{background:var(--acc-soft);box-shadow:inset 0 0 0 1px var(--acc-line)}
 .task.sel:hover{background:var(--acc-soft)}
@@ -173,6 +172,38 @@ body.selbar-on #main{padding-bottom:230px}
 /* minutos del día en el calendario */
 .cal .dnum .dmin{float:right;font-weight:600;color:var(--tx3);font-size:.6rem}
 .task.dropbefore{box-shadow:inset 0 3px 0 -1px var(--acc)}
+/* B4 · mover y arrastrar tareas */
+.zonehint{margin:-6px 0 8px;color:var(--tx3)}
+.card h3 .sub{font-size:.72rem;font-weight:500;color:var(--tx3);text-transform:none}
+.dropzone{transition:box-shadow .18s,background-color .18s}
+body.is-dragging .dropzone{box-shadow:0 0 0 1.5px var(--line) inset}
+.dropzone.over{box-shadow:0 0 0 2px var(--acc) inset;background:var(--acc-soft)}
+body.is-dragging,body.is-dragging *{cursor:grabbing!important;user-select:none;-webkit-user-select:none}
+.task.lifted{transform:scale(1.02);background:var(--card);box-shadow:var(--shadow-lg);transition:transform .18s,box-shadow .18s;position:relative;z-index:2}
+.task.dragging{opacity:.35}
+.dragghost{position:fixed;z-index:130;pointer-events:none;background:var(--card);border-radius:10px;box-shadow:var(--shadow-lg);transform:scale(1.03) rotate(.6deg);opacity:.96;margin:0}
+.dragghost .tactions{display:none}
+@media (hover:none){.task{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}}
+#sheetbg{z-index:100;align-items:flex-end;padding:0}
+#sheet{background:var(--card);width:min(440px,100vw);border-radius:16px 16px 0 0;padding:6px 12px calc(12px + env(safe-area-inset-bottom));box-shadow:var(--shadow-lg);animation:sheetup .22s cubic-bezier(.2,.8,.2,1)}
+@media (min-width:721px){#sheetbg{align-items:center;padding:20px}#sheet{border-radius:16px;padding:6px 12px 12px;animation:sheetpop .18s ease-out}.sheetgrip{display:none}}
+@keyframes sheetup{from{transform:translateY(100%)}to{transform:none}}
+@keyframes sheetpop{from{transform:scale(.97);opacity:0}to{transform:none;opacity:1}}
+.sheetgrip{width:36px;height:5px;border-radius:3px;background:var(--line);margin:4px auto 6px}
+.sheethead{padding:8px 6px 10px;text-align:center}
+.sheettitle{font-weight:700;font-size:.92rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sheetlist{background:var(--card2);border-radius:12px;overflow:hidden}
+.sheetopt{display:flex;width:100%;align-items:center;justify-content:space-between;gap:12px;min-height:50px;padding:0 16px;background:transparent;border:none;border-top:1px solid var(--line);font-size:.92rem;color:var(--acc);cursor:pointer;text-align:left;font-family:inherit}
+.sheetlist .sheetopt:first-child{border-top:none}
+.sheetopt:hover,.sheetopt:focus-visible{background:var(--hover);outline:none}
+.sheetopt:active{background:var(--line2)}
+.sheetopt.cur{color:var(--tx2);cursor:default}
+.sheetdate{color:var(--tx3);font-size:.82rem;font-variant-numeric:tabular-nums}
+.sheetpick{display:flex;gap:8px;padding:10px 12px;border-top:1px solid var(--line)}
+.sheetpick[hidden]{display:none}
+.sheetpick input{flex:1;min-width:0;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:9px 10px;font-size:.9rem;color:var(--tx)}
+.sheetcancel{margin-top:8px;background:var(--card2);border-radius:12px;border:none;justify-content:center;font-weight:700}
+@media (prefers-reduced-motion:reduce){#sheet{animation:none}.task.lifted,.dropzone{transition:none}.dragghost{transform:none}}
 .task.dropafter{box-shadow:inset 0 -3px 0 -1px var(--acc)}
 /* calendario */
 .cal{display:grid;grid-template-columns:repeat(7,1fr);gap:5px}
@@ -278,6 +309,7 @@ footer{text-align:center;margin-top:30px;color:var(--tx3);font-size:.7rem}
 <div class="mbg" id="modalbg"><div class="modal" id="modalbox" role="dialog" aria-modal="true"></div></div>
 <div class="mbg" id="confirmbg"><div class="modal narrow" id="confirmbox" role="alertdialog" aria-modal="true"></div></div>
 <div class="mbg" id="searchbg"><div class="modal" id="searchbox2" role="dialog" aria-modal="true"></div></div>
+<div class="mbg" id="sheetbg"><div id="sheet" role="dialog" aria-modal="true" aria-label="Mover a otro día"></div></div>
 <div id="selbar" role="toolbar" aria-label="Acciones sobre las tareas seleccionadas"></div>
 <div id="toast" role="status"></div>
 

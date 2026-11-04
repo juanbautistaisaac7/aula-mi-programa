@@ -66,7 +66,7 @@ Las palabras de Bauti están citadas tal cual en "Pedido", para no perder lo que
   - En el detalle de un parcial se ven sus tareas y su progreso.
   - Con tests.
 
-- [ ] **B4 · Pasar tareas a otro día, fácil**
+- [x] **B4 · Pasar tareas a otro día, fácil**
   Pedido: *"poder pasar tareas de hoy a mañana arrastrándolas · en la sección hoy, abajo de hoy en la sección mañana que se pueda pasar a pasado mañana y un par de días más de última una semana más"*.
   Listo cuando:
   - En la vista Hoy, debajo de "Hoy", hay una sección "Mañana".

@@ -6,6 +6,33 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
+## Corrida 05:05–… (hora ARG) — B4
+
+### B4 · Pasar tareas a otro día, fácil
+
+**Plan:** sección "Mañana" fija en Hoy, arrastrar entre Hoy y Mañana con mouse **y con el dedo**, y un "Mover a…" que se use con una mano. Todo con deshacer.
+
+**Decisiones:**
+- **Un solo sistema de arrastre con pointer events** (mouse y dedo) en lugar del arrastre HTML5 que había. El HTML5 no funciona en táctil, y tener dos sistemas era pedir bugs. Lo borré entero (`taskDragStart`, `dragArm`, etc.).
+- **Cómo se agarra una tarea:** con mouse, desde la manija ⣿ (un clic en la fila sigue abriendo el detalle). Con el dedo, **mantené apretada la fila ~0,4 s**: se "levanta" (se agranda un poquito con sombra y vibra si el celu puede). Si movés el dedo, la arrastrás; si soltás sin moverla, se abre **"Mover a…"**. Es lo mismo que hace el iPhone con las apps de la pantalla de inicio. Si el dedo se mueve *antes* de los 0,4 s, es scroll normal: no se rompe el desplazamiento.
+- **Soltar:** en el mismo día cambia el orden (como antes); en otro día cambia la fecha y la ubica arriba o abajo de la tarea donde soltaste. Las zonas donde se puede soltar se marcan con un borde y la que está debajo del dedo se pinta con el color de acento. Si arrastrás cerca del borde de la pantalla, la página se desplaza sola.
+- **"Mover a…"** es una hoja que sube desde abajo en el celu (al alcance del pulgar) y un cuadro centrado en desktop: Hoy (si no está hoy), Mañana, Pasado mañana, En 3 días, Próximo lunes, En 1 semana y Elegir fecha. Cada opción muestra la fecha exacta ("jue 5 nov") para que no haya sorpresas. Todas cuentan desde **hoy**, no desde la fecha de la tarea. En desktop el botón "+1d" de la fila pasó a ser "Mover…" (Mañana está adentro); "Hoy" sigue.
+- **Tareas flexibles** (solo tienen "vence"): moverlas les pone día y **conservan el vencimiento**. Una tarea "pospuesta" que movés vuelve a "pendiente".
+- **Las tareas que se repiten no cambian de día** (su fecha la define la repetición): se pueden reordenar dentro del día, pero si las soltás en otro día avisa "Las tareas que se repiten no se mueven de día". Esto se va a revisar en C1–C3.
+- **Las tareas con hora** se pueden pasar a otro día (con el dedo o "Mover a…"), pero dentro del día siguen ordenándose solas por hora; no les agregué la manija para no romper esa regla (test de B1 intacto).
+- **No hizo falta migración:** solo cambian `date`, `ord` y `status`, campos que ya existían. Deshacer restaura las tres cosas de todas las tareas que se reordenaron.
+- Borré `postponeTask` (lo usaba solo el botón "+1d").
+
+**Salió bien:** el arrastre con el dedo anda con toques táctiles reales (los tests usan el protocolo de Chrome para mandar toques de pantalla, no clics simulados).
+**Salió mal / intentos fallidos:**
+- El "Deshacer" del aviso no andaba si lo tocabas enseguida después de arrastrar: para que el arrastre no abra el editor, "me como" el clic que manda el navegador al soltar, y me estaba comiendo el clic del Deshacer. Ahora solo descarto clics sobre la lista.
+- En el celu, después de mantener apretado, el "tap" del navegador caía sobre el fondo de la hoja recién abierta y la cerraba al instante. Lo encontré con un test de depuración que registraba los eventos; lo arreglé descartando también ese clic.
+- Las capturas mostraron que la ayuda "mantené apretada una tarea para moverla" partía el título en dos renglones en el celu: la pasé a una línea chiquita debajo del título.
+- Al revisar las capturas vi que la manija de una tarea que se repite ya no hacía nada (mi primera versión ignoraba las repetitivas del todo): eso era una regresión del orden manual. Lo arreglé y le puse test.
+**Tests:** +11 (`tests/mover.spec.js`; los de mouse corren en desktop y los de dedo en mobile, el resto en los dos). `npm test`: 116 pasaron, 0 fallaron (6 salteados a propósito: son los de mouse en mobile y los de dedo en desktop).
+**Capturas:** [Hoy (mobile claro)](capturas/B4-today-mobile-light.png) · [sección Mañana (mobile oscuro)](capturas/B4-manana-mobile-dark.png) · [Mover a… (mobile oscuro)](capturas/B4-mover-mobile-dark.png) · [Mover a… (desktop claro)](capturas/B4-mover-desktop-light.png) · [Hoy (desktop claro)](capturas/B4-today-desktop-light.png)
+**Para Bauti:** probalo en el celu: en Hoy, mantené apretada una tarea, esperá que "se levante" y arrastrala a Mañana. Y mantené apretada y soltá sin mover para ver "Mover a…". Si 0,4 s te parece mucho o poco, decime: es un número (`LONGPRESS_MS`). No lo pude probar en un iPhone real; en Safari de iOS el comportamiento de "mantener apretado" puede variar, así que contame si algo se siente raro.
+
 ## Corrida 04:08–04:49 (hora ARG) — A1, X1, A2, A3, A4a, A4b, B1, B2, X2, B3
 
 **Resumen de la corrida:** 10 ítems cerrados (7 del backlog + 3 que encontré yo: X1, X2, y A4 partido en dos). Tests: de 6 a 100 (50 tests × desktop y mobile), todos en verde en cada commit. Versión de la app: 2.6.0 → 2.16.0; esquema de datos: v1 → v3 (con copia automática antes de migrar). Lo siguiente en el backlog es **B4** (mover tareas a otro día arrastrando con el dedo + "Mover a…"); no lo empecé porque quedaban menos de 10 minutos y es un ítem grande: mejor arrancarlo entero en la próxima corrida. Quedan anotados **X3** (detalle del parcial en el celu) y los detalles feos de la vista Series (para C1–C3).
