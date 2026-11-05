@@ -105,3 +105,54 @@ test("el resumen de un año anterior se ve desde «Tus años» sin cambiar el a�
   expect(await page.evaluate(() => activeYearId())).toBe("y1");
   expect(errors).toEqual([]);
 });
+
+test("G2b · compartir una pantalla: en el iPhone usa la hoja de compartir con un PNG de 1080×1920", async ({ page }) => {
+  await seedState(page, fixture("estado-v2.6.json"));
+  const errors = await openApp(page);
+  await page.evaluate(() => {
+    window.__shared = null;
+    navigator.canShare = d => !!(d && d.files && d.files.length);
+    navigator.share = async d => { const f = d.files[0]; const bmp = await createImageBitmap(f); window.__shared = { name: f.name, type: f.type, w: bmp.width, h: bmp.height, size: f.size, title: d.title }; };
+    openWrapped(); wrappedGo(1);
+  });
+  await page.getByRole("button", { name: "Compartir esta pantalla como imagen" }).click();
+  await page.waitForFunction(() => window.__shared);
+  const sh = await page.evaluate(() => window.__shared);
+  expect(sh).toMatchObject({ name: "aula-3-ano-2026-2.png", type: "image/png", w: 1080, h: 1920, title: "Mi año en Aula" });
+  expect(sh.size).toBeGreaterThan(20000); // tiene contenido (degradé + textos), no es una imagen vacía
+  // cancelar la hoja de compartir no descarga nada ni muestra error
+  await page.evaluate(() => { navigator.share = async () => { const e = new Error("x"); e.name = "AbortError"; throw e; }; });
+  let downloaded = false; page.on("download", () => { downloaded = true; });
+  await page.getByRole("button", { name: "Compartir esta pantalla como imagen" }).click();
+  await page.waitForTimeout(400);
+  expect(downloaded).toBe(false);
+  expect(errors).toEqual([]);
+});
+
+test("G2b · sin hoja de compartir (compu), la pantalla se descarga como PNG", async ({ page }) => {
+  await seedState(page, fixture("estado-v2.6.json"));
+  const errors = await openApp(page);
+  await page.evaluate(() => { navigator.canShare = undefined; openWrapped(); for (let i = 0; i < 7; i++) wrappedGo(1); });
+  const [dl] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "Compartir esta pantalla como imagen" }).click()]);
+  expect(dl.suggestedFilename()).toBe("aula-3-ano-2026-8.png");
+  const buf = require("fs").readFileSync(await dl.path());
+  expect(buf.slice(1, 4).toString()).toBe("PNG");
+  expect(buf.readUInt32BE(16)).toBe(1080); expect(buf.readUInt32BE(20)).toBe(1920);
+  await expect(page.locator("#toast")).toContainText("Imagen guardada");
+  // todas las pantallas se pueden dibujar (también la de una materia con su color y textos largos)
+  const ok = await page.evaluate(() => wrappedSlides(wrappedData(activeYearId())).every(s => wrappedCanvas(s, "3.º año · 2026").width === 1080));
+  expect(ok).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+test("un solo día de estudio en una sola materia: textos que tienen sentido", async ({ page }) => {
+  const errors = await openApp(page);
+  const subs = await page.evaluate(() => {
+    state.sessions.push({ id: "q", date: todayISO(), min: 300, subjectId: state.subjects[0].id, ts: Date.now() });
+    return wrappedSlides(wrappedData(activeYearId())).map(s => s.sub || "");
+  });
+  expect(subs[1]).toBe("en un solo día. Como ver 2 películas seguidas.");
+  expect(subs[2]).toBe("5 h · todo tu tiempo de estudio fue para esta materia");
+  expect(subs[3]).toBe("5 h, todas el miércoles 4 de noviembre.");
+  expect(errors).toEqual([]);
+});

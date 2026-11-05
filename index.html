@@ -577,6 +577,7 @@ footer{text-align:center;margin-top:30px;color:var(--tx3);font-size:.7rem}
 
 /* G2 · Tu año en Aula (historias a pantalla completa) */
 #wrapped{display:none}#wrapped:focus{outline:none}
+body:has(#wrapped.open) #toast{z-index:310}
 #wrapped.open{display:flex;position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.72);align-items:center;justify-content:center;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
 .wcard{position:relative;width:min(420px,100vw);height:min(760px,100dvh);border-radius:22px;overflow:hidden;color:#fff;display:flex;flex-direction:column;justify-content:center;box-shadow:0 30px 80px rgba(0,0,0,.45);transition:background .25s}
 @media(max-width:600px){.wcard{width:100vw;height:100dvh;border-radius:0}}
@@ -611,6 +612,7 @@ footer{text-align:center;margin-top:30px;color:var(--tx3);font-size:.7rem}
 .wbody>*:nth-child(2){animation-delay:.05s}.wbody>*:nth-child(3){animation-delay:.1s}.wbody>*:nth-child(4){animation-delay:.15s}
 @keyframes wIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 @media (prefers-reduced-motion:reduce){.wbody>*{animation:none}.wcard{transition:none}}
+.wshare{position:absolute;bottom:calc(8px + env(safe-area-inset-bottom));right:10px;z-index:4;width:44px;height:44px;border:0;border-radius:22px;background:rgba(0,0,0,.18);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer}
 .wopen{background:linear-gradient(135deg,#5b4bd6,#e0284f);color:#fff;border-color:transparent}
 </style>
 </head>

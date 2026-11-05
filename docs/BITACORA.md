@@ -6,7 +6,20 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
-## Corrida 02:06–02:45 (hora ARG) — L1a2 (revisor automático de textos) y G2a (Tu año en Aula)
+## Corrida 02:06–02:50 (hora ARG) — L1a2 (revisor automático de textos) y G2 completo (Tu año en Aula)
+
+**Resumen de la corrida:** tres commits, cada uno con `npm test` en verde: el revisor automático de textos (L1a2), "Tu año en Aula" (G2a) y compartir cada pantalla como imagen (G2b). Versión 2.35.0 → 2.38.0. Tests: de 261 a 299 pasados, 0 fallados. **No hubo cambios en la forma de los datos** (G2 solo lee).
+
+### G2b · Compartir una pantalla como imagen (Aula 2.38.0)
+
+**Decisiones:**
+- **La imagen se dibuja a mano en un canvas de 1080×1920** (formato historia de Instagram) con los mismos colores y textos, más "Aula · 3.º año · 2026" abajo. Descarté sacar una "foto" del HTML: sin librerías no hay forma confiable, y además así la imagen sale igual en cualquier pantalla. El título grande se achica solo si no entra.
+- **Botón de compartir** (abajo a la derecha, 44 px): en el iPhone abre la **hoja de compartir** con el PNG (para mandarlo por WhatsApp o subirlo a una historia); si cancelás, no pasa nada. Donde no hay hoja de compartir (la compu) se **descarga** el PNG ("Imagen guardada"). El nombre del archivo queda tipo `aula-3-ano-2026-2.png`.
+**Salió mal / intentos fallidos:** (1) el nombre del archivo salía `aula-3-an-o-2026` (al sacar los acentos de "año" quedaba la virgulilla suelta); lo vi gracias al test. (2) Probando un caso borde (un solo día de estudio, una sola materia) aparecieron textos raros: "en 1 día distintos", "el 100% de todo lo que estudiaste" y "5 h en el mes; tu día récord: 5 h". Ahora dice "en un solo día", "todo tu tiempo de estudio fue para esta materia" y "5 h, todas el miércoles 4 de noviembre". Test propio.
+**Tests:** +3 (×2): compartir con la hoja (PNG de 1080×1920, con contenido) y cancelar sin descargar; descarga en la compu (verifica la cabecera PNG y el tamaño) y que todas las pantallas se pueden dibujar; los textos del caso de un solo día. `npm test`: **299 pasaron, 0 fallaron**.
+**Capturas:** [botón en la historia, celu](capturas/G2b-share-mobile-light.png) · imágenes que se comparten: [portada](capturas/G2b-imagen-portada.png) · [materia](capturas/G2b-imagen-materia.png) · [parciales](capturas/G2b-imagen-parciales.png)
+**Para Bauti:** probá el botón de compartir en el iPhone desde la app instalada: la hoja de compartir con archivos solo se puede probar de verdad ahí (en los tests está simulada).
+
 
 ### G2a · Tu año en Aula (Aula 2.37.0)
 

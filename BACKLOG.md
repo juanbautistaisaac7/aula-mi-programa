@@ -177,9 +177,9 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
   - Las copias de seguridad incluyen todos los años.
   - Tests: migración del fixture al primer año sin perder nada; crear 4.º año limpio; cambiar de año y ver solo lo suyo; volver al viejo y que todo esté intacto; recargar y que se mantenga el año activo.
 
-- [~] **G2 · Resumen del año estilo "Spotify Wrapped"** (depende de G1) *(partido en G2a + G2b por el agente)*
+- [x] **G2 · Resumen del año estilo "Spotify Wrapped"** (depende de G1) *(partido en G2a + G2b por el agente)*
   - [x] **G2a** · Números del año + historia a pantalla completa (tocar/teclado, saltea lo que falta, año en curso y cerrados, 0 datos). *(corrida 02:06, Aula 2.37.0, `tests/wrapped.spec.js`)*
-  - [ ] **G2b** · Compartir/guardar cada pantalla como imagen (canvas → PNG; `navigator.share` con archivo en el iPhone, si no descarga).
+  - [x] **G2b** · Compartir/guardar cada pantalla como imagen (canvas → PNG; `navigator.share` con archivo en el iPhone, si no descarga). *(corrida 02:06, Aula 2.38.0)*
   Pedido: *"quiero poder ver por año el resumen del mismo como un spotify resumen bien interesante"*.
   Listo cuando:
   - Para cada año hay un **"Tu año en Aula"**: historia de pantallas a pantalla completa que se pasan tocando (como las stories), con animaciones y colores lindos. Ideas: horas totales estudiadas y su equivalente divertido, la materia a la que más le dedicaste, el mes y el día más productivo, parciales aprobados y mejor nota, racha más larga, tareas completadas, a qué hora estudiás más ("sos de estudiar de noche"), la serie más larga que completaste, una frase de cierre. Solo datos reales; si falta un dato se salta esa pantalla.

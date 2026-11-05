@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.37.0";
+const APP_VERSION = "2.38.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -4679,12 +4679,13 @@ function wrappedSlides(d) {
   if (d.total >= 60) {
     const films = Math.floor(d.total / 120);
     const eq = hours >= 48 ? `Son ${String(Math.round(hours / 24 * 10) / 10).replace(".", ",")} días enteros, sin dormir.` : films >= 2 ? `Como ver ${films} películas seguidas.` : "";
-    S.push({ c: "w-blue", k: "Estudiaste", big: hours < 10 ? String(Math.round(hours * 10) / 10).replace(".", ",") : fmtNum(hours), unit: Math.round(hours * 10) / 10 === 1 ? "hora" : "horas", sub: `en ${pl(d.activeDays, "día", "días")} distintos. ${eq}`.trim() });
+    S.push({ c: "w-blue", k: "Estudiaste", big: hours < 10 ? String(Math.round(hours * 10) / 10).replace(".", ",") : fmtNum(hours), unit: Math.round(hours * 10) / 10 === 1 ? "hora" : "horas", sub: `${d.activeDays === 1 ? "en un solo día" : "en " + d.activeDays + " días distintos"}. ${eq}`.trim() });
   }
-  if (d.topSubject && d.subjectsStudied >= 1) S.push({ c: "w-subject", color: d.topSubject.color, k: "Tu materia del año", big: d.topSubject.name, sub: `${fmtMin(d.topSubject.min)} · el ${d.topSubject.pct}% de todo lo que estudiaste`, small: true });
+  if (d.topSubject && d.subjectsStudied >= 1) S.push({ c: "w-subject", color: d.topSubject.color, k: "Tu materia del año", big: d.topSubject.name, sub: d.topSubject.pct >= 100 ? `${fmtMin(d.topSubject.min)} · todo tu tiempo de estudio fue para esta materia` : `${fmtMin(d.topSubject.min)} · el ${d.topSubject.pct}% de todo lo que estudiaste`, small: true });
   if (d.bestMonth && d.bestDay) {
     const [yy, mm] = d.bestMonth.ym.split("-").map(Number);
-    S.push({ c: "w-orange", k: "Tu mes más intenso", big: capitalize(MESL[mm - 1]), sub: `${fmtMin(d.bestMonth.min)} en el mes. Y tu día récord fue el ${DAYSL[dToDate(d.bestDay.d).getDay()]} ${dToDate(d.bestDay.d).getDate()} de ${MESL[dToDate(d.bestDay.d).getMonth()]}: ${fmtMin(d.bestDay.min)}.` });
+    const bd = dToDate(d.bestDay.d), dayTxt = `el ${DAYSL[bd.getDay()]} ${bd.getDate()} de ${MESL[bd.getMonth()]}`;
+    S.push({ c: "w-orange", k: "Tu mes más intenso", big: capitalize(MESL[mm - 1]), sub: d.bestDay.min >= d.bestMonth.min ? `${fmtMin(d.bestMonth.min)}, todas ${dayTxt}.` : `${fmtMin(d.bestMonth.min)} en el mes. Y tu día récord fue ${dayTxt}: ${fmtMin(d.bestDay.min)}.` });
   }
   if (d.tasksDone) S.push({ c: "w-green", k: "Completaste", big: fmtNum(d.tasksDone), unit: d.tasksDone === 1 ? "tarea" : "tareas", sub: d.series ? `La serie más larga que terminaste entera: «${d.series.title}», ${d.series.n} de ${d.series.n}.` : "Una por una, todas cuentan." });
   if (d.streak >= 2) S.push({ c: "w-red", k: "Tu racha más larga", big: String(d.streak), unit: "días seguidos", sub: "estudiando o tachando tareas, sin cortar." });
@@ -4750,7 +4751,73 @@ function renderWrapped() {
     <button class="wnav wprev" onclick="wrappedGo(-1)" aria-label="Anterior" ${wr.i === 0 ? "disabled" : ""}></button>
     <button class="wnav wnext" onclick="wrappedGo(1)" aria-label="${wr.i === N - 1 ? "Cerrar" : "Siguiente"}"></button>
     <div class="wcount" aria-hidden="true">${wr.i + 1} / ${N}</div>
+    <button class="wshare" onclick="shareWrapped()" aria-label="Compartir esta pantalla como imagen"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M12 3v12M7 8l5-5 5 5M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
   </div>`;
+}
+
+/* ---------- G2b · compartir/guardar una pantalla como imagen ----------
+   Se dibuja a mano en un canvas de 1080×1920 (formato historia) con los mismos
+   colores y textos: sin librerías y sin depender de cómo se ve la pantalla. */
+const W_COLORS = {
+  "w-indigo": ["#3b2fc9", "#1a1446", "#7c6cff"], "w-blue": ["#1659d6", "#0b1f52", "#5ec8ff"], "w-orange": ["#f0642a", "#6b1a0c", "#ffc46b"],
+  "w-green": ["#0f9f62", "#06331f", "#7bf0b4"], "w-red": ["#e0284f", "#4c0716", "#ff8fa3"], "w-night": ["#141238", "#05040f", "#5b4bd6"], "w-gold": ["#c98a06", "#4a2c00", "#ffe58a"]
+};
+function wrapLines(ctx, text, maxW) {
+  const out = []; let line = "";
+  for (const w of String(text).split(/\s+/)) {
+    const t = line ? line + " " + w : w;
+    if (ctx.measureText(t).width > maxW && line) { out.push(line); line = w; } else line = t;
+  }
+  if (line) out.push(line);
+  return out;
+}
+function wrappedCanvas(s, yearName) {
+  const W = 1080, H = 1920, c = document.createElement("canvas"); c.width = W; c.height = H;
+  const ctx = c.getContext("2d");
+  const col = s.c === "w-subject" ? [s.color || "#4338ca", "#111111", "#ffffff"] : (W_COLORS[s.c] || W_COLORS["w-indigo"]);
+  let g = ctx.createLinearGradient(0, 0, W * 0.4, H); g.addColorStop(0, col[0]); g.addColorStop(1, col[1]);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  g = ctx.createRadialGradient(W * 0.25, H * 0.08, 0, W * 0.25, H * 0.08, W * 1.1); g.addColorStop(0, col[2]); g.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.globalAlpha = s.c === "w-subject" ? 0.35 : 0.75; ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 1;
+  const font = getComputedStyle(document.body).fontFamily || "system-ui, sans-serif";
+  const X = 96, maxW = W - 2 * X;
+  ctx.fillStyle = "#fff"; ctx.textBaseline = "alphabetic";
+  // armar los bloques y centrarlos en vertical
+  const blocks = [];
+  ctx.font = `650 46px ${font}`; blocks.push({ f: ctx.font, lines: wrapLines(ctx, s.k, maxW), lh: 60, a: 0.85, gap: 30 });
+  let size = s.small ? 118 : 300; ctx.font = `800 ${size}px ${font}`;
+  let big = wrapLines(ctx, s.big, maxW);
+  while ((big.length > 3 || big.some(l => ctx.measureText(l).width > maxW)) && size > 60) { size -= 8; ctx.font = `800 ${size}px ${font}`; big = wrapLines(ctx, s.big, maxW); }
+  blocks.push({ f: ctx.font, lines: big, lh: size * 1.05, a: 1, gap: s.unit ? 20 : 50 });
+  if (s.unit) { ctx.font = `700 66px ${font}`; blocks.push({ f: ctx.font, lines: [s.unit], lh: 80, a: 0.95, gap: 50 }); }
+  if (s.sub) { ctx.font = `500 50px ${font}`; blocks.push({ f: ctx.font, lines: wrapLines(ctx, s.sub, maxW), lh: 72, a: 0.9, gap: 0 }); }
+  const total = blocks.reduce((a, b) => a + b.lines.length * b.lh + b.gap, 0);
+  let y = Math.max(220, (H - total) / 2);
+  for (const b of blocks) {
+    ctx.font = b.f; ctx.globalAlpha = b.a;
+    for (const l of b.lines) { y += b.lh; ctx.fillText(l, X, y - b.lh * 0.22); }
+    y += b.gap;
+  }
+  ctx.globalAlpha = 0.7; ctx.font = `700 40px ${font}`; ctx.fillText("Aula", X, H - 120);
+  ctx.globalAlpha = 0.55; ctx.font = `500 36px ${font}`; ctx.fillText(yearName, X, H - 70);
+  ctx.globalAlpha = 1;
+  return c;
+}
+async function shareWrapped() {
+  if (!wr) return;
+  const s = wr.slides[wr.i], y = (fullState().years || []).find(x => x.id === wr.yearId) || activeYear();
+  const blob = await new Promise(res => wrappedCanvas(s, y.name).toBlob(res, "image/png"));
+  if (!blob) { toast("No se pudo armar la imagen"); return; }
+  const name = "aula-" + (y.name || "año").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\w]+/g, "-").replace(/^-|-$/g, "").toLowerCase() + "-" + (wr.i + 1) + ".png";
+  const file = typeof File === "function" ? new File([blob], name, { type: "image/png" }) : null;
+  if (file && navigator.canShare && navigator.share && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: "Mi año en Aula" }); return; }
+    catch (e) { if (e && e.name === "AbortError") return; } // si se cancela, nada; si falla, se descarga
+  }
+  const url = URL.createObjectURL(blob), a = document.createElement("a");
+  a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+  toast("Imagen guardada");
 }
 
 /* ======================= VISTA: CONFIGURACIÓN ======================= */
