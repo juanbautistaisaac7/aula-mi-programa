@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.29.0";
+const APP_VERSION = "2.30.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -475,12 +475,24 @@ function orderedTasks(list) {
    el mismo día cambia el orden (campo ord), si es otro día cambia la fecha. */
 const LONGPRESS_MS = 400;
 let drag = null;
+/* C5 · Arrastre fluido. Todo lo caro se hace UNA vez al empezar: se miden las
+   zonas y las filas (en coordenadas de documento, así el scroll no las invalida)
+   y después cada movimiento solo guarda la posición; un único requestAnimationFrame
+   por cuadro mueve el fantasma con transform y calcula el destino con esos números
+   (sin getBoundingClientRect ni elementFromPoint). Las clases y los desplazamientos
+   de las filas se tocan solo cuando cambia el destino. */
 function clearDropMarks() {
   document.querySelectorAll(".task.dropbefore,.task.dropafter").forEach(x => x.classList.remove("dropbefore", "dropafter"));
   document.querySelectorAll("[data-dropdate].over").forEach(x => x.classList.remove("over"));
+  document.querySelectorAll(".task.shifted").forEach(x => { x.classList.remove("shifted"); x.style.transform = ""; });
 }
 function canMoveTask(t) { return !!t && !t.recur; }
 function touchUI() { try { return matchMedia("(hover:none)").matches; } catch (e) { return false; } }
+function reducedMotion() { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) { return false; } }
+/* En iOS, después del toque largo el navegador se quedaría con el gesto para
+   scrollear (y cortaría el arrastre con pointercancel): mientras la fila está
+   levantada o se arrastra, se frena el scroll del dedo. */
+function dragTouchMove(e) { if (drag && (drag.state === "lifted" || drag.state === "dragging")) e.preventDefault(); }
 function dragPointerDown(ev) {
   if (ev.button !== 0 || drag || ui.selMode || selSet().size) return;
   const row = ev.target.closest && ev.target.closest("#view .task[data-id]");
@@ -488,13 +500,17 @@ function dragPointerDown(ev) {
   const t = taskById(row.dataset.id);
   if (!t || (!canMoveTask(t) && !row.dataset.date)) return; // las que se repiten solo se reordenan dentro del día
   const handle = ev.target.closest(".drag[title]");
-  if (!handle && ev.pointerType === "mouse") return; // con mouse, el clic en la fila abre el editor
+  const mouse = ev.pointerType === "mouse";
+  // con mouse se agarra de toda la fila (si está en una lista ordenable); un clic sin mover sigue abriendo el editor
+  if (mouse && !handle && !row.closest("#view [data-dropdate]")) return;
   drag = { id: t.id, row, pid: ev.pointerId, x0: ev.clientX, y0: ev.clientY, x: ev.clientX, y: ev.clientY,
-    from: row.dataset.date || null, state: handle ? "armed" : "press", timer: null, ghost: null, target: null };
-  if (!handle) drag.timer = setTimeout(dragLift, LONGPRESS_MS);
+    from: row.dataset.date || null, state: handle || mouse ? "armed" : "press", timer: null, ghost: null, target: null,
+    raf: 0, key: "" };
+  if (drag.state === "press") drag.timer = setTimeout(dragLift, LONGPRESS_MS);
   window.addEventListener("pointermove", dragPointerMove, { passive: false });
   window.addEventListener("pointerup", dragPointerUp);
   window.addEventListener("pointercancel", dragCancel);
+  if (!mouse) document.addEventListener("touchmove", dragTouchMove, { passive: false });
 }
 function dragLift() {
   if (!drag || drag.state !== "press") return;
@@ -505,60 +521,94 @@ function dragLift() {
 function dragPointerMove(ev) {
   if (!drag || ev.pointerId !== drag.pid) return;
   drag.x = ev.clientX; drag.y = ev.clientY;
+  if (drag.state === "dragging") { ev.preventDefault(); dragSchedule(); return; }
   const dist = Math.hypot(ev.clientX - drag.x0, ev.clientY - drag.y0);
   if (drag.state === "press") { if (dist > 10) dragCancel(); return; } // se movió antes: es scroll
   if (drag.state === "armed" || drag.state === "lifted") {
-    if (dist < (drag.state === "armed" ? 4 : 6)) return;
+    if (dist < (drag.state === "armed" ? 5 : 6)) return;
+    ev.preventDefault();
     dragBegin();
   }
-  if (drag.state === "dragging") { ev.preventDefault(); dragUpdate(); }
 }
 function dragBegin() {
-  const r = drag.row.getBoundingClientRect();
-  const g = drag.row.cloneNode(true);
+  const d = drag, sy = window.scrollY, r = d.row.getBoundingClientRect();
+  try { const sel = window.getSelection(); if (sel) sel.removeAllRanges(); } catch (e) {}
+  // medir todo una sola vez (coordenadas de documento)
+  d.zones = [...document.querySelectorAll("#view [data-dropdate]")].map(z => {
+    const zr = z.getBoundingClientRect();
+    const rows = [...z.querySelectorAll(".task[data-id]")].map(el => { const b = el.getBoundingClientRect(); return { el, id: el.dataset.id, top: b.top + sy, h: b.height, left: b.left, w: b.width }; });
+    return { el: z, date: z.dataset.dropdate, top: zr.top + sy, bottom: zr.bottom + sy, left: zr.left, right: zr.right, rows };
+  });
+  d.home = d.zones.find(z => z.rows.some(x => x.el === d.row)) || null;
+  if (d.home) {
+    const all = d.home.rows, i = all.findIndex(x => x.el === d.row);
+    d.homeIdx = i;
+    d.home.list = all.filter(x => x.el !== d.row);
+    const next = all[i + 1], prev = all[i - 1];
+    d.gap = next ? next.top - (all[i].top + all[i].h) : prev ? all[i].top - (prev.top + prev.h) : 0;
+  }
+  d.zones.forEach(z => { if (!z.list) z.list = z.rows.filter(x => x.el !== d.row); });
+  d.rowTop = r.top + sy; d.rowH = r.height;
+  const g = d.row.cloneNode(true);
   g.classList.remove("lifted", "sel"); g.classList.add("dragghost");
   g.removeAttribute("data-id"); g.setAttribute("aria-hidden", "true");
-  g.style.width = r.width + "px"; g.style.left = r.left + "px"; g.style.top = r.top + "px";
+  g.style.width = r.width + "px"; g.style.height = r.height + "px"; g.style.left = r.left + "px"; g.style.top = r.top + "px";
   document.body.appendChild(g);
-  drag.ghost = g; drag.dx = drag.x0 - r.left; drag.dy = drag.y0 - r.top;
-  drag.row.classList.remove("lifted"); drag.row.classList.add("dragging");
+  d.ghost = g; d.gx = r.left; d.gy = r.top; d.dx = d.x0 - r.left; d.dy = d.y0 - r.top;
+  d.tilt = reducedMotion() ? "" : " scale(1.03) rotate(.6deg)";
+  d.row.classList.remove("lifted"); d.row.classList.add("dragging");
   document.body.classList.add("is-dragging");
-  drag.state = "dragging";
+  d.state = "dragging";
+  dragFrame();
   dragAutoScroll();
 }
-function dragUpdate() {
-  const d = drag;
-  d.ghost.style.left = (d.x - d.dx) + "px"; d.ghost.style.top = (d.y - d.dy) + "px";
+function dragSchedule() { if (drag && !drag.raf) drag.raf = requestAnimationFrame(() => { if (drag) { drag.raf = 0; dragFrame(); } }); }
+/* Un cuadro: mover el fantasma y, si cambió el destino, actualizar marcas y huecos. */
+function dragFrame() {
+  const d = drag; if (!d || d.state !== "dragging") return;
+  d.ghost.style.transform = `translate3d(${d.x - d.dx - d.gx}px,${d.y - d.dy - d.gy}px,0)${d.tilt}`;
+  const py = d.y + window.scrollY, px = d.x;
+  const zone = d.zones.find(z => py >= z.top && py <= z.bottom && px >= z.left && px <= z.right) || null;
+  let k = -1;
+  if (zone) { k = 0; for (const x of zone.list) { if (py > x.top + x.h / 2) k++; else break; } }
+  const key = zone ? zone.date + ":" + k : "";
+  if (key === d.key) return;
+  d.key = key;
   clearDropMarks();
   d.target = null;
-  const el = document.elementFromPoint(d.x, d.y);
-  const zone = el && el.closest && el.closest("#view [data-dropdate]");
   if (!zone) return;
-  zone.classList.add("over");
-  const row = el.closest(".task[data-id]");
-  let before = null, after = false;
-  if (row && zone.contains(row) && row !== d.row) {
-    const r = row.getBoundingClientRect();
-    after = (d.y - r.top) > r.height / 2;
-    before = row.dataset.id;
-    row.classList.add(after ? "dropafter" : "dropbefore");
+  zone.el.classList.add("over");
+  const L = zone.list;
+  d.target = { date: zone.date, near: L.length ? (k < L.length ? L[k].id : L[L.length - 1].id) : null, after: L.length > 0 && k >= L.length,
+    same: zone === d.home && k === d.homeIdx };
+  if (zone === d.home) {
+    // misma lista: las filas se corren para abrir el hueco donde va a caer (como en iOS)
+    const h = d.rowH + d.gap, o = d.homeIdx;
+    L.forEach((x, i) => {
+      const dy = (k > o && i >= o && i < k) ? -h : (k < o && i >= k && i < o) ? h : 0;
+      if (dy) { x.el.classList.add("shifted"); x.el.style.transform = `translate3d(0,${dy}px,0)`; }
+    });
+  } else if (L.length) {
+    // otra lista: una línea marca dónde va a caer
+    (k < L.length ? L[k].el : L[L.length - 1].el).classList.add(k < L.length ? "dropbefore" : "dropafter");
   }
-  d.target = { date: zone.dataset.dropdate, near: before, after };
 }
 function dragAutoScroll() {
   if (!drag || drag.state !== "dragging") return;
   const m = 70, y = drag.y, h = window.innerHeight;
   const v = y < m ? -Math.ceil((m - y) / 5) : y > h - m ? Math.ceil((y - (h - m)) / 5) : 0;
-  if (v) { window.scrollBy(0, v); dragUpdate(); }
+  if (v) { window.scrollBy(0, v); dragFrame(); }
   requestAnimationFrame(dragAutoScroll);
 }
-function dragEnd() {
+function dragEnd(keepGhost) {
   window.removeEventListener("pointermove", dragPointerMove, { passive: false });
   window.removeEventListener("pointerup", dragPointerUp);
   window.removeEventListener("pointercancel", dragCancel);
+  document.removeEventListener("touchmove", dragTouchMove, { passive: false });
   if (!drag) return;
   clearTimeout(drag.timer);
-  if (drag.ghost) drag.ghost.remove();
+  if (drag.raf) cancelAnimationFrame(drag.raf);
+  if (drag.ghost && !keepGhost) drag.ghost.remove();
   drag.row.classList.remove("lifted", "dragging");
   document.body.classList.remove("is-dragging");
   clearDropMarks();
@@ -575,12 +625,29 @@ function swallowNextClick() {
 }
 function dragPointerUp(ev) {
   if (!drag || ev.pointerId !== drag.pid) return;
+  if (drag.state === "dragging") { drag.x = ev.clientX; drag.y = ev.clientY; dragFrame(); } // el último movimiento cuenta
   const d = drag;
-  dragEnd();
+  dragEnd(d.state === "dragging");
   if (d.state === "lifted") { swallowNextClick(); openMoveSheet(d.id); return; }
   if (d.state !== "dragging") return;
   swallowNextClick();
-  if (d.target) dropTask(d.id, d.from, d.target);
+  if (d.target && !d.target.same) dropTask(d.id, d.from, d.target); // soltar donde estaba no cambia nada
+  dragSettle(d);
+}
+/* Al soltar, el fantasma "se asienta" en el lugar donde quedó la fila (ya redibujada). */
+function dragSettle(d) {
+  const g = d.ghost; if (!g) return;
+  const row = document.querySelector(`#view .task[data-id="${CSS.escape(d.id)}"]`);
+  if (!row || reducedMotion()) { g.remove(); return; }
+  const r = row.getBoundingClientRect();
+  if (r.bottom < 0 || r.top > window.innerHeight) { g.remove(); return; }
+  row.style.opacity = "0"; // opacity (no visibility): la fila sigue recibiendo toques
+  g.classList.add("settling");
+  g.style.transform = `translate3d(${r.left - d.gx}px,${r.top - d.gy}px,0)`;
+  let done = false;
+  const fin = () => { if (done) return; done = true; g.remove(); row.style.opacity = ""; };
+  g.addEventListener("transitionend", fin, { once: true });
+  setTimeout(fin, 260);
 }
 function dropTask(id, from, tg) {
   const t = taskById(id); if (!t) return;
