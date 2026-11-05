@@ -6,7 +6,7 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
-## Corrida 04:07–04:50 (hora ARG) — E1a2 («Avisarme») y cierre de la noche
+## Corrida 04:07–04:34 (hora ARG) — E1a2 («Avisarme») y cierre de la noche
 
 **Resumen de la corrida:** era la última de la noche (la hora de cierre de hoy eran las 04:00). Hice un ítem (E1a2), con tiempo reservado para publicar en `main`, escribir `RESUMEN-NOCHE.md` y crear `TERMINADO`. Versión 2.40.0 → 2.41.0. Sin cambios en la forma de los datos (el esquema 6 ya lo había puesto E1a1).
 
