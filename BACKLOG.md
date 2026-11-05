@@ -128,7 +128,7 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
 
 ## Noche 2 (pedidos del 4/11 al mediodía) — HACER PRIMERO, en este orden: C4, C5, S1, G1, G2; después E1, F1, F2
 
-- [ ] **C4 · Tiempos de una serie por tramos, en segundos**
+- [x] **C4 · Tiempos de una serie por tramos, en segundos**
   Pedido: *"las series todavía no son del todo cómodas, más que nada el tema de tiempos. si yo creo una tarea de hoy a un mes para adelante y quiero que las primeras 10 sean de una hora, luego 2 de 1h y media, luego de 2h y luego de 3.. es muy tedioso, haz ese paso más fácil, se me ocurre que se muestren todas en una lista y que puedas seleccionar rápido y cambiar horarios"*.
   Listo cuando:
   - Al **crear** una serie (control Repetir) y al **editarla**, hay una forma rápida de poner tiempos distintos por tramos. Propuesta (el agente puede mejorarla, documentando por qué): "Tiempos por tramos": filas del tipo `[10] tareas de [1 h]`, `[2] de [1 h 30]`, `[3] de [2 h]`, `el resto de [3 h]`, con "+ agregar tramo"; la vista previa de fechas muestra el tiempo de cada una al lado y el total de horas.

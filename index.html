@@ -228,6 +228,32 @@ body.selbar-on #main{padding-bottom:230px}
 .srmore[open] summary::before{transform:rotate(90deg)}
 @media (prefers-reduced-motion:reduce){.occ,.srmore summary::before{transition:none}}
 @media(max-width:600px){.srbulk .mrow,.sradd .mrow{flex-direction:column;gap:0}}
+/* C4 · tiempos por tramos y selección rápida */
+.trtoggle{display:flex!important;align-items:center;gap:10px;min-height:44px;margin:10px 0 0!important;text-transform:none!important;letter-spacing:0!important;font-size:.85rem!important;font-weight:600!important;color:var(--tx)!important;cursor:pointer}
+.modal .trtoggle input{width:22px;height:22px;margin:0;padding:0;accent-color:var(--acc);flex:none}
+.trbox{margin-top:6px;display:flex;flex-direction:column;gap:6px}
+.trrow{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr) 36px;align-items:center;gap:8px}
+.modal .trrow select{min-height:40px;margin:0;font-variant-numeric:tabular-nums}
+.trhint{margin:0 0 2px;color:var(--tx3)}
+.trde{font-size:.82rem;color:var(--tx2);white-space:nowrap}
+.trdel{width:36px;height:36px;border:none;border-radius:50%;background:none;color:var(--tx3);font-size:.85rem;cursor:pointer}
+button.trdel:hover{background:var(--hover);color:var(--bad)}
+.tradd{align-self:flex-start;background:none;border:none;color:var(--acc);font:inherit;font-size:.82rem;font-weight:600;min-height:40px;padding:0 2px;cursor:pointer}
+.srrange{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:0 0 8px}
+.modal .srrange input{width:52px;min-height:36px;margin:0;text-align:center;font-variant-numeric:tabular-nums;padding:4px}
+.srrange .btn{min-height:36px}
+.occ .occn{flex:none;min-width:20px;font-size:.7rem;color:var(--tx3);font-variant-numeric:tabular-nums;text-align:right}
+.modal label.occl{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+button.occm{flex:none;background:none;border:none;border-left:1px solid var(--line2);font:inherit;font-size:.85rem;font-weight:600;font-variant-numeric:tabular-nums;color:var(--acc);min-width:100px;padding:0 10px;text-align:right;cursor:pointer;white-space:nowrap}
+button.occm:hover{background:var(--hover)}
+.occ.done button.occm{color:var(--tx3)}
+.modal input.occmin{flex:none;width:76px;min-height:0;margin:6px 6px 6px 0;padding:4px 8px;text-align:right;font-weight:600;font-variant-numeric:tabular-nums;border-radius:8px}
+.srhint{margin:6px 2px 0;color:var(--tx3)}
+.srquick{margin-top:12px;padding:10px 12px;border-radius:12px;background:var(--card2);border:1px solid var(--line2)}
+.srquick .srchips{margin-top:6px}
+.srquick .srchips .btn{min-height:40px;min-width:56px}
+.srquick.off .srchips{opacity:.45;pointer-events:none}
+@media(max-width:600px){.trrow{gap:6px}}
 /* C3 · series integradas */
 .serlist{padding:0;overflow:hidden}
 .serrow{display:flex;align-items:center;gap:12px;width:100%;min-height:60px;padding:10px 16px;background:none;border:none;border-bottom:1px solid var(--line2);color:var(--tx);font:inherit;text-align:left;cursor:pointer;transition:background-color .15s}

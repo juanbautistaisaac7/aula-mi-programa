@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.28.0";
+const APP_VERSION = "2.29.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -1717,7 +1717,7 @@ function seriesPos(t) {
    aplicar, así se puede encadenar ("+1 h 30 a todas" y después "+10 min a una"). */
 const SR_ACTS = [
   ["add", "Sumar tiempo"], ["sub", "Restar tiempo"], ["set", "Fijar tiempo"],
-  ["move", "Mover de día"], ["time", "Cambiar hora"], ["del", "Borrar"]
+  ["tramos", "Tiempos por tramos"], ["move", "Mover de día"], ["time", "Cambiar hora"], ["del", "Borrar"]
 ];
 function openSeriesModal(key) {
   const s = seriesByKey(key); if (!s) { toast("La serie ya no existe"); return; }
@@ -1726,9 +1726,11 @@ function openSeriesModal(key) {
     ui.srAct = "add"; ui.srMin = 90; ui.srDays = 1; ui.srTime = "";
     ui.srAddMode = "count"; ui.srAddN = 1; ui.srUntil = ""; ui.srAddOne = ""; ui.srAddOpen = false;
   }
-  ui.srOpen = null;
+  ui.srOpen = null; ui.srAnchor = null;
+  if (ui.seriesKey !== key) { ui.srTr = null; ui.srFrom = 1; ui.srTo = Math.min(10, s.tasks.length); }
   ui.seriesKey = key;
   openModal(seriesModalHTML(s), true, true);
+  srLongPressInit();
   srPreview();
 }
 function refreshSeriesModal() {
@@ -1748,13 +1750,14 @@ function seriesModalHTML(s) {
   if (!recur) {
     const ids = new Set(s.tasks.map(t => t.id));
     ui.srSel = new Set([...ui.srSel].filter(id => ids.has(id))); // las borradas ya no cuentan
-    const row = t => {
+    const row = (t, i) => {
       const done = t.status === "done", late = !done && t.date < today, open = ui.srOpen === t.id;
       let r = `<div class="occ${done ? " done" : ""}${open ? " open" : ""}" data-id="${escA(t.id)}">
-        <label class="occl"><input type="checkbox" ${ui.srSel.has(t.id) ? "checked" : ""} onchange="srToggle('${escA(t.id)}',this.checked)">
+        <label class="occl" onclick="srClick(event,'${escA(t.id)}')"><input type="checkbox" ${ui.srSel.has(t.id) ? "checked" : ""} onchange="srToggle('${escA(t.id)}',this.checked)">
+        <span class="occn" aria-hidden="true">${i + 1}</span>
         <span class="occd">${fmtD(t.date)}${t.time ? ` <span class="ttime">${esc(t.time)}</span>` : ""}</span>
-        <span class="occst">${done ? "✓ hecha" : late ? "atrasada" : t.date === today ? "hoy" : ""}</span>
-        <span class="occm">${fmtMin(t.estMin)}</span></label>
+        <span class="occst">${done ? "✓ hecha" : late ? "atrasada" : t.date === today ? "hoy" : ""}</span></label>
+        <button type="button" class="occm" id="occm-${escA(t.id)}" title="Tocá para cambiar el tiempo" aria-label="Tiempo de la del ${escA(fmtD(t.date))}: ${escA(fmtMin(t.estMin))}. Tocá para cambiarlo" onclick="srMinEdit('${escA(t.id)}')">${fmtMin(t.estMin)}</button>
         <button type="button" class="occmore" aria-expanded="${open}" aria-label="Editar solo la del ${escA(fmtD(t.date))}" onclick="srEdit('${escA(t.id)}')">${open ? "Listo" : "Editar"}</button></div>`;
       if (open) r += `<div class="occedit">
         <div class="occstep"><span class="tiny">Solo esta</span>
@@ -1775,15 +1778,25 @@ function seriesModalHTML(s) {
         <button type="button" class="btn sm" onclick="srSelect('pend')">Pendientes</button>
         <button type="button" class="btn sm" onclick="srSelect('none')">Ninguna</button>
         <div class="grow"></div><span class="tiny" id="sr_count"></span></div>
+      <div class="srrange"><span class="tiny">De la</span>
+        <input id="sr_from" type="number" min="1" max="${s.tasks.length}" value="${ui.srFrom || 1}" aria-label="Desde la número" oninput="ui.srFrom=this.value">
+        <span class="tiny">a la</span>
+        <input id="sr_to" type="number" min="1" max="${s.tasks.length}" value="${ui.srTo || s.tasks.length}" aria-label="Hasta la número" oninput="ui.srTo=this.value">
+        <button type="button" class="btn sm" onclick="srPick()">Elegir</button>
+        <button type="button" class="btn sm" onclick="srRest()" title="Las que vienen después de la última elegida">Las que quedan</button></div>
       <div class="occlist" id="sr_occ">${s.tasks.map(row).join("")}</div>
+      <p class="tiny srhint">${coarsePointer() ? "Tocá una y mantené apretada otra para elegir todas las del medio. Tocá el tiempo para cambiarlo." : "Shift + clic elige todas las del medio. Hacé clic en el tiempo para cambiarlo."}</p>
+      <div class="srquick" id="sr_quick"><span class="tiny" id="sr_quicklbl"></span>
+        <div class="srchips">${[30, 60, 90, 120, 180].map(m => `<button type="button" class="btn sm" onclick="srQuick(${m})">${fmtMin(m)}</button>`).join("")}<button type="button" class="btn sm ghost" onclick="srQuickOther()">Otro…</button></div></div>
       <div class="srbulk">
         <div class="mrow">
-          <div><label for="sr_act">Qué hacer con las elegidas</label><select id="sr_act" onchange="ui.srAct=this.value;srPreview()">
+          <div><label for="sr_act">Qué hacer con las elegidas</label><select id="sr_act" onchange="ui.srAct=this.value;srTrInit();srPreview()">
             ${SR_ACTS.map(([v, l]) => `<option value="${v}"${ui.srAct === v ? " selected" : ""}>${l}</option>`).join("")}</select></div>
           <div class="srx" id="sr_minwrap"><label for="sr_min">Minutos</label><input id="sr_min" type="number" min="0" step="5" value="${ui.srMin}" oninput="ui.srMin=this.value;srPreview()"></div>
           <div class="srx" id="sr_dayswrap"><label for="sr_days">Días (− antes, + después)</label><input id="sr_days" type="number" step="1" value="${ui.srDays}" oninput="ui.srDays=this.value;srPreview()"></div>
           <div class="srx" id="sr_timewrap"><label for="sr_time">Hora (vacía = sin hora)</label><input id="sr_time" type="time" value="${escA(ui.srTime)}" oninput="ui.srTime=this.value;srPreview()"></div>
         </div>
+        <div class="trbox srx" id="sr_trwrap"></div>
         <div class="srchips srx" id="sr_minchips">${[10, 30, 60, 90, 120].map(m => `<button type="button" class="btn sm" onclick="srSetVal('sr_min',${m})">${fmtMin(m)}</button>`).join("")}</div>
         <div class="srchips srx" id="sr_dayschips">${[-7, -1, 1, 2, 3, 7].map(d => `<button type="button" class="btn sm" onclick="srSetVal('sr_days',${d})">${d > 0 ? "+" : "−"}${Math.abs(d)} d</button>`).join("")}</div>
         <div class="reppreview" id="sr_preview" aria-live="polite"></div>
@@ -1822,12 +1835,99 @@ function seriesModalHTML(s) {
     <button class="btn" onclick="closeModal()">Listo</button></div>`;
   return h;
 }
-function srToggle(id, on) { if (on) ui.srSel.add(id); else ui.srSel.delete(id); srPreview(); }
+function srToggle(id, on) { if (on) ui.srSel.add(id); else ui.srSel.delete(id); ui.srAnchor = id; srPreview(); }
+function srSync() {
+  document.querySelectorAll("#sr_occ .occ").forEach(l => { l.querySelector("input").checked = ui.srSel.has(l.dataset.id); });
+  srPreview();
+}
 function srSelect(which) {
   const s = seriesByKey(ui.seriesKey); if (!s) return;
   ui.srSel = new Set(which === "all" ? s.tasks.map(t => t.id) : which === "pend" ? s.pend.map(t => t.id) : []);
-  document.querySelectorAll("#sr_occ .occ").forEach(l => { l.querySelector("input").checked = ui.srSel.has(l.dataset.id); });
-  srPreview();
+  srSync();
+}
+/* C4 · Selección rápida de rangos */
+function coarsePointer() { try { return matchMedia("(pointer: coarse)").matches; } catch (e) { return false; } }
+function srClick(ev, id) { if (ev.shiftKey) { ev.preventDefault(); srRange(id); } }
+function srRange(id) {
+  const s = seriesByKey(ui.seriesKey); if (!s) return;
+  const ids = s.tasks.map(t => t.id), b = ids.indexOf(id), a = ids.indexOf(ui.srAnchor);
+  if (b < 0) return;
+  if (a < 0) { ui.srSel.add(id); ui.srAnchor = id; srSync(); return; }
+  for (let k = Math.min(a, b); k <= Math.max(a, b); k++) ui.srSel.add(ids[k]);
+  ui.srAnchor = id; srSync();
+  const n = Math.abs(b - a) + 1; toast("Elegidas de la " + (Math.min(a, b) + 1) + " a la " + (Math.max(a, b) + 1) + " (" + n + ")");
+}
+function srPick(from, to) {
+  const s = seriesByKey(ui.seriesKey); if (!s) return;
+  const N = s.tasks.length;
+  from = parseInt(from ?? (byId("sr_from") || {}).value, 10); to = parseInt(to ?? (byId("sr_to") || {}).value, 10);
+  if (!(from >= 1) || !(to >= 1)) { toast("Poné desde qué número y hasta cuál"); return; }
+  if (from > to) [from, to] = [to, from];
+  from = Math.min(from, N); to = Math.min(to, N);
+  ui.srFrom = from; ui.srTo = to;
+  ui.srSel = new Set(s.tasks.slice(from - 1, to).map(t => t.id));
+  ui.srAnchor = s.tasks[to - 1].id;
+  const f = byId("sr_from"), tt = byId("sr_to"); if (f) f.value = from; if (tt) tt.value = to;
+  srSync();
+}
+/* Las que vienen después de la última elegida (si no hay ninguna elegida, todas) */
+function srRest() {
+  const s = seriesByKey(ui.seriesKey); if (!s) return;
+  let last = -1; s.tasks.forEach((t, i) => { if (ui.srSel.has(t.id)) last = i; });
+  if (last >= s.tasks.length - 1) { toast("No quedan tareas después de la última elegida"); return; }
+  srPick(last + 2, s.tasks.length);
+}
+/* Un toque: poner ese tiempo a las elegidas (lo que va a pasar está escrito arriba
+   de los botones; después hay deshacer). Deja listo el rango siguiente. */
+function srQuick(min) {
+  const s = seriesByKey(ui.seriesKey); if (!s) return;
+  const ts = s.tasks.filter(t => ui.srSel.has(t.id));
+  if (!ts.length) { toast("Elegí primero las tareas"); return; }
+  const snap = ts.map(t => ({ t, estMin: t.estMin }));
+  ts.forEach(t => { t.estMin = min; });
+  let last = -1; s.tasks.forEach((t, i) => { if (ui.srSel.has(t.id)) last = i; });
+  if (last < s.tasks.length - 1) { ui.srFrom = last + 2; ui.srTo = s.tasks.length; }
+  change(); render(); refreshSeriesModal();
+  const n = ts.length;
+  toast((n === 1 ? "1 tarea" : n + " tareas") + " en " + fmtMin(min), () => { snap.forEach(x => { x.t.estMin = x.estMin; }); change(); render(); refreshSeriesModal(); });
+}
+function srQuickOther() {
+  ui.srAct = "set"; const a = byId("sr_act"); if (a) a.value = "set";
+  srPreview(); const m = byId("sr_min"); if (m) { m.focus(); m.select(); m.scrollIntoView({ block: "center", behavior: "smooth" }); }
+}
+function srTrInit() { if (ui.srAct === "tramos" && !ui.srTr) { const s = seriesByKey(ui.seriesKey); ui.srTr = defaultTramos(Math.max(2, ui.srSel.size), s && s.pend[0] ? s.pend[0].estMin : 60); } }
+/* Tocar el tiempo de una fila lo convierte en un campo para escribir ("90", "1,5", "1 h 30") */
+function srMinEdit(id) {
+  const t = taskById(id), b = byId("occm-" + id); if (!t || !b) return;
+  const inp = document.createElement("input");
+  inp.className = "occmin"; inp.id = "occmin-" + id; inp.setAttribute("inputmode", "decimal"); inp.setAttribute("enterkeyhint", "done");
+  inp.setAttribute("aria-label", "Minutos de la del " + fmtD(t.date) + " (90, 1,5 o 1 h 30)");
+  inp.value = String(t.estMin || 0); inp.placeholder = "min";
+  let done = false;
+  const commit = ok => {
+    if (done) return; done = true;
+    const v = ok ? parseDur(inp.value) : null;
+    if (ok && v == null) toast("No entendí el tiempo: probá con 90, 1,5 o 1 h 30");
+    if (v != null && v !== (t.estMin || 0)) srOne(id, "min", v); else refreshSeriesModal();
+  };
+  inp.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); commit(true); } else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); commit(false); } });
+  inp.addEventListener("blur", () => commit(true));
+  b.replaceWith(inp); inp.focus(); inp.select();
+}
+function srLongPressInit() {
+  const box = byId("modalbox"); if (!box || box._srlp) return; box._srlp = true;
+  let tm = null, sx = 0, sy = 0;
+  const cancel = () => { clearTimeout(tm); tm = null; };
+  box.addEventListener("pointerdown", e => {
+    const l = e.target.closest && e.target.closest("#sr_occ .occl"); if (!l || e.pointerType === "mouse") return;
+    const id = l.closest(".occ").dataset.id; sx = e.clientX; sy = e.clientY; cancel();
+    tm = setTimeout(() => { tm = null; ui.srLP = Date.now(); srRange(id); }, 450);
+  });
+  box.addEventListener("pointermove", e => { if (tm && Math.hypot(e.clientX - sx, e.clientY - sy) > 10) cancel(); });
+  box.addEventListener("pointerup", cancel); box.addEventListener("pointercancel", cancel);
+  // el clic que sigue al toque largo no tiene que destildar la fila
+  box.addEventListener("click", e => { if (ui.srLP && Date.now() - ui.srLP < 1500 && e.target.closest && e.target.closest("#sr_occ .occl")) { e.preventDefault(); ui.srLP = 0; } }, true);
+  box.addEventListener("contextmenu", e => { if (e.target.closest && e.target.closest("#sr_occ .occl")) e.preventDefault(); });
 }
 function srSetVal(id, v) { const el = byId(id); if (!el) return; el.value = v; el.dispatchEvent(new Event("input")); }
 /* Calcula qué va a pasar con la selección actual, sin tocar nada. */
@@ -1841,9 +1941,13 @@ function srPlan() {
   if (["add", "sub"].includes(act) && min === 0) return { error: "Poné cuántos minutos." };
   if (act === "move" && !days) return { error: "Poné cuántos días (por ejemplo 2 o −1)." };
   if (act === "time" && ui.srTime && hmToMin(ui.srTime) == null) return { error: "La hora no es válida." };
-  const changes = targets.map(t => {
+  let tm = null;
+  if (act === "tramos") { tm = tramosMins(ui.srTr || [], n); if (tm.error) return { error: tm.error }; }
+  const changes = targets.map((t, i) => {
     const c = { t, from: "", to: "" };
-    if (act === "add" || act === "sub" || act === "set") {
+    if (act === "tramos") {
+      const v = tm.mins[i]; c.from = fmtMin(t.estMin); c.to = fmtMin(v); c.apply = () => { t.estMin = v; };
+    } else if (act === "add" || act === "sub" || act === "set") {
       const v = act === "set" ? min : Math.max(0, (t.estMin || 0) + (act === "add" ? min : -min));
       c.from = fmtMin(t.estMin); c.to = fmtMin(v); c.apply = () => { t.estMin = v; };
     } else if (act === "move") {
@@ -1855,12 +1959,13 @@ function srPlan() {
     } else { c.from = fmtD(t.date); }
     return c;
   });
-  const what = act === "add" ? `sumar ${fmtMin(min)} a ${nn}` : act === "sub" ? `restar ${fmtMin(min)} a ${nn}`
+  const totTr = tm ? tm.mins.reduce((a, b) => a + b, 0) : 0;
+  const what = act === "tramos" ? `poner tiempos por tramos a ${nn} (${fmtMin(totTr)} en total)` : act === "add" ? `sumar ${fmtMin(min)} a ${nn}` : act === "sub" ? `restar ${fmtMin(min)} a ${nn}`
     : act === "set" ? `dejar ${nn} en ${fmtMin(min)}` : act === "move" ? `mover ${nn} ${Math.abs(days)} día${Math.abs(days) === 1 ? "" : "s"} ${days > 0 ? "más tarde" : "antes"}`
     : act === "time" ? (ui.srTime ? `poner ${nn} a las ${ui.srTime}` : `sacarle la hora a ${nn}`) : `borrar ${nn}`;
-  const btn = act === "add" ? `Sumar ${fmtMin(min)}` : act === "sub" ? `Restar ${fmtMin(min)}` : act === "set" ? `Fijar en ${fmtMin(min)}`
+  const btn = act === "tramos" ? "Aplicar tramos" : act === "add" ? `Sumar ${fmtMin(min)}` : act === "sub" ? `Restar ${fmtMin(min)}` : act === "set" ? `Fijar en ${fmtMin(min)}`
     : act === "move" ? "Mover" : act === "time" ? "Cambiar hora" : "Borrar";
-  const past = act === "add" ? `Sumaste ${fmtMin(min)} a ${nn}` : act === "sub" ? `Restaste ${fmtMin(min)} a ${nn}`
+  const past = act === "tramos" ? `Tramos aplicados a ${nn}` : act === "add" ? `Sumaste ${fmtMin(min)} a ${nn}` : act === "sub" ? `Restaste ${fmtMin(min)} a ${nn}`
     : act === "set" ? `${n === 1 ? "Quedó" : "Quedaron"} ${nn} en ${fmtMin(min)}` : act === "move" ? `${n === 1 ? "Movida" : "Movidas"} ${nn}`
     : act === "time" ? `Hora cambiada en ${nn}` : `${n === 1 ? "Borrada" : "Borradas"} ${nn}`;
   return { s, act, targets, changes, what, past, btn: btn + (act === "move" || act === "del" ? " " : " a ") + nn, n };
@@ -1872,7 +1977,18 @@ function srPreview() {
   show("sr_minwrap", isMin); show("sr_minchips", isMin);
   show("sr_dayswrap", act === "move"); show("sr_dayschips", act === "move");
   show("sr_timewrap", act === "time");
+  show("sr_trwrap", act === "tramos");
+  const trw = byId("sr_trwrap");
+  if (trw && act === "tramos") { srTrInit(); trw.innerHTML = tramosHTML("sr", ui.srTr, ui.srSel.size); }
   const cnt = byId("sr_count"); if (cnt) cnt.textContent = ui.srSel.size + (ui.srSel.size === 1 ? " elegida" : " elegidas");
+  const ql = byId("sr_quicklbl"), qn = ui.srSel.size;
+  if (ql) {
+    const s0 = seriesByKey(ui.seriesKey), idx = s0 ? s0.tasks.map((t, i) => ui.srSel.has(t.id) ? i + 1 : 0).filter(Boolean) : [];
+    const contiguous = idx.length > 1 && idx[idx.length - 1] - idx[0] + 1 === idx.length;
+    ql.innerHTML = !qn ? "Elegí tareas para ponerles tiempo con un toque"
+      : `Poner a ${qn === 1 ? "la elegida" : contiguous ? `las <b>${qn}</b> elegidas (de la ${idx[0]} a la ${idx[idx.length - 1]})` : `las <b>${qn}</b> elegidas`}:`;
+    byId("sr_quick").classList.toggle("off", !qn);
+  }
   document.querySelectorAll("#sr_occ .occ").forEach(l => l.classList.toggle("on", ui.srSel.has(l.dataset.id)));
   srAddPreview();
   const p = srPlan(); if (!p) return;
@@ -3913,6 +4029,7 @@ function quickRoute(k) {
   else if (k === "habit") openHabitEditor();
 }
 function openQuickTask(date, subjectId, projectId) {
+  ui.qtTr = null;
   const sel = subjectId ? "s:" + subjectId : projectId ? "p:" + projectId : "";
   openModal(`<h3>Nueva tarea</h3>
     <label for="qt_title">Título</label><input id="qt_title" placeholder="Ej: resolver práctica de límites" onkeydown="if(event.key==='Enter')saveQuickTask()">
@@ -3921,7 +4038,7 @@ function openQuickTask(date, subjectId, projectId) {
       <div><label for="qt_eval">Parcial / final (opcional)</label><select id="qt_eval" onchange="evalPicked('qt_link','qt_eval')">${evalOptions(sel, null)}</select></div>
     </div>
     <div class="mrow">
-      <div><label for="qt_min">Tiempo estimado (min)</label><input id="qt_min" type="number" value="60" min="0" step="5"></div>
+      <div><label for="qt_min">Tiempo estimado (min)</label><input id="qt_min" type="number" value="60" min="0" step="5" oninput="repPreview()"></div>
     </div>
     <div class="mrow">
       <div><label for="qt_mode">Programación</label><select id="qt_mode" onchange="byId('qt_timewrap').style.display=this.value==='none'?'none':'block';byId('qt_repwrap').style.display=this.value==='d'?'block':'none';repPreview()">
@@ -3937,6 +4054,72 @@ function openQuickTask(date, subjectId, projectId) {
       <button class="btn primary" id="qt_save" onclick="saveQuickTask()">Crear tarea</button></div>`);
   repPreview();
 }
+/* ---------- C4 · Tiempos por tramos ----------
+   "Las primeras 10 de 1 h, después 2 de 1 h 30, el resto de 2 h y las últimas
+   3 de 3 h". Cada tramo es {n, min}; n puede ser "rest" (el resto: lo que no
+   cubren los demás). Se usa igual al crear (control Repetir) y al editar. */
+const DUR_OPTS = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 75, 90, 105, 120, 135, 150, 165, 180, 210, 240, 270, 300, 330, 360, 420, 480];
+function durOptions(cur) {
+  cur = Math.round(+cur || 0);
+  const list = DUR_OPTS.includes(cur) ? DUR_OPTS : [...DUR_OPTS, cur].sort((a, b) => a - b);
+  return list.map(m => `<option value="${m}"${m === cur ? " selected" : ""}>${fmtMin(m)}</option>`).join("");
+}
+/* "90" → 90 min · "1,5" o "1.5" → 1 h 30 · "1 h 30", "1h30", "1:30" → 90 · "45 m" → 45 */
+function parseDur(s) {
+  s = String(s == null ? "" : s).trim().toLowerCase().replace(",", ".");
+  if (!s) return null;
+  let m = /^(\d{1,2}):(\d{1,2})$/.exec(s);
+  if (m) return +m[1] * 60 + +m[2];
+  m = /^(\d+(?:\.\d+)?)\s*h(?:s|oras?)?\s*(?:(\d+)\s*(?:m|min)?)?$/.exec(s);
+  if (m) return Math.round(+m[1] * 60 + (m[2] ? +m[2] : 0));
+  m = /^(\d+)\s*(?:m|min|mins|minutos?)?$/.exec(s);
+  if (m) return +m[1];
+  m = /^\d*\.\d+$/.exec(s);
+  if (m) return Math.round(parseFloat(s) * 60);
+  return null;
+}
+function tramosMins(rows, total) {
+  const pl = n => n + " tarea" + (n === 1 ? "" : "s");
+  const rest = rows.filter(r => r.n === "rest");
+  if (rest.length > 1) return { error: "Solo un tramo puede ser «el resto»." };
+  const fixed = rows.reduce((a, r) => a + (r.n === "rest" ? 0 : (parseInt(r.n, 10) || 0)), 0);
+  if (fixed > total) return { error: `Los tramos suman ${pl(fixed)} y son ${pl(total)}. Achicá alguno.` };
+  if (!rest.length && fixed < total) return { error: `${total - fixed === 1 ? "Falta 1 tarea" : "Faltan " + pl(total - fixed)}: sumá un tramo o elegí «el resto» en alguno.` };
+  const mins = [];
+  for (const r of rows) { const k = r.n === "rest" ? total - fixed : (parseInt(r.n, 10) || 0); for (let i = 0; i < k; i++) mins.push(Math.max(0, Math.round(+r.min || 0))); }
+  return { mins, restN: total - fixed };
+}
+function defaultTramos(total, base) {
+  base = Math.round(+base || 60);
+  const next = DUR_OPTS.find(m => m > base) || base + 30;
+  return [{ n: Math.max(1, Math.min(total - 1, Math.ceil(total / 2))), min: base }, { n: "rest", min: next }];
+}
+/* Filas del editor de tramos. p = prefijo ("qt" al crear, "sr" en el editor de la serie) */
+function tramosHTML(p, rows, total) {
+  const restN = (tramosMins(rows, total).restN);
+  return `<p class="tiny trhint">En orden, de la primera a la última:</p>` + rows.map((r, i) => {
+    const max = Math.max(total, parseInt(r.n, 10) || 0);
+    const nOpts = `<option value="rest"${r.n === "rest" ? " selected" : ""}>El resto${r.n === "rest" && restN >= 0 ? " (" + restN + ")" : ""}</option>`
+      + Array.from({ length: max }, (_, k) => k + 1).map(k => `<option value="${k}"${+r.n === k ? " selected" : ""}>${k}</option>`).join("");
+    return `<div class="trrow" data-i="${i}">
+      <select class="trn" aria-label="Cuántas (tramo ${i + 1})" onchange="trSet('${p}',${i},'n',this.value)">${nOpts}</select>
+      <span class="trde">de</span>
+      <select class="trm" aria-label="Tiempo (tramo ${i + 1})" onchange="trSet('${p}',${i},'min',this.value)">${durOptions(r.min)}</select>
+      ${rows.length > 1 ? `<button type="button" class="trdel" aria-label="Quitar tramo ${i + 1}" onclick="trDel('${p}',${i})">✕</button>` : `<span class="trdel" aria-hidden="true"></span>`}
+    </div>`;
+  }).join("") + `<button type="button" class="tradd" onclick="trAdd('${p}')">+ Agregar tramo</button>`;
+}
+function trRows(p) { return p === "qt" ? ui.qtTr : ui.srTr; }
+function trRefresh(p) { if (p === "qt") repPreview(); else srPreview(); }
+function trSet(p, i, f, v) { const r = trRows(p)[i]; if (!r) return; r[f] = f === "n" ? (v === "rest" ? "rest" : parseInt(v, 10)) : parseInt(v, 10); trRefresh(p); }
+function trDel(p, i) { const rows = trRows(p); if (rows.length < 2) return; rows.splice(i, 1); trRefresh(p); }
+function trAdd(p) {
+  const rows = trRows(p), last = rows[rows.length - 1] || { min: 60 };
+  // se agrega al final ("y las últimas N de…"), con el tiempo siguiente al del último tramo
+  rows.push({ n: 1, min: DUR_OPTS.find(m => m > (+last.min || 0)) || (+last.min || 60) + 30 });
+  trRefresh(p);
+}
+function repTotalLine(mins) { const tot = mins.reduce((a, b) => a + b, 0); return tot ? ` · ${fmtMin(tot)} en total` : ""; }
 /* ---------- C1 · Repetir ----------
    Un solo concepto para el usuario. Internamente:
    - Con fin (fecha o cantidad): se crean tareas individuales con el mismo seriesId.
@@ -3959,6 +4142,10 @@ function repeatControls(start) {
         <option value="until">En una fecha</option><option value="count">Después de N veces</option><option value="never">Sin fin</option></select></div>
       <div class="repx" id="qt_repuntilwrap"><label for="qt_repuntil">Hasta (inclusive)</label><input id="qt_repuntil" type="date" value="${addDays(start, 6)}" onchange="repPreview()"></div>
       <div class="repx" id="qt_repcountwrap"><label for="qt_repcount">Cantidad de veces</label><input id="qt_repcount" type="number" min="1" max="${REP_MAX}" value="5" oninput="repPreview()"></div>
+    </div>
+    <div class="repx" id="qt_trwrap">
+      <label class="trtoggle"><input type="checkbox" id="qt_tron" onchange="trToggleQt(this.checked)"> <span>Tiempos distintos por tramos</span></label>
+      <div class="trbox" id="qt_tr" hidden></div>
     </div>
     <div id="qt_preview" class="reppreview" role="status" aria-live="polite" hidden></div>
   </div>`;
@@ -3992,7 +4179,14 @@ function readRepeat() {
   const dates = repeatDates(start, rule, end, 5);
   if (et !== "never" && dates.length > REP_MAX) return { error: "Serían más de " + REP_MAX + " tareas. Acortá el período o elegí “Sin fin”." };
   if (!dates.length) return { error: "Con esta configuración no cae ningún día." };
-  return { start, rule, end, dates };
+  const base = parseInt(byId("qt_min").value) || 0;
+  let mins = dates.map(() => base), tramos = false;
+  if (et !== "never" && dates.length > 1 && byId("qt_tron") && byId("qt_tron").checked && ui.qtTr) {
+    const tm = tramosMins(ui.qtTr, dates.length);
+    if (tm.error) return { error: tm.error, dates, tramosErr: true };
+    mins = tm.mins; tramos = true;
+  }
+  return { start, rule, end, dates, mins, tramos };
 }
 function repPreview() {
   const kind = byId("qt_rep") ? byId("qt_rep").value : "none";
@@ -4005,14 +4199,27 @@ function repPreview() {
   const pv = byId("qt_preview"), btn = byId("qt_save");
   if (!pv) return;
   const r = readRepeat();
+  // C4 · tramos: solo con fin y más de una tarea
+  const nDates = r && r.dates ? r.dates.length : 0, canTr = kind !== "none" && et !== "never" && nDates > 1;
+  show("qt_trwrap", canTr);
+  const tron = canTr && byId("qt_tron") && byId("qt_tron").checked;
+  const trb = byId("qt_tr");
+  if (trb) { trb.hidden = !tron; if (tron) trb.innerHTML = tramosHTML("qt", ui.qtTr, nDates); }
+  const minEl = byId("qt_min");
+  if (minEl) { minEl.disabled = !!tron; minEl.title = tron ? "Lo definen los tramos" : ""; }
   pv.hidden = !r; pv.classList.toggle("bad", !!(r && r.error));
   if (btn) btn.textContent = r && !r.error && r.end.type !== "never" ? "Crear " + r.dates.length + " tareas" : "Crear tarea";
   if (!r) return;
   if (r.error) { pv.innerHTML = esc(r.error); return; }
-  const list = r.dates.slice(0, 14).map(d => `<span class="repdate">${fmtD(d)}</span>`).join("") + (r.dates.length > 14 ? `<span class="repdate more">y ${r.dates.length - 14} más</span>` : "");
+  const lim = r.tramos ? 40 : 14;
+  const list = r.dates.slice(0, lim).map((d, i) => `<span class="repdate">${fmtD(d)}${r.tramos ? ` · <b>${fmtMin(r.mins[i])}</b>` : ""}</span>`).join("") + (r.dates.length > lim ? `<span class="repdate more">y ${r.dates.length - lim} más</span>` : "");
   pv.innerHTML = r.end.type === "never"
     ? `<b>Sin fin:</b> una sola tarea que se repite. Próximas: <div class="repdates">${list}<span class="repdate more">…</span></div>`
-    : `<b>Se van a crear ${r.dates.length} tarea${r.dates.length > 1 ? "s" : ""}</b>${r.dates.length > 1 ? " (una serie)" : ""}: <div class="repdates">${list}</div>`;
+    : `<b>Se van a crear ${r.dates.length} tarea${r.dates.length > 1 ? "s" : ""}</b>${r.dates.length > 1 ? " (una serie)" : ""}${repTotalLine(r.mins)}: <div class="repdates">${list}</div>`;
+}
+function trToggleQt(on) {
+  if (on) { const r = readRepeat(); ui.qtTr = defaultTramos(r && r.dates ? r.dates.length : 2, byId("qt_min").value); }
+  repPreview();
 }
 function saveQuickTask() {
   const title = byId("qt_title").value.trim();
@@ -4035,7 +4242,7 @@ function saveQuickTask() {
   }
   if (r) {
     const ids = [], seriesId = r.dates.length > 1 ? "sr-" + uid() : null;
-    for (const d of r.dates) ids.push(quickAddTask(Object.assign({ date: d, seriesId }, base)).id);
+    r.dates.forEach((d, i) => ids.push(quickAddTask(Object.assign({}, base, { date: d, seriesId, estMin: r.mins[i] })).id));
     closeModal(); render();
     toast(ids.length + " tareas creadas: " + fmtD(r.dates[0]) + " a " + fmtD(r.dates[r.dates.length - 1]), () => { state.tasks = state.tasks.filter(x => !ids.includes(x.id)); change(); render(); });
     return;
