@@ -126,7 +126,7 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
   - Funciona con 0 datos (estado vacío lindo) y con muchos datos (usar el fixture de A1).
   - Tests de que los números son correctos para el fixture.
 
-## Noche 2 (pedidos del 4/11 al mediodía) — HACER PRIMERO, en este orden: C4, S1, G1, G2; después E1, F1, F2
+## Noche 2 (pedidos del 4/11 al mediodía) — HACER PRIMERO, en este orden: C4, C5, S1, G1, G2; después E1, F1, F2
 
 - [ ] **C4 · Tiempos de una serie por tramos, en segundos**
   Pedido: *"las series todavía no son del todo cómodas, más que nada el tema de tiempos. si yo creo una tarea de hoy a un mes para adelante y quiero que las primeras 10 sean de una hora, luego 2 de 1h y media, luego de 2h y luego de 3.. es muy tedioso, haz ese paso más fácil, se me ocurre que se muestren todas en una lista y que puedas seleccionar rápido y cambiar horarios"*.
@@ -135,6 +135,18 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
   - En el editor de la serie, la lista de ocurrencias permite **selección rápida de rangos**: tocar la primera y Shift/clic o mantener apretado y arrastrar sobre la última en el celu selecciona todas las del medio; atajos "primeras N", "de la N a la M", "las que quedan". Con varias seleccionadas, poner el tiempo es 1 toque (chips: 30 m · 1 h · 1 h 30 · 2 h · 3 h · otro).
   - Cada fila muestra sus minutos editables en el lugar (tocar el número y cambiarlo), sin abrir otra pantalla.
   - Test con el caso exacto de Bauti: serie diaria de hoy a 30 días → 10 de 1 h, 2 de 1 h 30, el resto 2 h y las últimas 3 de 3 h; verificar los minutos de cada una. En desktop y mobile. Capturas.
+
+- [ ] **C5 · Arrastrar para ordenar tiene que ser fluido** *(bug de B4; chico pero de uso diario: hacerlo justo después de C4)*
+  Pedido (4/11 21:30): *"ahora ordenar las tareas arrastrando se vuelve súper difícil, nose por qué parece que se traba todo el tiempo, que sea fluido"*.
+  Causas probables (encontradas leyendo `dragPointerDown`…`dropTask` en `app.js` y el CSS de `.task`/`.dragghost` en `index.html`; confirmarlas antes de arreglar):
+  1. **En el celu (iOS Safari), el navegador se queda con el gesto.** Las filas no tienen `touch-action: none` (solo la manija `.drag`) y `preventDefault()` en `pointermove` no frena el scroll en iOS. Después del long-press, Safari empieza a scrollear y manda `pointercancel`, y el arrastre se corta solo. Arreglo: cuando la fila queda "levantada", bloquear el scroll con un `touchmove` en `{passive:false}` + `preventDefault()` (y/o `touch-action:none` mientras dura el arrastre), sin romper el scroll normal cuando no hay arrastre.
+  2. **Mucho trabajo en cada movimiento del dedo o del mouse:** `dragUpdate()` mueve el fantasma con `left/top` (fuerza layout), hace `querySelectorAll` para limpiar marcas y `elementFromPoint` en cada evento, y el auto-scroll vuelve a llamarlo en cada frame. Arreglo: un solo `requestAnimationFrame` por frame, fantasma con `transform: translate3d()`, cachear los rectángulos de las filas al empezar (y recalcular solo al scrollear), y tocar clases solo cuando cambia el destino.
+  3. **No se siente como iOS:** hoy solo aparece una línea "antes/después". Las demás filas deberían **correrse animadamente** (`transform` con 150–200 ms) para abrir el hueco donde va a caer, y al soltar la fila tiene que "asentarse" en su lugar en vez de saltar.
+  4. Revisar también el long-press (400 ms y 10 px de tolerancia): que no se dispare sin querer al scrollear ni cueste activarlo. En desktop, que se pueda agarrar de toda la fila (no solo de la manija) sin romper el clic que abre el editor (umbral de movimiento).
+  Listo cuando:
+  - Tests (mobile con touch emulado y desktop con mouse): arrastrar una tarea 4 posiciones hacia abajo y 2 hacia arriba deja el orden correcto; durante el arrastre no hay `pointercancel` y la página no scrollea sola; arrastrar hasta el borde hace auto-scroll y se puede soltar abajo; pasar de Hoy a Mañana sigue andando; un scroll normal sobre la lista no levanta ninguna tarea.
+  - Medición: un test que arrastra con 60 movimientos y verifica que el handler de movimiento no fuerza layout síncrono (por ejemplo, contando llamadas a `getBoundingClientRect` durante el arrastre: tienen que ser O(1) por frame) y que el fantasma se mueve por `transform`.
+  - **Video** del arrastre en mobile y desktop (Playwright `recordVideo`) en `docs/capturas/C5-*.webm`, para que Bauti lo vea.
 
 - [ ] **S1 · Compu y celu sincronizados** *(FUNDAMENTAL según Bauti; grande: partirlo en S1a/S1b/S1c; datos sagrados)*
   Pedido: *"quiero que estén conectados ambos, sino no tiene sentido, ambos dispositivos digo, nose si se maneja con cuenta o como eso, pero eso anotalo también porque es fundamental"*.
