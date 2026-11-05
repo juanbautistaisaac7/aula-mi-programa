@@ -6,7 +6,25 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
-## Corrida 02:06–02:30 (hora ARG) — L1a2 (revisor automático de textos)
+## Corrida 02:06–02:45 (hora ARG) — L1a2 (revisor automático de textos) y G2a (Tu año en Aula)
+
+### G2a · Tu año en Aula (Aula 2.37.0)
+
+**Plan:** G2 tiene dos partes bien separadas: los números + la historia, y exportar cada pantalla como imagen. Lo partí en G2a y G2b para cerrar bien la primera con el tiempo que quedaba.
+**Decisiones:**
+- **Los números salen del estado completo filtrado por año** (`wrappedData(yearId)` sobre `fullState()`): se puede ver el resumen de cualquier año **sin cambiar el año que estás mirando**. No modifica nada (el test compara el estado antes y después).
+- **Pantallas** (cada una aparece solo si hay dato real): portada ("Hasta ahora" si el año no terminó), horas estudiadas en cuántos días + equivalente ("como ver 2 películas seguidas"; con 48 h o más, "días enteros sin dormir"), la materia del año con su %, el mes más intenso y el día récord, tareas completadas (las que se repiten cuentan cada vez) + la serie más larga terminada entera, la racha más larga (días seguidos estudiando **o** tachando tareas), "Sos de estudiar de noche/mañana/tarde/madrugada", parciales aprobados con la mejor nota, y un cierre.
+- **"A qué hora estudiás" solo con 5 o más sesiones medidas en el momento.** Las cargadas a mano no dicen a qué hora estudiaste (dicen a qué hora las cargaste), así que no cuentan. Con tus datos de prueba hay 3: esa pantalla no sale. Prefiero saltarla a inventar.
+- **Sin datos** no se rompe: portada y un cierre honesto ("Todavía no hay nada que contar…").
+- **Cómo se usa:** botón "Tu año en Aula" arriba en Progreso, y "Resumen" al lado de cada año en "Tus años". Tocás la derecha para avanzar y la izquierda para volver (como las historias de Instagram); en la compu, flechas, espacio y Esc. Barras de progreso arriba, ✕ de 44 px, animación de entrada de 240 ms que se apaga con "reducir movimiento". En el celu ocupa toda la pantalla; en la compu, una tarjeta vertical centrada.
+- **No pasa sola** (sin temporizador): son números para leer, y que se te vaya la pantalla mientras leés frustra.
+**Salió mal / intentos fallidos:** en la primera captura los decimales salían con punto ("4.8 h", "1.5 h", del `hClock` de Progreso): en el resumen ahora uso "4 h 45 m" y el número grande va con coma ("4,8 horas"). Además, al abrir quedaba un anillo de foco sobre el ✕ (ahora el foco va al diálogo), "Parciales aprobados: 1" quedaba sin unidad (ahora "Aprobaste 1 parcial"), y revisando el diff vi que los atajos de la app (N = nueva tarea) seguían funcionando detrás de la historia: ahora se bloquean (el test falla sin el arreglo). Los tests los escribí después del código, así que no los vi en rojo primero, salvo el del atajo.
+**Tests:** +5 (×2) en `tests/wrapped.spec.js`: los números del fixture calculados a mano (285 min, AN 32%, julio, 7 tareas, racha 3, mejor nota 9…) y el texto de cada pantalla; recorrido entero tocando + teclado + "Ver de nuevo" + Esc, sin cambiar datos; sin datos; "de noche" con 5 sesiones medidas (las cargadas a mano no cuentan); el resumen de un año anterior desde "Tus años" sin cambiar de año. `npm test`: **293 pasaron, 0 fallaron**.
+**Capturas:** [portada, celu](capturas/G2-s0-mobile-dark.png) · [horas](capturas/G2-s1-mobile-dark.png) · [materia del año](capturas/G2-s2-mobile-dark.png) · [mes](capturas/G2-s3-mobile-dark.png) · [parciales, desktop claro](capturas/G2-s6-desktop-light.png) · [cierre](capturas/G2-s7-mobile-dark.png) · [botón en Progreso](capturas/G2-boton-mobile-dark.png)
+**Para Bauti:** abrilo desde Progreso → "Tu año en Aula". Tus números reales van a ser distintos a los de las capturas (son del fixture de prueba). Si alguna pantalla te parece de más o te falta alguna idea, es fácil sumar.
+
+### L1a2 · Revisor automático de textos (Aula 2.36.0)
+
 
 **Plan:** seguía L1a2. Era lo siguiente pendiente antes de G2, y además sirve para todo lo que viene: es un test que recorre la app entera buscando textos rotos, así que cada ítem nuevo (G2, E1, F1) queda revisado gratis.
 **Decisiones:**

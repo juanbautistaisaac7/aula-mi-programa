@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.36.0";
+const APP_VERSION = "2.37.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -979,6 +979,7 @@ function openYearPicker() {
       <button class="ypick" onclick="closeModal();setActiveYear('${escA(y.id)}')" aria-pressed="${y.id === act}">
         <span class="ycheck" aria-hidden="true">${y.id === act ? "✓" : ""}</span>
         <span class="ytx"><span class="ynm">${esc(y.name)}${y.id === cur ? ' <span class="ytag">actual</span>' : ""}</span><span class="tiny">${meta}</span></span></button>
+      <button class="btn sm ghost" onclick="openWrapped('${escA(y.id)}')" aria-label="Resumen de ${escA(y.name)}">Resumen</button>
       <button class="btn sm ghost" onclick="openYearEdit('${escA(y.id)}')" aria-label="Editar ${escA(y.name)}">Editar</button></div>`;
   }).join("");
   openModal(`<h3>Tus años</h3>
@@ -4084,7 +4085,7 @@ function viewStats() {
   if (route.id === "detalle") return viewStatsDetail();
   const p = progressData();
   const pctCol = v => v == null ? "var(--tx3)" : v < 40 ? "var(--bad)" : v < 70 ? "var(--warn)" : "var(--ok)";
-  let h = `<div class="vhead"><h2>Progreso</h2><span class="sub">${esc(capitalize(fmtD(todayISO())))}</span></div><div class="pg">`;
+  let h = `<div class="vhead"><h2>Progreso</h2><span class="sub">${esc(capitalize(fmtD(todayISO())))}</span><div class="grow"></div><button class="btn sm wopen" onclick="openWrapped()">Tu año en Aula</button></div><div class="pg">`;
   // 1 · esta semana
   const W = p.week, diff = W.min - W.lastSame, maxD = Math.max(60, ...W.days.map(x => x.min));
   const sub = !W.min ? "Todavía no registraste tiempo esta semana."
@@ -4619,6 +4620,137 @@ function mergeStates(dst, src) {
   if (Array.isArray(src.years)) addNew(dst.years, src.years); // G1
   addNew(dst.tasks, src.tasks); addNew(dst.notes, src.notes); addNew(dst.habits, src.habits); addNew(dst.sessions, src.sessions);
   for (const [k, v] of Object.entries(src.dayLog || {})) if (!dst.dayLog[k]) dst.dayLog[k] = v;
+}
+
+/* ===================== G2 · TU AÑO EN AULA (resumen tipo "Wrapped") =====================
+   Historia de pantallas a pantalla completa para un año de cursado (G1). Los números
+   salen del estado COMPLETO (fullState) filtrado por yearId, así se puede ver el
+   resumen de cualquier año sin cambiar el que se está mirando. Solo datos reales:
+   si falta un dato, esa pantalla no aparece. No modifica nada del estado. */
+function parseGrade(g) { const n = parseFloat(String(g == null ? "" : g).replace(",", ".")); return isFinite(n) && n > 0 && n <= 10 ? n : null; }
+function wrappedData(yearId) {
+  const f = fullState(), y = (f.years || []).find(x => x.id === yearId) || activeYear();
+  const mine = c => (f[c] || []).filter(x => x && yearOf(x) === y.id);
+  const sess = mine("sessions").filter(s => s.min > 0 && s.date);
+  const subjects = mine("subjects"), tasks = mine("tasks").filter(t => !t.archived), evals = mine("evals");
+  const total = sess.reduce((a, s) => a + s.min, 0);
+  const sum = (key) => { const m = {}; for (const s of sess) { const k = key(s); if (k) m[k] = (m[k] || 0) + s.min; } return Object.entries(m).sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0]))); };
+  const bySubj = sum(s => s.subjectId), byMonth = sum(s => s.date.slice(0, 7)), byDay = sum(s => s.date);
+  const topS = bySubj.length ? subjects.find(s => s.id === bySubj[0][0]) || (f.subjects || []).find(s => s.id === bySubj[0][0]) : null;
+  // tareas hechas (las que se repiten cuentan cada vez que se hicieron)
+  const doneDays = new Set(sess.map(s => s.date));
+  let tasksDone = 0;
+  for (const t of tasks) {
+    if (t.recur) { const ks = Object.keys(t.recurDone || {}).filter(k => t.recurDone[k]); tasksDone += ks.length; ks.forEach(k => doneDays.add(k)); }
+    else if (t.status === "done") { tasksDone++; if (t.doneAt) doneDays.add(t.doneAt); }
+  }
+  let streak = 0; { const srt = [...doneDays].sort(); let cur = 0, prev = null; for (const d of srt) { cur = prev && addDays(prev, 1) === d ? cur + 1 : 1; streak = Math.max(streak, cur); prev = d; } }
+  // parciales
+  const passed = evals.filter(e => e.status === "aprob");
+  const graded = evals.filter(e => ["aprob", "desaprob", "rendido"].includes(e.status) && parseGrade(e.grade) != null);
+  const best = graded.slice().sort((a, b) => parseGrade(b.grade) - parseGrade(a.grade) || String(a.date || "").localeCompare(String(b.date || "")))[0] || null;
+  // a qué hora (solo sesiones medidas en el momento: las cargadas a mano no dicen cuándo)
+  const timed = sess.filter(s => s.ts && !s.manual);
+  const slots = [["madrugada", 0, 6], ["mañana", 6, 12], ["tarde", 12, 19], ["noche", 19, 24]].map(([n, a, b]) => ({ n, min: timed.filter(s => { const h = new Date(s.ts).getHours(); return h >= a && h < b; }).reduce((x, s) => x + s.min, 0) }));
+  const slot = timed.length >= 5 ? slots.slice().sort((a, b) => b.min - a.min)[0] : null;
+  // serie más larga terminada entera
+  const groups = {};
+  for (const t of tasks) if (t.seriesId && !t.recur && t.status !== "canc") (groups[t.seriesId] = groups[t.seriesId] || []).push(t);
+  let series = null;
+  for (const g of Object.values(groups)) if (g.length >= 3 && g.every(t => t.status === "done") && (!series || g.length > series.n)) series = { n: g.length, title: g[0].title };
+  const today = todayISO();
+  return {
+    year: y, ongoing: !y.end || today <= y.end, total, sessions: sess.length,
+    topSubject: topS ? { name: topS.name, color: topS.color, min: bySubj[0][1], pct: Math.round(bySubj[0][1] * 100 / total) } : null,
+    subjectsStudied: bySubj.length,
+    bestMonth: byMonth.length ? { ym: byMonth[0][0], min: byMonth[0][1] } : null,
+    bestDay: byDay.length ? { d: byDay[0][0], min: byDay[0][1] } : null,
+    activeDays: new Set(sess.map(s => s.date)).size,
+    tasksDone, streak, passed: passed.length, rendered: evals.filter(e => ["aprob", "desaprob", "rendido"].includes(e.status)).length,
+    best: best ? { name: best.name, grade: parseGrade(best.grade) } : null,
+    slot, series
+  };
+}
+function fmtNum(n) { return Math.round(n).toLocaleString("es-AR"); }
+function fmtGrade(g) { return String(Math.round(g * 100) / 100).replace(".", ","); }
+function wrappedSlides(d) {
+  const S = [], hours = d.total / 60, yname = d.year.name;
+  S.push({ c: "w-indigo", k: d.ongoing ? "Hasta ahora" : "Resumen del año", big: "Tu año en Aula", sub: yname + (d.ongoing ? " · todavía no terminó" : ""), cta: d.total || d.tasksDone ? "Tocá para empezar" : "" });
+  if (d.total >= 60) {
+    const films = Math.floor(d.total / 120);
+    const eq = hours >= 48 ? `Son ${String(Math.round(hours / 24 * 10) / 10).replace(".", ",")} días enteros, sin dormir.` : films >= 2 ? `Como ver ${films} películas seguidas.` : "";
+    S.push({ c: "w-blue", k: "Estudiaste", big: hours < 10 ? String(Math.round(hours * 10) / 10).replace(".", ",") : fmtNum(hours), unit: Math.round(hours * 10) / 10 === 1 ? "hora" : "horas", sub: `en ${pl(d.activeDays, "día", "días")} distintos. ${eq}`.trim() });
+  }
+  if (d.topSubject && d.subjectsStudied >= 1) S.push({ c: "w-subject", color: d.topSubject.color, k: "Tu materia del año", big: d.topSubject.name, sub: `${fmtMin(d.topSubject.min)} · el ${d.topSubject.pct}% de todo lo que estudiaste`, small: true });
+  if (d.bestMonth && d.bestDay) {
+    const [yy, mm] = d.bestMonth.ym.split("-").map(Number);
+    S.push({ c: "w-orange", k: "Tu mes más intenso", big: capitalize(MESL[mm - 1]), sub: `${fmtMin(d.bestMonth.min)} en el mes. Y tu día récord fue el ${DAYSL[dToDate(d.bestDay.d).getDay()]} ${dToDate(d.bestDay.d).getDate()} de ${MESL[dToDate(d.bestDay.d).getMonth()]}: ${fmtMin(d.bestDay.min)}.` });
+  }
+  if (d.tasksDone) S.push({ c: "w-green", k: "Completaste", big: fmtNum(d.tasksDone), unit: d.tasksDone === 1 ? "tarea" : "tareas", sub: d.series ? `La serie más larga que terminaste entera: «${d.series.title}», ${d.series.n} de ${d.series.n}.` : "Una por una, todas cuentan." });
+  if (d.streak >= 2) S.push({ c: "w-red", k: "Tu racha más larga", big: String(d.streak), unit: "días seguidos", sub: "estudiando o tachando tareas, sin cortar." });
+  if (d.slot) {
+    const t = { madrugada: "Sos de estudiar de madrugada", "mañana": "Sos de estudiar a la mañana", tarde: "Sos de estudiar a la tarde", noche: "Sos de estudiar de noche" }[d.slot.n];
+    S.push({ c: "w-night", k: "A qué hora rendís", big: t, sub: `${fmtMin(d.slot.min)} de tu tiempo medido fue a la ${d.slot.n === "madrugada" ? "madrugada" : d.slot.n}.`.replace("a la noche", "de noche").replace("a la madrugada", "de madrugada"), small: true });
+  }
+  if (d.rendered) S.push({ c: "w-gold", k: d.passed ? "Aprobaste" : "Rendiste", big: String(d.passed || d.rendered), unit: (d.passed || d.rendered) === 1 ? "parcial" : "parciales", sub: d.best ? `Tu mejor nota: ${fmtGrade(d.best.grade)} en «${d.best.name}».` : (d.passed ? `de ${d.rendered} que rendiste.` : "") });
+  const end = !d.total && !d.tasksDone
+    ? { big: "Todavía no hay nada que contar", sub: "Registrá tu tiempo de estudio y tachá tareas: este resumen se arma solo con lo que hagas." }
+    : { big: d.ongoing ? "Y el año sigue" : "Gran año", sub: [d.total >= 60 ? fmtMin(d.total) + " de estudio" : "", d.tasksDone ? pl(d.tasksDone, "tarea", "tareas") : "", d.passed ? pl(d.passed, "parcial aprobado", "parciales aprobados") : ""].filter(Boolean).join(" · ") + (d.ongoing ? ". Lo que falta, también se va a notar acá." : ". Bien ahí.") };
+  S.push(Object.assign({ c: "w-indigo", k: yname, small: true, last: true }, end));
+  return S;
+}
+let wr = null; // { slides, i, yearId }
+function openWrapped(yearId) {
+  closeModal();
+  const d = wrappedData(yearId || activeYearId());
+  wr = { slides: wrappedSlides(d), i: 0, yearId: d.year.id, back: document.activeElement };
+  let el = byId("wrapped");
+  if (!el) { el = document.createElement("div"); el.id = "wrapped"; document.body.appendChild(el); }
+  el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-label", "Tu año en Aula · " + d.year.name);
+  el.className = "open";
+  document.addEventListener("keydown", wrappedKey, true);
+  el.tabIndex = -1;
+  renderWrapped();
+  el.focus({ preventScroll: true }); // el diálogo, no el ✕: así no arranca con un anillo de foco encima
+}
+function closeWrapped() {
+  const el = byId("wrapped"); if (el) { el.className = ""; el.innerHTML = ""; }
+  document.removeEventListener("keydown", wrappedKey, true);
+  const b = wr && wr.back; wr = null;
+  if (b && b.focus) try { b.focus({ preventScroll: true }); } catch (e) {}
+}
+function wrappedKey(e) {
+  if (!wr) return;
+  if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeWrapped(); }
+  else if (e.key === "ArrowRight" || e.key === " ") { e.preventDefault(); e.stopPropagation(); wrappedGo(1); }
+  else if (e.key === "ArrowLeft") { e.preventDefault(); e.stopPropagation(); wrappedGo(-1); }
+  else if (e.key !== "Tab" && e.key !== "Enter") e.stopPropagation(); // los atajos de la app (n, /…) no corren con la historia abierta
+}
+function wrappedGo(dir) {
+  if (!wr) return;
+  const n = wr.i + dir;
+  if (n >= wr.slides.length) { closeWrapped(); return; }
+  if (n < 0) return;
+  wr.i = n; renderWrapped();
+}
+function renderWrapped() {
+  const el = byId("wrapped"); if (!el || !wr) return;
+  const s = wr.slides[wr.i], N = wr.slides.length;
+  const bars = wr.slides.map((_, j) => `<i class="${j < wr.i ? "done" : j === wr.i ? "on" : ""}"></i>`).join("");
+  el.innerHTML = `<div class="wcard ${s.c}"${s.color ? ` style="--wsub:${escA(s.color)}"` : ""}>
+    <div class="wbars" aria-hidden="true">${bars}</div>
+    <button class="wclose" onclick="closeWrapped()" aria-label="Cerrar">✕</button>
+    <div class="wbody" aria-live="polite">
+      <div class="wk">${esc(s.k)}</div>
+      <div class="wbig${s.small ? " sm" : ""}">${esc(s.big)}${s.unit ? `<span class="wunit">${esc(s.unit)}</span>` : ""}</div>
+      ${s.sub ? `<div class="wsub">${esc(s.sub)}</div>` : ""}
+      ${s.cta ? `<div class="wcta">${esc(s.cta)} ›</div>` : ""}
+      ${s.last ? `<div class="wend"><button class="wbtn" onclick="wr.i=0;renderWrapped()">Ver de nuevo</button><button class="wbtn solid" onclick="closeWrapped()">Listo</button></div>` : ""}
+    </div>
+    <button class="wnav wprev" onclick="wrappedGo(-1)" aria-label="Anterior" ${wr.i === 0 ? "disabled" : ""}></button>
+    <button class="wnav wnext" onclick="wrappedGo(1)" aria-label="${wr.i === N - 1 ? "Cerrar" : "Siguiente"}"></button>
+    <div class="wcount" aria-hidden="true">${wr.i + 1} / ${N}</div>
+  </div>`;
 }
 
 /* ======================= VISTA: CONFIGURACIÓN ======================= */

@@ -574,6 +574,44 @@ footer{text-align:center;margin-top:30px;color:var(--tx3);font-size:.7rem}
   .cal .day{min-height:64px}
 }
 @media print{#topbar,#sidebar{display:none}}
+
+/* G2 · Tu año en Aula (historias a pantalla completa) */
+#wrapped{display:none}#wrapped:focus{outline:none}
+#wrapped.open{display:flex;position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.72);align-items:center;justify-content:center;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+.wcard{position:relative;width:min(420px,100vw);height:min(760px,100dvh);border-radius:22px;overflow:hidden;color:#fff;display:flex;flex-direction:column;justify-content:center;box-shadow:0 30px 80px rgba(0,0,0,.45);transition:background .25s}
+@media(max-width:600px){.wcard{width:100vw;height:100dvh;border-radius:0}}
+.w-indigo{background:radial-gradient(120% 80% at 20% 10%,#7c6cff 0,transparent 60%),linear-gradient(160deg,#3b2fc9,#1a1446)}
+.w-blue{background:radial-gradient(110% 70% at 80% 0,#5ec8ff 0,transparent 55%),linear-gradient(170deg,#1659d6,#0b1f52)}
+.w-subject{background:radial-gradient(120% 80% at 10% 0,color-mix(in srgb,var(--wsub,#4338ca) 55%,#fff) 0,transparent 60%),linear-gradient(165deg,var(--wsub,#4338ca),color-mix(in srgb,var(--wsub,#4338ca) 35%,#000))}
+.w-orange{background:radial-gradient(110% 70% at 85% 5%,#ffc46b 0,transparent 55%),linear-gradient(165deg,#f0642a,#6b1a0c)}
+.w-green{background:radial-gradient(110% 70% at 15% 5%,#7bf0b4 0,transparent 55%),linear-gradient(165deg,#0f9f62,#06331f)}
+.w-red{background:radial-gradient(110% 70% at 80% 5%,#ff8fa3 0,transparent 55%),linear-gradient(165deg,#e0284f,#4c0716)}
+.w-night{background:radial-gradient(90% 60% at 75% 15%,#5b4bd6 0,transparent 60%),linear-gradient(170deg,#141238,#05040f)}
+.w-gold{background:radial-gradient(110% 70% at 20% 5%,#ffe58a 0,transparent 55%),linear-gradient(165deg,#c98a06,#4a2c00)}
+.wbars{position:absolute;top:calc(12px + env(safe-area-inset-top));left:14px;right:14px;display:flex;gap:4px;z-index:3}
+.wbars i{flex:1;height:3px;border-radius:3px;background:rgba(255,255,255,.3)}
+.wbars i.done,.wbars i.on{background:#fff}
+.wclose{position:absolute;top:calc(24px + env(safe-area-inset-top));right:10px;z-index:4;width:44px;height:44px;border:0;border-radius:22px;background:rgba(0,0,0,.18);color:#fff;font-size:1.05rem;cursor:pointer}
+.wbody{position:relative;z-index:2;padding:0 30px;pointer-events:none}
+.wbody .wend{pointer-events:auto}
+.wk{font-size:.95rem;font-weight:650;opacity:.85;letter-spacing:.01em;margin-bottom:10px}
+.wbig{font-size:clamp(3.4rem,17vw,5.6rem);line-height:1;font-weight:800;letter-spacing:-.035em;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.wbig.sm{font-size:clamp(2.1rem,9.5vw,2.9rem);line-height:1.08;letter-spacing:-.025em}
+.wunit{display:block;font-size:1.35rem;font-weight:700;letter-spacing:-.01em;margin-top:8px;opacity:.95}
+.wsub{font-size:1.05rem;line-height:1.45;margin-top:18px;opacity:.9;max-width:34ch}
+.wcta{margin-top:34px;font-size:.9rem;font-weight:600;opacity:.75}
+.wend{display:flex;gap:10px;margin-top:34px}
+.wbtn{min-height:46px;padding:0 20px;border-radius:23px;border:1.5px solid rgba(255,255,255,.6);background:transparent;color:#fff;font:inherit;font-weight:650;cursor:pointer}
+.wbtn.solid{background:#fff;color:#1a1446;border-color:#fff}
+.wnav{position:absolute;top:0;bottom:0;z-index:1;border:0;background:transparent;padding:0;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.wprev{left:0;width:33%}.wnext{right:0;width:67%}
+.wnav:focus-visible{outline:2px solid rgba(255,255,255,.7);outline-offset:-6px}
+.wcount{position:absolute;bottom:calc(16px + env(safe-area-inset-bottom));left:0;right:0;text-align:center;font-size:.75rem;opacity:.55;z-index:2;pointer-events:none}
+.wbody>*{animation:wIn .24s ease-out both}
+.wbody>*:nth-child(2){animation-delay:.05s}.wbody>*:nth-child(3){animation-delay:.1s}.wbody>*:nth-child(4){animation-delay:.15s}
+@keyframes wIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.wbody>*{animation:none}.wcard{transition:none}}
+.wopen{background:linear-gradient(135deg,#5b4bd6,#e0284f);color:#fff;border-color:transparent}
 </style>
 </head>
 <body>
