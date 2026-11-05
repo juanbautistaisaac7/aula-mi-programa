@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.31.0";
+const APP_VERSION = "2.32.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -153,7 +153,7 @@ async function persist() {
     else if (typeof localStorage !== "undefined") localStorage.setItem("aula-state-fallback", json);
     try { if (typeof localStorage !== "undefined" && json.length < 3500000) localStorage.setItem(EMERGENCY_KEY, json); } catch (e) {}
     const el = byId("saveInd");
-    if (el) { el.classList.remove("saving"); const t = byId("saveTxt"); if (t) t.textContent = "todo guardado"; }
+    if (el) { el.classList.remove("saving"); const t = byId("saveTxt"); if (t) t.textContent = "todo guardado"; syncPaint(); }
   } catch (e) {
     console.warn("Error al guardar", e);
     try { if (typeof localStorage !== "undefined") localStorage.setItem(EMERGENCY_KEY, json); } catch (e2) {}
@@ -161,7 +161,7 @@ async function persist() {
   saving = false;
   if (savePending) { savePending = false; persist(); }
 }
-function change() { markDirty(); }
+function change() { markDirty(); syncSoon(); }
 /* Guardado sincrónico de último momento (al cerrar, recargar o mandar la app al fondo).
    IndexedDB es asíncrono y el navegador puede cortar la transacción cuando mata la
    página; localStorage es sincrónico y siempre llega. loadState usa la copia de
@@ -259,6 +259,30 @@ function syncResetHashes() { syncHashes = state ? syncHashesOf(state) : null; }
    distinto contenido y ninguno tiene marca, se elige siempre el mismo (el de JSON
    mayor) para que los dos dispositivos terminen iguales.
    Devuelve { data, stamps, tombs } nuevos (no toca las entradas). */
+/* Primera vez: un dispositivo nuevo arranca con las 10 materias de ejemplo (ids al azar).
+   Si los dos lados tienen una materia con el mismo nombre, queda una sola: la que tiene
+   cosas vinculadas (o, si empatan, la de id menor, así los dos eligen la misma), y todo
+   lo que apuntaba a la otra pasa a apuntar a la que queda. */
+function syncDedupeSubjects(m, now) {
+  const subs = m.data.subjects || [], norm = x => String(x || "").trim().toLowerCase();
+  const refs = new Map();
+  const walk = (o, fn) => { for (const c of Object.keys(m.data)) { const v = m.data[c]; if (Array.isArray(v)) v.forEach(x => { if (x && typeof x === "object") for (const f of Object.keys(x)) if (/subjectId$/.test(f)) fn(x, f, c); }); } };
+  walk(m.data, (x, f) => refs.set(x[f], (refs.get(x[f]) || 0) + 1));
+  const byName = new Map(), drop = new Map();
+  for (const sj of subs) {
+    const k = norm(sj.name); if (!k) continue;
+    const o = byName.get(k);
+    if (!o) { byName.set(k, sj); continue; }
+    const ro = refs.get(o.id) || 0, rs = refs.get(sj.id) || 0;
+    const keep = ro !== rs ? (ro > rs ? o : sj) : (o.id < sj.id ? o : sj), gone = keep === o ? sj : o;
+    byName.set(k, keep); drop.set(gone.id, keep.id);
+  }
+  if (!drop.size) return m;
+  m.data.subjects = subs.filter(x => !drop.has(x.id));
+  for (const [id] of drop) { m.tombs["subjects:" + id] = now; delete m.stamps["subjects:" + id]; }
+  walk(m.data, (x, f, c) => { if (drop.has(x[f])) { x[f] = drop.get(x[f]); m.stamps[c + ":" + x.id] = now; } });
+  return m;
+}
 function syncMerge(L, R) {
   const clone = x => x === undefined ? undefined : JSON.parse(JSON.stringify(x));
   const out = clone(L.data), stamps = Object.assign({}, R.stamps || {}, L.stamps || {}), tombs = {};
@@ -294,7 +318,9 @@ function syncMerge(L, R) {
         settle(k, w);
         if (w && w.alive) res.push(clone(w.val));
       };
-      la.forEach(x => consider(x.id)); ra.forEach(x => consider(x.id));
+      // el orden lo da el lado remoto (lo que ya está en el servidor) y después lo nuevo de acá:
+      // así los dos dispositivos terminan con el mismo orden y no se suben cambios de más
+      ra.forEach(x => consider(x.id)); la.forEach(x => consider(x.id));
       // lápidas de elementos que ya no están en ninguno de los dos lados
       for (const side of [L, R]) for (const k of Object.keys(side.tombs || {})) if (k.startsWith(c + ":") && !(k in tombs) && !seen.has(k.slice(c.length + 1))) {
         const o = side === L ? R : L, t2 = (o.tombs || {})[k];
@@ -319,6 +345,127 @@ function syncMerge(L, R) {
     }
   }
   return { data: out, stamps, tombs };
+}
+
+/* ===================== SINCRONIZACIÓN (S1b) — cliente =====================
+   El código de sincronización vive solo en este dispositivo (localStorage), nunca
+   dentro de los datos ni de las copias de seguridad. Una pasada: bajar lo que hay,
+   fusionar (sin espera entre fusionar y aplicar, así no se pierde lo que estés
+   escribiendo), y subir solo si algo cambió (KV gratis tiene ~1000 escrituras por día). */
+const SYNC_CFG_KEY = "aula-sync", SYNC_URL = "api/sync";
+let syncCfg = null, syncBusy = false, syncAgain = false, syncSoonT = null, syncStat = { kind: "off" };
+function syncLoadCfg() { try { syncCfg = JSON.parse(localStorage.getItem(SYNC_CFG_KEY) || "null"); } catch (e) { syncCfg = null; } }
+function syncSaveCfg() { try { if (syncCfg) localStorage.setItem(SYNC_CFG_KEY, JSON.stringify(syncCfg)); else localStorage.removeItem(SYNC_CFG_KEY); } catch (e) {} }
+function syncOn() { return !!(syncCfg && syncCfg.key); }
+const SYNC_TXT = { busy: "sincronizando…", ok: "sincronizado", offline: "sin conexión · se sube después", nokv: "falta activar la sincronización", badkey: "código de sincronización inválido", newer: "actualizá Aula en este dispositivo", error: "no se pudo sincronizar" };
+function syncSetStatus(kind) {
+  syncStat = { kind, at: Date.now() };
+  syncPaint();
+  if (route.view === "settings" && typeof refreshSyncCard === "function") refreshSyncCard();
+}
+function syncPaint() {
+  const el = byId("saveInd"), t = byId("saveTxt"); if (!el || !t || el.classList.contains("saving")) return;
+  if (!syncOn()) { t.textContent = "todo guardado"; el.className = ""; return; }
+  t.textContent = SYNC_TXT[syncStat.kind] || "todo guardado";
+  el.className = "sync-" + syncStat.kind;
+}
+function canon(x) {
+  if (Array.isArray(x)) return "[" + x.map(canon).join(",") + "]";
+  if (x && typeof x === "object") return "{" + Object.keys(x).sort().filter(k => x[k] !== undefined).map(k => JSON.stringify(k) + ":" + canon(x[k])).join(",") + "}";
+  return JSON.stringify(x === undefined ? null : x);
+}
+function syncLocal() {
+  syncTrack();
+  const data = {};
+  for (const k of Object.keys(state)) if (!SYNC_LOCAL.has(k)) data[k] = state[k];
+  return { data, stamps: state.sync.stamps, tombs: state.sync.tombs };
+}
+function syncApply(m) {
+  const before = canon(syncLocal().data);
+  for (const k of Object.keys(state)) if (!SYNC_LOCAL.has(k) && !(k in m.data)) delete state[k];
+  for (const k of Object.keys(m.data)) if (!SYNC_LOCAL.has(k)) state[k] = m.data[k];
+  state.sync = { stamps: m.stamps, tombs: m.tombs };
+  normalizeState(state);
+  syncResetHashes();
+  if (canon(syncLocal().data) === before) return false;
+  markDirty();
+  try { applyTheme(); document.documentElement.style.setProperty("--acc", state.settings.accent); } catch (e) {}
+  ui.serMap = null;
+  render();
+  return true;
+}
+async function syncFetch(method, body) {
+  const ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const tm = setTimeout(() => { if (ctl) ctl.abort(); }, 20000);
+  try {
+    const r = await fetch(SYNC_URL, { method, cache: "no-store", signal: ctl ? ctl.signal : undefined,
+      headers: { authorization: "Bearer " + syncCfg.key, "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+    let j = null; try { j = await r.json(); } catch (e) {}
+    return { status: r.status, body: j };
+  } finally { clearTimeout(tm); }
+}
+async function syncBackup() {
+  try { if (db) await idbPut("backups", "presync-" + Date.now(), { ts: Date.now(), label: "Antes de sincronizar por primera vez", version: APP_VERSION, data: JSON.stringify(state) }); } catch (e) {}
+}
+async function syncNow() {
+  if (!syncOn() || !state) return;
+  if (syncBusy) { syncAgain = true; return; }
+  syncBusy = true; clearTimeout(syncSoonT); syncSetStatus("busy");
+  try {
+    let doc = await syncFetch("GET");
+    for (let attempt = 0; attempt < 4; attempt++) {
+      if (doc.status === 503) return syncSetStatus("nokv");
+      if (doc.status === 401) return syncSetStatus("badkey");
+      if (![200, 404, 409].includes(doc.status)) return syncSetStatus("error");
+      const remote = doc.body && doc.body.data && typeof doc.body.data === "object" ? doc.body : null;
+      const baseVersion = (doc.body && Number.isInteger(doc.body.version)) ? doc.body.version : 0;
+      if (remote && Number(remote.data.schema) > SCHEMA_VERSION) return syncSetStatus("newer");
+      if (remote && !syncCfg.merged) await syncBackup();
+      if (remote) {
+        const rs = remote.data.state && typeof remote.data.state === "object" ? remote.data.state : {};
+        const m = syncMerge(syncLocal(), { data: rs, stamps: remote.data.stamps || {}, tombs: remote.data.tombs || {} });
+        syncApply(syncCfg.merged ? m : syncDedupeSubjects(m, Date.now()));
+      }
+      const mine = syncLocal();
+      const payload = { app: APP_VERSION, schema: SCHEMA_VERSION, state: mine.data, stamps: mine.stamps, tombs: mine.tombs };
+      const same = remote && canon({ s: payload.state, a: payload.stamps, b: payload.tombs }) === canon({ s: remote.data.state, a: remote.data.stamps || {}, b: remote.data.tombs || {} });
+      let version = baseVersion;
+      if (!same) {
+        const put = await syncFetch("PUT", { baseVersion, data: payload });
+        if (put.status === 409) { doc = put; continue; } // otro dispositivo escribió en el medio: fusionar otra vez
+        if (put.status !== 200) return syncSetStatus(put.status === 503 ? "nokv" : put.status === 401 ? "badkey" : "error");
+        version = put.body.version;
+      }
+      syncCfg.version = version; syncCfg.merged = true; syncCfg.lastSync = Date.now(); syncSaveCfg();
+      return syncSetStatus("ok");
+    }
+    syncSetStatus("error");
+  } catch (e) { syncSetStatus("offline"); }
+  finally {
+    syncBusy = false;
+    if (syncAgain) { syncAgain = false; syncSoon(1000); }
+  }
+}
+function syncSoon(ms) { if (!syncOn()) return; clearTimeout(syncSoonT); syncSoonT = setTimeout(syncNow, ms == null ? 4000 : ms); }
+function syncNewKey() {
+  const b = new Uint8Array(16); crypto.getRandomValues(b);
+  return btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function syncValidKey(k) { return /^[A-Za-z0-9_-]{22,128}$/.test(String(k || "")); }
+/* Conecta este dispositivo con un código (nuevo o el de otro dispositivo) y sincroniza. */
+function syncConnect(key) {
+  key = String(key || "").trim().replace(/\s+/g, "");
+  if (!syncValidKey(key)) return false;
+  syncCfg = { key, version: 0, merged: false, since: Date.now() };
+  syncSaveCfg(); syncNow();
+  return true;
+}
+function syncDisconnect() { syncCfg = null; syncSaveCfg(); clearTimeout(syncSoonT); syncSetStatus("off"); }
+function syncInit() {
+  syncLoadCfg();
+  if (!syncOn()) return;
+  setTimeout(syncNow, 800);
+  setInterval(() => { if (document.visibilityState === "visible") syncNow(); }, 60000);
 }
 
 /* ===================== MIGRACIONES VERSIONADAS =====================
@@ -604,10 +751,6 @@ function clearDropMarks() {
 function canMoveTask(t) { return !!t && !t.recur; }
 function touchUI() { try { return matchMedia("(hover:none)").matches; } catch (e) { return false; } }
 function reducedMotion() { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) { return false; } }
-/* En iOS, después del toque largo el navegador se quedaría con el gesto para
-   scrollear (y cortaría el arrastre con pointercancel): mientras la fila está
-   levantada o se arrastra, se frena el scroll del dedo. */
-function dragTouchMove(e) { if (drag && (drag.state === "lifted" || drag.state === "dragging")) e.preventDefault(); }
 function dragPointerDown(ev) {
   if (ev.button !== 0 || drag || ui.selMode || selSet().size) return;
   const row = ev.target.closest && ev.target.closest("#view .task[data-id]");
@@ -625,7 +768,6 @@ function dragPointerDown(ev) {
   window.addEventListener("pointermove", dragPointerMove, { passive: false });
   window.addEventListener("pointerup", dragPointerUp);
   window.addEventListener("pointercancel", dragCancel);
-  if (!mouse) document.addEventListener("touchmove", dragTouchMove, { passive: false });
 }
 function dragLift() {
   if (!drag || drag.state !== "press") return;
@@ -719,7 +861,6 @@ function dragEnd(keepGhost) {
   window.removeEventListener("pointermove", dragPointerMove, { passive: false });
   window.removeEventListener("pointerup", dragPointerUp);
   window.removeEventListener("pointercancel", dragCancel);
-  document.removeEventListener("touchmove", dragTouchMove, { passive: false });
   if (!drag) return;
   clearTimeout(drag.timer);
   if (drag.raf) cancelAnimationFrame(drag.raf);
@@ -4987,7 +5128,9 @@ async function init() {
   setInterval(checkPastEvals, 5 * 60 * 1000);
   window.addEventListener("beforeunload", flushNow);
   window.addEventListener("pagehide", flushNow); // en iOS/Android beforeunload no siempre llega
-  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") { flushNow(); persist(); } });
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") { flushNow(); persist(); } else syncNow(); });
+  window.addEventListener("online", () => syncNow());
+  syncInit();
   if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
     navigator.serviceWorker.register("sw.js").catch(() => {});
   }

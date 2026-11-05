@@ -1,6 +1,6 @@
 /* Service worker de Aula — caché de app shell con versión.
    Al subir una versión nueva, cambiar CACHE_VERSION: el SW viejo se limpia solo. */
-const CACHE_VERSION = "aula-v2.31.0";
+const CACHE_VERSION = "aula-v2.32.0";
 const SHELL = [
   "./",
   "./index.html",
@@ -31,6 +31,7 @@ self.addEventListener("fetch", e => {
   if (req.method !== "GET") return;
   const url = new URL(req.url);
   if (url.origin !== location.origin) return;
+  if (url.pathname.includes("/api/")) return; // la sincronización (S1) va siempre a la red, nunca al caché
 
   const isShell = req.mode === "navigate" || SHELL.some(p => url.pathname.endsWith(p.replace("./", "/")));
   if (isShell) {

@@ -17,7 +17,8 @@ test.describe("función de sincronización", () => {
     const { onRequest } = await load();
     const env = { AULA_KV: fakeKV() };
     let r = await onRequest({ request: req("GET"), env });
-    expect(r.status).toBe(404);
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual({ version: 0, data: null });
     r = await onRequest({ request: req("PUT", { baseVersion: 0, data: { tasks: [{ id: "a" }] } }), env });
     expect(r.status).toBe(200);
     expect(await r.json()).toEqual({ version: 1 });
@@ -47,7 +48,7 @@ test.describe("función de sincronización", () => {
     expect((await onRequest({ request: req("GET", null, "corto"), env })).status).toBe(401);
     expect((await onRequest({ request: req("GET", null, "con espacios y cosas raras!!!!!!"), env })).status).toBe(401);
     await onRequest({ request: req("PUT", { baseVersion: 0, data: { x: 1 } }), env });
-    expect((await onRequest({ request: req("GET", null, "otro-codigo-distinto-de-22-chars"), env })).status).toBe(404);
+    expect(await (await onRequest({ request: req("GET", null, "otro-codigo-distinto-de-22-chars"), env })).json()).toEqual({ version: 0, data: null });
     const nokv = await onRequest({ request: req("GET"), env: {} });
     expect(nokv.status).toBe(503);
     expect((await nokv.json()).error).toBe("no-kv");

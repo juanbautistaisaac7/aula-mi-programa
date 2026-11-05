@@ -1,5 +1,5 @@
 // S1 · Sincronización compu-celu (Cloudflare Pages Functions + KV).
-// GET  /api/sync           → { version, data } del código de sincronización (404 si todavía no hay nada)
+// GET  /api/sync           → { version, data } del código de sincronización ({ version: 0, data: null } si todavía no hay nada)
 // PUT  /api/sync  { baseVersion, data } → { version } · 409 { version, data } si otro dispositivo escribió antes
 // El código va en "Authorization: Bearer <código>". En KV se guarda bajo el SHA-256
 // del código: sin el código no hay forma de saber qué clave leer.
@@ -29,7 +29,7 @@ export async function onRequest(context) {
 
   if (request.method === "GET") {
     const raw = await kv.get(key);
-    if (!raw) return json({ error: "empty", version: 0 }, 404);
+    if (!raw) return json({ version: 0, data: null }); // todavía no hay nada (200, así el navegador no lo anota como error)
     return new Response(raw, { headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
   }
   if (request.method === "PUT") {
