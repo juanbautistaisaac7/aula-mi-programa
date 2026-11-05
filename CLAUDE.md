@@ -54,7 +54,14 @@ O sea, tenés permiso para:
 - **Arreglar** cualquier bug, cosa confusa, fea o incómoda que veas, sin esperar a que lo pida.
 - **Agregar funcionalidades nuevas** (un botón, un atajo, una vista, una automatización) que le sirvan a un estudiante como Bauti en su día a día.
 
-Con estas condiciones:
+**Pero no agregar por agregar** (Bauti, 16:22: *"solo si lo considera, no agregar por agregar, solo si luego de una etapa de análisis se considera necesario dicho agregamiento"*). La regla por defecto es **no agregar**. Una función nueva entra solo si pasa una etapa de análisis escrita en la bitácora:
+- ¿Qué problema concreto de Bauti resuelve? Tiene que haber evidencia: algo que pidió, algo que se repite en sus datos de ejemplo o una fricción que encontraste usando la app como él.
+- ¿Se resuelve mejor mejorando algo que ya existe? Si es así, se hace eso y no se agrega nada.
+- ¿Cuánto ruido suma? Si la respuesta honesta es "es linda pero no la necesita", no se hace.
+
+Si no pasa el análisis, se anota como descartada en "Ideas del agente" con el porqué, y listo.
+
+Si pasa, con estas condiciones:
 1. **Primero lo pedido.** Las ideas propias van después de los ítems que pidió Bauti esa noche, salvo arreglos chicos que encuentres en el camino.
 2. **Que resuelva un problema real**, no "porque se puede". Antes de hacerla, anotala en `BACKLOG.md` → "Ideas del agente" con: qué problema resuelve, cómo la va a usar Bauti y por qué vale la pena.
 3. **Que no complique la app.** Bauti quiere todo simple: una función nueva no puede sumar ruido a las pantallas principales. Si es avanzada, va escondida pero a mano.
