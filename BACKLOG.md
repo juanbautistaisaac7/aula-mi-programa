@@ -246,6 +246,12 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
 ## F. Pulido final
 
 - [ ] **F1 · Nivel Apple en toda la app**
+  **Dirección de diseño de Bauti (4/11 21:40):** *"colores diferentes, no me gustaría que pierda la esencia completa porque sino se vuelve muy monocromático y aburrido como Notion por ejemplo, Notion no me gusta, no tengo una que quiero que se copie o sea igual, simplemente mejorar la estética y UX/UI manteniendo un poco la esencia de Aula original"*.
+  Traducido a reglas:
+  - **Evolución, no reemplazo.** Aula tiene que seguir reconociéndose como Aula: el índigo de acento (`--acc`, editable), los colores por materia, el tono de los textos. Antes de tocar, sacar capturas "antes" y escribir en la bitácora qué es la esencia que se conserva.
+  - **Con color y con vida.** Nada de gris sobre gris ni de blanco y negro tipo Notion. El color tiene que tener significado: cada materia con su color en todas partes (chips, puntos, barras, bordes sutiles), estados (atrasado, al día, hecho) y el acento para la acción principal. Fondos con leve calidez o tinte del acento, tarjetas con profundidad suave.
+  - **No copiar ninguna app.** Usar el nivel de detalle de iOS (espaciado, jerarquía, animaciones, áreas táctiles) como vara de calidad, no como estética a imitar.
+  - Mejorar la **UX** además de lo visual: menos ruido por pantalla, la acción principal obvia, todo a un toque o dos.
   Pedido: *"necesito una app hecha por el mismísimo apple para cuando me levante"*.
   Listo cuando: pasada de diseño completa sobre todas las vistas que quedan, con capturas antes y después en mobile y desktop, claro y oscuro. Tipografía del sistema (`-apple-system`/SF), espaciados consistentes, jerarquía, estados vacíos lindos, transiciones sutiles, iconografía coherente, barra de navegación inferior en mobile con las 4 o 5 vistas principales en vez de menú hamburguesa (evaluar), `prefers-reduced-motion`. Cero regresiones en los tests.
 
