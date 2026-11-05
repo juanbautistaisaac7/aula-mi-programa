@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.35.0";
+const APP_VERSION = "2.36.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -38,6 +38,8 @@ function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
 function byId(id) { return document.getElementById(id); }
 function weekStartOf(dateStr, ws) { const d = dToDate(dateStr); const diff = (d.getDay() - ws + 7) % 7; d.setDate(d.getDate() - diff); return iso(d); }
 function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+/** "1 tarea" / "3 tareas" (L1a2: nada de "1 tareas"). */
+function pl(n, one, many) { return n + " " + (n === 1 ? one : many); }
 /* Hora "HH:MM" según el formato elegido (24 h o 12 h). */
 function fmtTime(hm) {
   const m = hmToMin(hm); if (m == null) return "";
@@ -2348,7 +2350,7 @@ function openDayPreview(date) {
   let h = `<h3>${esc(capitalize(fmtDFull(date)))}${isToday ? ' <span class="pill acc">hoy</span>' : ""}</h3>`;
   h += `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px">
     <div class="card" style="margin:0;padding:11px 12px"><div class="statnum" style="font-size:1.25rem">${fmtMin(estTot)}</div><div class="statlab">planificado</div></div>
-    <div class="card" style="margin:0;padding:11px 12px"><div class="statnum" style="font-size:1.25rem">${fmtMin(pendMin)}</div><div class="statlab">pendiente · ${ts.length - doneN} de ${ts.length} tareas</div></div>
+    <div class="card" style="margin:0;padding:11px 12px"><div class="statnum" style="font-size:1.25rem">${fmtMin(pendMin)}</div><div class="statlab">pendiente · ${ts.length - doneN} de ${pl(ts.length, "tarea", "tareas")}</div></div>
     <div class="card" style="margin:0;padding:11px 12px"><div class="statnum" style="font-size:1.25rem;color:var(--ok)">${fmtMin(realTot)}</div><div class="statlab">ya estudiado</div></div>
   </div>`;
 
@@ -2511,7 +2513,7 @@ function refreshSeriesModal() {
 function seriesModalHTML(s) {
   const lb = seriesLabel(s), recur = s.kind === "recur", today = todayISO();
   let h = `<h3>${esc(s.title)}</h3>
-    <p class="tiny">${lb ? esc(lb.full) + " · " : ""}${recur ? esc(recurLabel(s.tasks[0].recur)) + ", sin fin · " + fmtMin(s.tasks[0].estMin) + " cada vez" : `${s.tasks.length} tareas · ${s.doneN} hechas · ${fmtMin(s.totMin)} en total`}</p>`;
+    <p class="tiny">${lb ? esc(lb.full) + " · " : ""}${recur ? esc(recurLabel(s.tasks[0].recur)) + ", sin fin · " + fmtMin(s.tasks[0].estMin) + " cada vez" : `${pl(s.tasks.length, "tarea", "tareas")} · ${pl(s.doneN, "hecha", "hechas")} · ${fmtMin(s.totMin)} en total`}</p>`;
   if (!recur) {
     const ids = new Set(s.tasks.map(t => t.id));
     ui.srSel = new Set([...ui.srSel].filter(id => ids.has(id))); // las borradas ya no cuentan
@@ -3118,7 +3120,7 @@ function viewHome() {
       return `<div class="subrow" style="cursor:pointer;border:1px solid var(--line2);border-radius:9px" onclick="go('subject','${s.id}')">
         <span class="iconchip" style="background:${s.color}">${esc(s.icon || s.short)}</span>
         <div style="flex:1;min-width:0"><div style="font-size:.8rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.name)}</div>
-        <div class="tiny">${pend.length} pendientes · ${fmtMin(min)}</div></div></div>`;
+        <div class="tiny">${pl(pend.length, "pendiente", "pendientes")} · ${fmtMin(min)}</div></div></div>`;
     }).join("") + "</div></div>";
   }
   return h;
@@ -3293,7 +3295,7 @@ function viewList() {
   }
   list.sort((a, b) => ((a.date || a.due || "9999") + a.title).localeCompare((b.date || b.due || "9999") + b.title));
   const totMin = list.filter(t => t.status !== "done").reduce((a, t) => a + (t.estMin || 0), 0);
-  let h = `<div class="vhead"><h2>Lista completa</h2><span class="sub">${list.length} tareas · ${fmtMin(totMin)} pendientes</span>
+  let h = `<div class="vhead"><h2>Lista completa</h2><span class="sub">${pl(list.length, "tarea", "tareas")} · ${fmtMin(totMin)} pendientes</span>
     <div class="grow"></div>
     <button class="btn ${ui.selMode ? "primary" : ""}" onclick="toggleSelMode()" title="Elegir varias tareas (o usá Ctrl+clic y Shift+clic)">Seleccionar</button>
     <button class="btn" onclick="selectAllVisible()">Todas</button>
@@ -3311,7 +3313,7 @@ function viewList() {
     <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--tx2)"><input type="checkbox" style="width:auto" ${f.archived === "1" ? "checked" : ""} onchange="ui.listFilters.archived=this.checked?'1':'';render()">archivadas</label>
     <button class="btn sm ghost" onclick="ui.listFilters={};render()">Limpiar filtros</button></div>`;
   h += `<div class="card">${list.length ? list.map(t => taskRow(t, { showDate: true })).join("") : '<div class="empty">No hay tareas con estos filtros.</div>'}</div>`;
-  if (oldDone) h += `<p class="oldDone tiny">${ui.showOldDone ? `Mostrando ${oldDone} hecha${oldDone > 1 ? "s" : ""} hace más de ${keep} días.` : `${oldDone} tarea${oldDone > 1 ? "s" : ""} hecha${oldDone > 1 ? "s" : ""} hace más de ${keep} días no se muestra${oldDone > 1 ? "n" : ""}.`}
+  if (oldDone) h += `<p class="oldDone tiny">${ui.showOldDone ? `Mostrando ${oldDone} hecha${oldDone > 1 ? "s" : ""} hace más de ${pl(keep, "día", "días")}.` : `${oldDone} tarea${oldDone > 1 ? "s" : ""} hecha${oldDone > 1 ? "s" : ""} hace más de ${pl(keep, "día", "días")} no se muestra${oldDone > 1 ? "n" : ""}.`}
     <button class="btn sm ghost" onclick="ui.showOldDone=!ui.showOldDone;render()">${ui.showOldDone ? "Ocultar hechas antiguas" : "Mostrar hechas antiguas"}</button></p>`;
   return h;
 }
@@ -3330,20 +3332,21 @@ function viewSubjects() {
       <span class="iconchip" style="background:${s.color}">${esc(s.icon || s.short)}</span>
       <div style="flex:1;min-width:0;cursor:pointer" onclick="go('subject','${s.id}')">
         <div style="font-weight:600;font-size:.86rem">${esc(s.name)}</div>
-        <div class="tiny">${esc(s.short)} · ${pend} pendientes · ${fmtMin(min)} estudiadas</div></div>
-      <button class="btn sm ghost" title="Subir" onclick="moveSubject('${s.id}',-1)" ${i === 0 ? "disabled" : ""}>↑</button>
-      <button class="btn sm ghost" title="Bajar" onclick="moveSubject('${s.id}',1)" ${i === act.length - 1 ? "disabled" : ""}>↓</button>
-      <button class="btn sm" onclick="openSubjectEditor('${s.id}')">Editar</button>
-      <button class="btn sm" onclick="archiveSubject('${s.id}')">Archivar</button>
+        <div class="tiny">${esc(s.short)} · ${pl(pend, "pendiente", "pendientes")} · ${fmtMin(min)} estudiadas</div></div>
+      <div class="subacts">
+        <button class="btn sm ghost" title="Subir" aria-label="Subir" onclick="moveSubject('${s.id}',-1)" ${i === 0 ? "disabled" : ""}>↑</button>
+        <button class="btn sm ghost" title="Bajar" aria-label="Bajar" onclick="moveSubject('${s.id}',1)" ${i === act.length - 1 ? "disabled" : ""}>↓</button>
+        <button class="btn sm" onclick="openSubjectEditor('${s.id}')">Editar</button>
+        <button class="btn sm" onclick="archiveSubject('${s.id}')">Archivar</button></div>
     </div>`;
   }).join("") : '<div class="empty">No hay materias activas.</div>';
   h += "</div>";
   if (arch.length) {
     h += `<div class="card"><h3>Archivadas</h3>` + arch.map(s => `<div class="subrow">
       <span class="iconchip" style="background:${s.color};opacity:.5">${esc(s.icon || s.short)}</span>
-      <div style="flex:1"><div style="font-weight:600;font-size:.86rem;color:var(--tx3)">${esc(s.name)}</div></div>
-      <button class="btn sm" onclick="archiveSubject('${s.id}')">Reactivar</button>
-      <button class="btn sm danger" onclick="deleteSubject('${s.id}')">Eliminar</button></div>`).join("") + "</div>";
+      <div style="flex:1;min-width:0"><div style="font-weight:600;font-size:.86rem;color:var(--tx3)">${esc(s.name)}</div></div>
+      <div class="subacts"><button class="btn sm" onclick="archiveSubject('${s.id}')">Reactivar</button>
+      <button class="btn sm danger" onclick="deleteSubject('${s.id}')">Eliminar</button></div></div>`).join("") + "</div>";
   }
   return h;
 }
@@ -3558,7 +3561,7 @@ function viewPlans() {
     h += `<div class="card"><h3 style="cursor:pointer" onclick="go('eval','${e.id}')">${esc(e.name)}<div class="grow"></div>
       <span class="tiny">${fmtD(e.date)} · ${daysTo(e.date) >= 0 ? fmtRel(e.date) : "pasado"}</span></h3>
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px"><div class="pbar"><i style="width:${pct}%"></i></div><span class="tiny">${done}/${plan.length}</span></div>
-      <div class="tiny">${fmtMin(pend)} pendientes${late ? ` · <span style="color:var(--bad)">${late} atrasadas</span>` : ""}</div>
+      <div class="tiny">${fmtMin(pend)} pendientes${late ? ` · <span style="color:var(--bad)">${pl(late, "atrasada", "atrasadas")}</span>` : ""}</div>
       <div style="display:flex;gap:8px;margin-top:10px">
         <button class="btn sm" onclick="go('eval','${e.id}')">Abrir</button>
         <button class="btn sm" onclick="replanPending('${e.id}')">Replanificar pendientes</button>
@@ -4114,7 +4117,7 @@ function viewStats() {
     ${p.subjects.length ? p.subjects.map(x => `<div class="pg-srow" onclick="go('subject','${x.s.id}')">
       <div class="pg-row"><span class="pg-sname"><i class="pg-sdot" style="background:${x.s.color}"></i>${esc(x.s.name)}</span><b>${x.min ? fmtMin(x.min) : "—"}</b></div>
       <div class="pg-strack"><i style="width:${Math.round(x.min / maxS * 100)}%;background:${x.s.color}"></i></div>
-      ${x.next ? `<div class="tiny" style="color:${x.nextDays <= 14 && x.min < 120 ? "var(--warn)" : "var(--tx3)"}">${esc(x.next.name)} en ${x.nextDays} día${x.nextDays === 1 ? "" : "s"}${x.nextDays <= 14 && x.min < 120 ? " · le estás dando poco" : ""}</div>` : ""}</div>`).join("")
+      ${x.next ? `<div class="tiny" style="color:${x.nextDays <= 14 && x.min < 120 ? "var(--warn)" : "var(--tx3)"}">${esc(x.next.name)} ${whenTxt(x.nextDays)}${x.nextDays <= 14 && x.min < 120 ? " · le estás dando poco" : ""}</div>` : ""}</div>`).join("")
     : `<div class="pg-sub">Cuando registres tiempo de estudio, acá vas a ver cuánto le das a cada materia.</div>`}</section>`;
   // 5 · constancia
   h += `<section class="card pg-card pg-streak"><div class="pg-q">¿Soy constante?</div>
@@ -4193,7 +4196,7 @@ function viewStatsDetail() {
     h += `<div class="grid2"><div class="card" style="margin:0"><h3>Precisión de tus estimaciones</h3>
       <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
         <div style="width:118px">${chartRing(clamp(100 - Math.abs(1 - ratio) * 100, 0, 100), C, 118, ratio > 1.15 ? C.bad : ratio < .85 ? C.warn : C.ok, Math.round(ratio * 100) + "%", "real/est")}</div>
-        <div style="flex:1;min-width:180px"><p class="muted" style="line-height:1.6">Sobre ${st.timed.length} tareas con tiempo real cargado: estimaste <b>${hClock(st.estSum)}</b> y te llevó <b>${hClock(st.realSum)}</b>.<br>
+        <div style="flex:1;min-width:180px"><p class="muted" style="line-height:1.6">Sobre ${pl(st.timed.length, "tarea", "tareas")} con tiempo real cargado: estimaste <b>${hClock(st.estSum)}</b> y te llevó <b>${hClock(st.realSum)}</b>.<br>
         ${ratio > 1.08 ? "Tendés a <b style='color:var(--bad)'>subestimar</b>: sumale un " + Math.round((ratio - 1) * 100) + "% a lo que calculás." : ratio < .92 ? "Tendés a <b style='color:var(--warn)'>sobreestimar</b>: te sobra un " + Math.round((1 - ratio) * 100) + "% del tiempo que reservás." : "Tus estimaciones son <b style='color:var(--ok)'>muy precisas</b>. Seguí planificando así."}</p></div>
       </div></div>`;
     h += cmpItems.length ? `<div class="card" style="margin:0"><h3>Estimado vs real por materia</h3>${chartDual(cmpItems, C, 430, 210)}</div>` : `<div class="card" style="margin:0"><h3>Estimado vs real por materia</h3><div class="empty">Cargá el tiempo real al completar tareas para ver esta comparación.</div></div>`;
@@ -4220,7 +4223,7 @@ function viewStatsDetail() {
 function buildInsights(st, C) {
   const out = [];
   if (!st.total) return ["Todavía no hay tiempo registrado en este período. Registrá tiempo o completá tareas cargando cuánto te llevaron."];
-  out.push(`Estudiaste <b>${hClock(st.total)}</b> en ${st.activeDays} de ${st.elapsed.length} días (${st.coverage}% de constancia), con un promedio de <b>${hClock(st.avgActive)}</b> los días que te sentaste a estudiar.`);
+  out.push(`Estudiaste <b>${hClock(st.total)}</b> en ${st.activeDays} de ${pl(st.elapsed.length, "día", "días")} (${st.coverage}% de constancia), con un promedio de <b>${hClock(st.avgActive)}</b> los días que te sentaste a estudiar.`);
   const bd = st.dow.map((x, i) => ({ i, avg: x.n ? x.min / x.n : 0 })).sort((a, b) => b.avg - a.avg);
   if (bd[0].avg > 0) {
     const worst = bd.filter(x => x.avg > 0).slice(-1)[0];
@@ -4249,8 +4252,8 @@ function buildInsights(st, C) {
       : `Bajaste un <b style="color:var(--bad)">${p}%</b> respecto del período anterior (${hClock(st.prevTotal)} → ${hClock(st.total)}).`);
   }
   if (st.streak >= 3) out.push(`Llevás <b>${st.streak} días seguidos</b> estudiando${st.streak >= st.bestStreak ? " — es tu mejor racha histórica." : ` (tu récord es ${st.bestStreak}).`}`);
-  if (st.overdue) out.push(`Tenés <b style="color:var(--bad)">${st.overdue} tareas atrasadas</b>: conviene replanificarlas antes de que se acumulen.`);
-  if (st.gradeAvg !== null) out.push(`Tu promedio de notas cargadas es <b>${st.gradeAvg}</b> sobre ${st.graded.length} evaluaciones.`);
+  if (st.overdue) out.push(`Tenés <b style="color:var(--bad)">${pl(st.overdue, "tarea atrasada", "tareas atrasadas")}</b>: conviene replanificarlas antes de que se acumulen.`);
+  if (st.gradeAvg !== null) out.push(`Tu promedio de notas cargadas es <b>${st.gradeAvg}</b> sobre ${pl(st.graded.length, "evaluación", "evaluaciones")}.`);
   return out;
 }
 
@@ -4594,7 +4597,7 @@ function importJSON(ev) {
     const box = byId("confirmbox"), bg = byId("confirmbg");
     bg.classList.add("open");
     box.innerHTML = `<h3>Importar datos</h3>
-      <p class="muted">Archivo válido: ${s.tasks.length} tareas, ${s.subjects.length} materias, ${(s.evals || []).length} evaluaciones, ${(s.notes || []).length} notas.</p>
+      <p class="muted">Archivo válido: ${pl(s.tasks.length, "tarea", "tareas")}, ${pl(s.subjects.length, "materia", "materias")}, ${pl((s.evals || []).length, "evaluación", "evaluaciones")}, ${pl((s.notes || []).length, "nota", "notas")}.</p>
       <p class="muted" style="margin-top:8px">¿Cómo querés aplicarlo?</p>
       <div class="mfoot"><button class="btn" onclick="closeConfirm()">Cancelar</button>
       <button class="btn" id="impMerge">Fusionar</button>
@@ -5323,7 +5326,7 @@ function openPlanWizard(evId) {
   const e = evalById(evId); if (!e) return;
   const existing = evalPlanTasks(evId).filter(t => t.status !== "done").length;
   openModal(`<h3>Generar plan de estudio — ${esc(e.name)}</h3>
-    <p class="tiny">${e.topics.length} temas cargados · examen el ${fmtD(e.date)} (${fmtRel(e.date)}) · ${e.reviewDays || 0} días finales de repaso${existing ? ` · <b style="color:var(--warn)">hay ${existing} tareas pendientes de un plan anterior</b>` : ""}</p>
+    <p class="tiny">${pl(e.topics.length, "tema cargado", "temas cargados")} · examen el ${fmtD(e.date)} (${fmtRel(e.date)}) · ${pl(e.reviewDays || 0, "día final", "días finales")} de repaso${existing ? ` · <b style="color:var(--warn)">hay ${pl(existing, "tarea pendiente", "tareas pendientes")} de un plan anterior</b>` : ""}</p>
     ${e.topics.length === 0 ? '<p class="muted" style="margin-top:8px;color:var(--warn)">No cargaste temas: el plan solo tendrá días de repaso y simulacros.</p>' : ""}
     <div class="mrow">
       <div><label for="pw_start">Empezar el</label><input id="pw_start" type="date" value="${todayISO()}"></div>

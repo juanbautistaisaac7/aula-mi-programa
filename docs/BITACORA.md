@@ -6,6 +6,24 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
+## Corrida 02:06–02:30 (hora ARG) — L1a2 (revisor automático de textos)
+
+**Plan:** seguía L1a2. Era lo siguiente pendiente antes de G2, y además sirve para todo lo que viene: es un test que recorre la app entera buscando textos rotos, así que cada ítem nuevo (G2, E1, F1) queda revisado gratis.
+**Decisiones:**
+- **Un solo recorredor, muchos estados.** `tests/revisor.spec.js` siembra 9 estados (el fixture, vacío, una materia, 200 tareas, títulos larguísimos, tres parciales en dos días, tareas de 0 min, todo hecho y todo atrasado a las 00:40 de la noche) y en cada uno, en desktop y celu, visita las 16 vistas, el detalle de **cada** materia, parcial y proyecto, y 20 modales (editar tarea, mover, plan, serie, años, informe…). Son 18 tests de ~5 s cada uno: la suite tarda ~1 min más (3,4 → 4,5 min). Me pareció un precio razonable; descarté recorrer todos los modales de todas las tareas porque multiplicaba el tiempo sin encontrar cosas distintas.
+- **Qué busca:** `NaN`, `undefined`, `null`, `Invalid Date`, `[object`, plurales mal ("1 tareas", "1 días"… con una lista de palabras; "11 tareas" o "1/3 tareas" no cuentan), "en 0 días"/"hace 0 días", tiempos negativos, la página corriéndose de costado y elementos que se salen del ancho (salvo los que están dentro de algo que recorta a propósito, como los "…"). También revisa lo escrito en los campos.
+- **Un test del propio revisor:** le inyecto un HTML lleno de errores y verifico que los detecta todos, y que textos correctos ("1 día", "11 días", "3-5 días") no los marca. Sin esto, un revisor que no encuentra nada podría estar ciego.
+- **Helper `pl(n, "tarea", "tareas")`** para los plurales. Además de lo que encontró el revisor, busqué en el código todos los `${n} tareas/días/…` y los pasé a `pl()` (Lista completa, Series, Progreso, Importar copia).
+**Hallazgos (todos arreglados, detalle en `docs/AUDITORIA.md` #8–#13):** "1 pendientes" en Inicio y Materias; "hay 1 tareas pendientes de un plan anterior" en el generador de planes; "1 atrasadas" en Planes; en Progreso "Parcial **en 0 días** · le estás dando poco" cuando el parcial es hoy (ahora "hoy"/"mañana"). Y uno que el revisor **no** podía ver, pero que vi en su captura: **Materias en el celu** tenía los 4 botones al lado del nombre y lo apretaban a una palabra por renglón ("Probabilidad / y / Estadística", el subtítulo en 4 renglones). Ahora el nombre y los datos ocupan un renglón y los botones van debajo, de 40 px de alto, Editar y Archivar más anchos. En la compu no cambia nada.
+**Salió bien:** la primera pasada del revisor falló en 14 de los 18 tests, todos por plurales y el "en 0 días". No encontró `NaN`/`undefined` ni cosas que se salgan de la pantalla en ningún estado, ni con títulos de 150 letras: buena señal para la base.
+**Salió mal / intentos fallidos:** el test de Materias falló de entrada por culpa del test: medía el bloque nombre+subtítulo (2 renglones) en vez del nombre. Corregido el selector, pasa con el arreglo y falla en el celu sin él (lo comprobé sacando el arreglo).
+**Tests:** +19 (×2 proyectos, 9 estados + 1 del revisor + 1 de Materias). `npm test`: **283 pasaron, 0 fallaron** (31 saltados a propósito, como antes).
+**Capturas:** [Materias, celu oscuro](capturas/L1a2-subjects-mobile-dark.png) · [Materias, celu claro](capturas/L1a2-subjects-mobile-light.png) · [Materias, desktop claro](capturas/L1a2-subjects-desktop-light.png) · [plan, celu oscuro](capturas/L1a2-plan-mobile-dark.png) · [plan, desktop claro](capturas/L1a2-plan-desktop-light.png)
+**Commits:** `test(revisor): L1a2 ...` (este).
+**Para Bauti:** fijate Materias en el celu. Si preferís que los botones ↑ ↓ / Editar / Archivar estén escondidos (por ejemplo, detrás de un "Editar lista", como en iOS), es un cambio chico: avisá.
+
+---
+
 ## Corrida 01:06–01:49 (hora ARG) — G1 (años de cursado) y L1a1 (parciales el mismo día)
 
 **Resumen de la corrida:** hice **G1 completo**: cada año de cursado es un espacio aparte, con selector en el menú, asistente para crear el año nuevo y aviso cuando estás mirando un año anterior. **Cambia la forma de los datos (esquema 5)**, con copia previa automática y tests con el fixture elemento por elemento. Versión 2.33.0 → 2.35.0. Tests: de 240 a 261 pasados, 0 fallados (255 al cerrar G1). Además, **L1a1**: tu caso de los dos parciales el mismo día.

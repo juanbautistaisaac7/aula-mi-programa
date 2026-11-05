@@ -562,6 +562,9 @@ svg text{user-select:none}
 kbd{background:var(--card2);border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;padding:1px 6px;font-size:.7rem;font-family:inherit;font-weight:600}
 .subrow{display:flex;align-items:center;gap:10px;padding:9px 8px;border-radius:8px}
 .subrow:hover{background:var(--hover)}
+.subacts{display:flex;align-items:center;gap:6px;flex-shrink:0}
+/* L1a2: en el celu los botones van en un renglón propio, debajo del nombre (antes apretaban el nombre a una palabra por renglón) */
+@media(max-width:600px){.subrow{flex-wrap:wrap;row-gap:8px}.subacts{width:100%;padding-left:40px}.subacts .btn{min-height:40px;min-width:44px}.subacts .btn:not(.ghost){flex:1}}
 .iconchip{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:.72rem;color:#fff;flex-shrink:0}
 footer{text-align:center;margin-top:30px;color:var(--tx3);font-size:.7rem}
 @media(max-width:700px){
