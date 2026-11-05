@@ -285,6 +285,21 @@ body.selbar-on #main{padding-bottom:230px}
 .occ .occm{font-variant-numeric:tabular-nums;font-weight:600;min-width:62px;text-align:right;white-space:nowrap}
 .srbulk{margin-top:12px}
 .srbulk .mrow>div.srx{flex:1}
+/* E1a2 · Avisarme */
+.remfield{margin-top:6px}
+.remchips,.remadds{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.remadds{margin-top:8px}
+.remchip{display:inline-flex;align-items:center;gap:2px;min-height:36px;padding:0 4px 0 12px;border-radius:999px;background:var(--acc-soft);color:var(--acc);font-size:.8rem;font-weight:600;font-variant-numeric:tabular-nums}
+.remchip button{width:32px;height:32px;border:none;background:none;color:inherit;font-size:1.05rem;line-height:1;border-radius:50%;cursor:pointer;opacity:.7;transition:background-color .15s,opacity .15s}
+.remchip button:hover,.remchip button:focus-visible{opacity:1;background:color-mix(in srgb,var(--acc) 14%,transparent)}
+.remadd{min-height:36px;padding:0 12px;border-radius:999px;border:1px dashed var(--line);background:none;color:var(--tx2);font:inherit;font-size:.78rem;cursor:pointer;font-variant-numeric:tabular-nums;transition:background-color .15s,border-color .15s,color .15s}
+.remadd:hover,.remadd:focus-visible{border-color:var(--acc);color:var(--acc)}
+.remnote{font-size:.78rem;color:var(--tx3);margin:0}
+.remcustom{display:inline-flex;gap:6px;align-items:center}
+.remcustom input{width:72px}
+.remcustom select{width:auto}
+@media (pointer:coarse){.remchip,.remadd{min-height:44px}.remchip button{width:40px;height:40px}}
+@media (prefers-reduced-motion:reduce){.remchip button,.remadd{transition:none}}
 .srchips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
 .srchips .btn{min-height:32px;font-variant-numeric:tabular-nums}
 .srapply{width:100%;margin-top:10px;min-height:44px;font-size:.85rem}

@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.40.0";
+const APP_VERSION = "2.41.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -1813,6 +1813,8 @@ function saveEvalFromModal(id) {
     subjectId: linkVal.startsWith("s:") ? linkVal.slice(2) : null,
     projectId: linkVal.startsWith("p:") ? linkVal.slice(2) : null
   };
+  const rem = remValue("ev_rem");
+  if (rem !== undefined) data.reminders = rem;
   if (id) { Object.assign(evalById(id), data); toast("Evaluación actualizada"); change(); closeModal(); render(); }
   else {
     const ev = Object.assign({ id: uid(), topics: [], createdAt: todayISO() }, data);
@@ -2121,16 +2123,91 @@ function reminderTimes(x, kind) {
   return remindersOf(x, kind).map(r => ({ at: base.getTime() - reminderOffsetMin(r) * 60000, r })).sort((a, b) => a.at - b.at);
 }
 
+/* ---------- E1a2 · "Avisarme": el control de recordatorios ----------
+   Lo usan el editor de tarea (te_rem), el de parcial (ev_rem) y Configuración
+   (cfg_rem_eval / cfg_rem_task). El estado vive en ui.rem[id] mientras el editor está
+   abierto; "touched" dice si lo tocaste: si no, al guardar no se escribe nada (un
+   parcial sin lista propia sigue usando los de Configuración y la sync no ve cambios). */
+const REM_PRESETS = {
+  task: [{ amount: 10, unit: "min" }, { amount: 30, unit: "min" }, { amount: 1, unit: "h" }, { amount: 1, unit: "d" }],
+  eval: [{ amount: 2, unit: "h" }, { amount: 1, unit: "d" }, { amount: 3, unit: "d" }, { amount: 7, unit: "d" }]
+};
+function remShort(r) { return reminderLabel(r).replace(/ antes$/, ""); }
+function remFieldHTML(id, kind, x, opts = {}) {
+  const own = x && Array.isArray(x.reminders);
+  ui.rem = ui.rem || {};
+  ui.rem[id] = { kind, cfg: !!opts.cfg, inherit: !opts.cfg && !own, touched: false,
+    orig: own ? normReminders(x.reminders) : undefined,
+    list: opts.cfg ? normReminders(opts.list) : remindersOf(x, kind), other: false };
+  return `<div class="remfield" id="${id}">${remInner(id)}</div>`;
+}
+/* Por qué no se puede avisar (tarea sin fecha u hora), o "" si se puede. */
+function remBlocked(id) {
+  if (id !== "te_rem") return "";
+  const d = byId("te_date"), t = byId("te_time");
+  if (!d || !t) return "";
+  if (hmToMin(t.value) == null) return "Poné una hora para que te pueda avisar.";
+  if (!d.value) return "Poné una fecha para que te pueda avisar.";
+  return "";
+}
+function remInner(id) {
+  const st = ui.rem[id], blocked = remBlocked(id);
+  if (blocked) return `<p class="remnote">${blocked}</p>`;
+  const keys = new Set(st.list.map(reminderOffsetMin));
+  const chipsH = st.list.map((r, i) => `<span class="remchip"><span class="remlbl">${esc(reminderLabel(r))}</span><button type="button" aria-label="Quitar ${escA(reminderLabel(r))}" onclick="remDel('${id}',${i})">×</button></span>`).join("");
+  const note = !st.list.length ? "Sin avisos" : st.inherit ? "Como en Configuración" : "";
+  const adds = REM_PRESETS[st.kind].filter(r => !keys.has(reminderOffsetMin(r)))
+    .map(r => `<button type="button" class="remadd" onclick="remAdd('${id}',${r.amount},'${r.unit}')">+ ${esc(remShort(r))}</button>`).join("");
+  const other = st.other
+    ? `<span class="remcustom"><input id="${id}_n" type="number" min="1" max="999" value="15" aria-label="Cantidad" onkeydown="if(event.key==='Enter'){event.preventDefault();remAddOther('${id}')}">
+        <select id="${id}_u" aria-label="Unidad"><option value="min">min</option><option value="h">h</option><option value="d">días</option></select>
+        <button type="button" class="btn sm primary" id="${id}_ok" onclick="remAddOther('${id}')">Agregar</button></span>`
+    : `<button type="button" class="remadd remother" onclick="remOther('${id}')">Otro…</button>`;
+  return `<div class="remchips">${chipsH}${note ? `<span class="remnote">${note}</span>` : ""}</div>
+    <div class="remadds">${adds}${other}</div>`;
+}
+function remRedraw(id) { const el = byId(id); if (el && ui.rem && ui.rem[id]) el.innerHTML = remInner(id); }
+function remSet(id, list) {
+  const st = ui.rem[id]; if (!st) return;
+  st.list = normReminders(list); st.inherit = false; st.touched = true;
+  if (st.cfg) {
+    const d = state.settings.reminderDefaults = state.settings.reminderDefaults || defaultReminderDefaults();
+    d[st.kind] = st.list.map(r => ({ ...r })); change();
+  }
+  remRedraw(id);
+}
+function remDel(id, i) { const st = ui.rem[id]; if (!st) return; remSet(id, st.list.filter((_, j) => j !== i)); }
+function remAdd(id, amount, unit) { const st = ui.rem[id]; if (!st) return; remSet(id, [...st.list, { amount, unit }]); }
+function remOther(id) { const st = ui.rem[id]; if (!st) return; st.other = true; remRedraw(id); const n = byId(id + "_n"); if (n) { n.focus(); n.select(); } }
+function remAddOther(id) {
+  const st = ui.rem[id]; if (!st) return;
+  const amount = parseInt((byId(id + "_n") || {}).value, 10), unit = (byId(id + "_u") || {}).value;
+  if (!(amount > 0 && amount <= 999)) { toast("Poné un número entre 1 y 999"); return; }
+  st.other = false; remAdd(id, amount, unit);
+}
+/* Lo que hay que guardar: la lista si la tocaste; si no, lo que tenía (puede ser undefined). */
+function remValue(id) { const st = ui.rem && ui.rem[id]; return !st ? undefined : st.touched ? st.list.map(r => ({ ...r })) : st.orig; }
+
 /* ======================== NOTIFICACIONES ======================== */
 function checkReminders() {
   if (!state.settings.notif || typeof Notification === "undefined" || Notification.permission !== "granted") return;
   const today = todayISO();
   const notified = state.meta.notified = state.meta.notified || {};
   const fire = (key, msg) => { if (notified[key] === today) return; notified[key] = today; try { new Notification("Aula", { body: msg }); } catch (e) {} };
-  for (const e of upcomingEvals(state.settings.upcomingDays)) {
-    const n = daysTo(e.date);
-    if (n <= state.settings.upcomingDays) fire("ev-" + e.id, e.name + " — " + (n === 0 ? "es hoy" : n === 1 ? "es mañana" : "en " + n + " días"));
-  }
+  // E1a2: los parciales y las tareas con hora avisan según sus "Avisarme" (los parciales
+  // sin lista propia usan los de Configuración: 7 y 1 día antes). Suena una sola vez,
+  // si la app está abierta dentro de las 12 h siguientes a la hora del aviso.
+  const now = Date.now(), WIN = 12 * 3600e3;
+  const due = (x, kind, id, text) => {
+    for (const { at, r } of reminderTimes(x, kind)) {
+      if (at > now || now - at > WIN) continue;
+      const key = "rem-" + id + "-" + reminderOffsetMin(r) + "-" + x.date + "-" + (x.time || "");
+      if (notified[key]) continue;
+      notified[key] = today; try { new Notification("Aula", { body: text + " · en " + remShort(r) }); } catch (e) {}
+    }
+  };
+  for (const e of state.evals) if (!EV_CLOSED.includes(e.status)) due(e, "eval", e.id, e.name);
+  for (const t of state.tasks) if (!t.archived && !t.recur && t.status !== "done" && t.status !== "canc") due(t, "task", t.id, t.title.slice(0, 60));
   for (const t of state.tasks) {
     if (t.archived || t.recur || t.status === "done" || t.status === "canc") continue;
     if (t.due === today) fire("due-" + t.id, "Vence hoy: " + t.title.slice(0, 60));
@@ -4934,6 +5011,13 @@ function viewConfig() {
     <label class="tiny" style="font-weight:700">Días considerados “próximos”</label>
     <input type="number" min="1" max="30" value="${st.upcomingDays}" onchange="state.settings.upcomingDays=parseInt(this.value)||7;change();render()" style="width:90px;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:7px;margin-top:4px" aria-label="Días próximos">
   </div>
+  <div class="card" style="margin:0"><h3>Avisos por defecto</h3>
+    <label class="tiny" style="font-weight:700;display:block">Parciales y finales</label>
+    ${remFieldHTML("cfg_rem_eval", "eval", null, { cfg: true, list: (st.reminderDefaults || {}).eval })}
+    <label class="tiny" style="font-weight:700;display:block;margin-top:12px">Tareas con hora</label>
+    ${remFieldHTML("cfg_rem_task", "task", null, { cfg: true, list: (st.reminderDefaults || {}).task })}
+    <p class="tiny" style="margin-top:10px">Cada parcial o tarea puede tener los suyos desde su editor, en “Avisarme”. Por ahora suenan con Aula abierta y las notificaciones activadas; que lleguen con la app cerrada es el próximo paso.</p>
+  </div>
   <div class="card" style="margin:0"><h3>Preferencias</h3>
     <label class="tiny" style="font-weight:700;display:block">Primer día de la semana</label>
     <div style="display:flex;gap:8px;margin-top:6px">
@@ -5337,9 +5421,10 @@ function openTaskEditor(id) {
       <div><label for="te_eval">Parcial / final</label><select id="te_eval" onchange="evalPicked('te_link','te_eval')">${evalOptions(sel, t.evalId)}</select></div>
     </div>
     <div class="mrow">
-      <div><label for="te_date">Fecha programada</label><input id="te_date" type="date" value="${t.date || ""}"></div>
-      <div><label for="te_time">Hora</label><input id="te_time" type="time" value="${t.time || ""}"></div>
+      <div><label for="te_date">Fecha programada</label><input id="te_date" type="date" value="${t.date || ""}" onchange="remRedraw('te_rem')"></div>
+      <div><label for="te_time">Hora</label><input id="te_time" type="time" value="${t.time || ""}" oninput="remRedraw('te_rem')" onchange="remRedraw('te_rem')"></div>
     </div>
+    <label>Avisarme</label>${remFieldHTML("te_rem", "task", t)}
     <div class="mrow">
       <div><label for="te_due">Fecha límite</label><input id="te_due" type="date" value="${t.due || ""}"></div>
       <div><label for="te_min">Estimado (min)</label><input id="te_min" type="number" value="${t.estMin || 0}" min="0" step="5"></div>
@@ -5382,7 +5467,7 @@ function openTaskEditor(id) {
       <div class="grow"></div>
       <button class="btn" onclick="closeModal()">Cancelar</button>
       <button class="btn primary" onclick="saveTaskEditor('${t.id}')">Guardar</button></div>`, true);
-  renderTaskEditorSubtasks(t);
+  renderTaskEditorSubtasks(t); remRedraw("te_rem");
   ui.editingComment = null; renderTaskComments(t);
   ui.teInit = { id, v: editorSharedValues() };
 }
@@ -5456,7 +5541,8 @@ function removeSubtask(taskId, stId) {
    Calendario del iPhone. Fecha, estado, notas y comentarios son siempre de esta. */
 const SERIES_SHARED = [
   ["title", "título"], ["desc", "descripción"], ["subjectId", "materia"], ["projectId", "proyecto"], ["evalId", "parcial"],
-  ["estMin", "minutos"], ["time", "hora"], ["prio", "prioridad"], ["type", "tipo"], ["tags", "etiquetas"]
+  ["estMin", "minutos"], ["time", "hora"], ["prio", "prioridad"], ["type", "tipo"], ["tags", "etiquetas"],
+  ["reminders", "avisos"]
 ];
 function editorSharedValues() {
   const link = byId("te_link").value, tm = byId("te_time").value;
@@ -5465,7 +5551,8 @@ function editorSharedValues() {
     subjectId: link.startsWith("s:") ? link.slice(2) : null, projectId: link.startsWith("p:") ? link.slice(2) : null,
     evalId: byId("te_eval").value || null, estMin: parseInt(byId("te_min").value) || 0,
     time: hmToMin(tm) != null ? tm : null, prio: parseInt(byId("te_prio").value), type: byId("te_type").value,
-    tags: byId("te_tags").value.split(",").map(x => x.trim().replace(/^#/, "")).filter(Boolean)
+    tags: byId("te_tags").value.split(",").map(x => x.trim().replace(/^#/, "")).filter(Boolean),
+    reminders: remValue("te_rem")
   };
 }
 function saveTaskEditor(id, scope) {
@@ -5531,6 +5618,8 @@ function saveTaskEditor(id, scope) {
   t.type = byId("te_type").value;
   t.tags = byId("te_tags").value.split(",").map(x => x.trim().replace(/^#/, "")).filter(Boolean);
   t.notes = byId("te_notes").value;
+  const rem = remValue("te_rem");
+  if (rem !== undefined) t.reminders = rem;
   const rk = byId("te_rec").value;
   if (rk) {
     t.recur = { kind: rk, days: [...document.querySelectorAll(".te_day:checked")].map(x => parseInt(x.value)), n: parseInt((byId("te_n") || {}).value) || 2, start: t.date || todayISO() };
@@ -5590,6 +5679,7 @@ function openEvalEditor(id, presetLink) {
       <div><label for="ev_time">Hora (opcional)</label><input id="ev_time" type="time" value="${e ? (e.time || "") : ""}"></div>
       <div><label for="ev_rev">Días de repaso</label><input id="ev_rev" type="number" min="0" max="14" value="${e ? (e.reviewDays || 0) : 2}"></div>
     </div>
+    <label>Avisarme</label>${remFieldHTML("ev_rem", "eval", e)}
     <div class="mrow">
       <div><label for="ev_mode">Modalidad</label><input id="ev_mode" value="${e ? escA(e.mode || "") : ""}" placeholder="Presencial / Virtual"></div>
       <div><label for="ev_place">Lugar o enlace</label><input id="ev_place" value="${e ? escA(e.place || "") : ""}"></div>
