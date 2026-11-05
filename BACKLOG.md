@@ -168,7 +168,7 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
   - Paso a paso para Bauti en `docs/RESUMEN-NOCHE.md` y en la propia pantalla de Configuración: crear KV, vincularlo, redeploy, activar en la compu, escanear desde el celu.
   - Bitácora explicando la decisión (por qué no Firebase/Supabase: requieren que Bauti cree cuenta y proyecto y meter claves; Cloudflare ya lo tiene).
 
-- [ ] **G1 · Años de cursado: un espacio nuevo por año** *(grande, toca el modelo: partirlo; datos sagrados)*
+- [x] **G1 · Años de cursado: un espacio nuevo por año** *(grande, toca el modelo: partirlo; datos sagrados)* — hecho en una corrida (esquema 5, Aula 2.34): `state.years`, lo que no tiene `yearId` es del primer año, en memoria solo lo del año que se ve (`fullState()` junta todo para guardar/sincronizar).
   Pedido: *"esta app la quiero seguir usando el año que viene y todos los que me queden de facultad así que habrá que tener una forma de dividir el año ... y también separar por año osea que se cree como un nuevo espacio de trabajo totalmente nuevo para 4to yo poder crearlo"*.
   Listo cuando:
   - Existe el concepto **año / ciclo** (ej. "3.º año · 2026", "4.º año · 2027"): nombre, fechas de inicio y fin. Migración: todo lo actual pasa al primer ciclo ("3.º año · 2026" o "Año 2026" si no se sabe; editable), con copia previa.

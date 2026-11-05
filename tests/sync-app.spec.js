@@ -139,4 +139,31 @@ test.describe("sincronización entre dos dispositivos", () => {
     expect(A.errors.filter(e => !e.includes("503"))).toEqual([]);
     await A.ctx.close();
   });
+  test("G1 · años: el año nuevo llega al otro dispositivo, cada uno ve el suyo y nada se mezcla ni se borra", async ({ browser }) => {
+    const server = { env: { AULA_KV: fakeKV() } };
+    const A = await device(browser, server), B = await device(browser, server);
+    await A.page.evaluate(() => { quickAddTask({ title: "Del 3.º", date: todayISO() }); change(); });
+    await A.page.evaluate(k => syncConnect(k), KEY); await expect.poll(() => status(A.page)).toBe("ok");
+    await B.page.evaluate(k => syncConnect(k), KEY); await expect.poll(() => status(B.page)).toBe("ok");
+    // A crea el 4.º año y agrega una tarea ahí
+    await A.page.evaluate(() => { createYear({ name: "4.º año · 2027", start: "2027-03-01", end: "2028-02-29", subjects: [] }); quickAddTask({ title: "Del 4.º", date: todayISO() }); change(); });
+    await sync(A.page); await sync(B.page);
+    // B no había elegido año: pasa a ver el más nuevo, con lo suyo
+    expect(await B.page.evaluate(() => [state.years.length, activeYear().name])).toEqual([2, "4.º año · 2027"]);
+    expect(await titles(B.page)).toEqual(["Del 4.º"]);
+    // B mira el 3.º y edita algo ahí; A sigue en el 4.º
+    await B.page.evaluate(() => { setActiveYear("y0"); state.tasks.find(t => t.title === "Del 3.º").estMin = 50; change(); });
+    await sync(B.page); await sync(A.page); await sync(B.page);
+    expect(await titles(A.page)).toEqual(["Del 4.º"]);
+    expect(await titles(B.page)).toEqual(["Del 3.º"]);
+    expect(await A.page.evaluate(() => fullState().tasks.find(t => t.title === "Del 3.º").estMin)).toBe(50);
+    expect(await A.page.evaluate(() => Object.keys(state.sync.tombs).filter(k => !k.startsWith("subjects:")).length)).toBe(0); // las 10 materias de ejemplo duplicadas sí dejan lápida (S1b)
+    expect(await B.page.evaluate(() => Object.keys(state.sync.tombs).filter(k => !k.startsWith("subjects:")).length)).toBe(0); // las 10 materias de ejemplo duplicadas sí dejan lápida (S1b)
+    // otra vuelta no sube nada (los dos tienen lo mismo aunque vean años distintos)
+    const puts = A.net.puts + B.net.puts;
+    await sync(A.page); await sync(B.page);
+    expect(A.net.puts + B.net.puts).toBe(puts);
+    expect([...A.errors, ...B.errors]).toEqual([]);
+    await A.ctx.close(); await B.ctx.close();
+  });
 });

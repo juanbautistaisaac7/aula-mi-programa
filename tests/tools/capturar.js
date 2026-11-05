@@ -16,7 +16,7 @@ const out = path.join(__dirname, "..", "..", "docs", "capturas");
       const ctx = await browser.newContext({ ...opts, colorScheme: theme, timezoneId: "America/Argentina/Buenos_Aires", locale: "es-AR", serviceWorkers: "block" });
       const page = await ctx.newPage();
       await page.clock.install({ time: new Date(process.env.CLOCK || "2026-11-04T11:00:00-03:00") });
-      await page.goto("http://localhost:4173/manifest.webmanifest");
+      await page.goto("http://localhost:" + (process.env.PORT || 4173) + "/manifest.webmanifest");
       await page.evaluate(async ([json, theme]) => {
         const s = JSON.parse(json); s.settings.theme = theme; json = JSON.stringify(s);
         await new Promise((res, rej) => { const rq = indexedDB.open("aula-db", 1);
@@ -24,7 +24,7 @@ const out = path.join(__dirname, "..", "..", "docs", "capturas");
           rq.onsuccess = () => { const tx = rq.result.transaction("kv", "readwrite"); tx.objectStore("kv").put(json, "state"); tx.oncomplete = () => { rq.result.close(); res(); }; };
           rq.onerror = () => rej(rq.error); });
       }, [state, theme]);
-      await page.goto("http://localhost:4173/#/" + view);
+      await page.goto("http://localhost:" + (process.env.PORT || 4173) + "/#/" + view);
       await page.waitForFunction(() => typeof state !== "undefined" && state && state.tasks);
       if (process.env.ACTION) await page.evaluate(process.env.ACTION);
       await page.waitForTimeout(400);

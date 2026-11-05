@@ -74,6 +74,41 @@ a{color:var(--acc)}
 #saveInd.sync-error .dot,#saveInd.sync-badkey .dot{background:var(--bad)}
 /* S1c · sincronización */
 .synccard{margin:0 0 14px}
+/* G1 · años de cursado */
+.yearsw{display:grid;grid-template-columns:1fr auto;align-items:center;gap:0 6px;width:100%;min-height:52px;margin:2px 0 6px;padding:8px 12px;border:1px solid var(--line);border-radius:12px;background:var(--card2);color:var(--tx);text-align:left;cursor:pointer;font:inherit;transition:background .15s,border-color .15s}
+.yearsw:hover{border-color:var(--acc)}
+.yearsw .yl{grid-column:1;font-size:.6rem;text-transform:uppercase;letter-spacing:.08em;font-weight:700;color:var(--tx3)}
+.yearsw .yn{grid-column:1;font-size:.86rem;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.yearsw .ych{grid-column:2;grid-row:1/3;color:var(--tx3);font-size:.9rem;line-height:1}
+.yearsw.old{border-color:color-mix(in srgb,var(--warn) 45%,var(--line));background:var(--warn-soft)}
+.yearsw.old .yl{color:var(--warn)}
+.yearbanner{display:flex;align-items:center;gap:10px;justify-content:space-between;padding:8px 8px 8px 14px;margin:0 0 14px;border-radius:12px;background:var(--warn-soft);border:1px solid color-mix(in srgb,var(--warn) 35%,var(--line));font-size:.82rem;color:var(--tx)}
+.yearbanner .ybt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.yearbanner .btn{min-height:40px;flex:none}
+.ylist{display:flex;flex-direction:column;gap:6px}
+.yrow{display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:12px;padding:4px 8px 4px 4px;background:var(--card)}
+.yrow.on{border-color:var(--acc);background:var(--acc-soft)}
+.ypick{flex:1;min-width:0;display:flex;align-items:center;gap:10px;min-height:56px;padding:6px 8px;border:0;background:none;color:var(--tx);text-align:left;cursor:pointer;font:inherit;border-radius:10px}
+.ycheck{width:22px;flex:none;text-align:center;color:var(--acc);font-weight:800}
+.ytx{display:flex;flex-direction:column;min-width:0;gap:2px}
+.ynm{font-weight:650;font-size:.88rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ytag{font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--acc);margin-left:4px}
+.yrow .btn{min-height:40px}
+.nydates{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.modal .nysubs{border:1px solid var(--line);border-radius:10px;margin:0 0 8px;background:var(--card2)}
+.modal .nysubs summary{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:46px;padding:0 14px;cursor:pointer;font-size:.85rem;font-weight:500;list-style:none}
+.modal .nysubs summary::-webkit-details-marker{display:none}
+.modal .nysubs summary::after{content:"⌄";color:var(--tx3);margin-left:auto}
+.modal .nysubs summary .tiny{margin-left:auto}
+.modal .nysublist{border-top:1px solid var(--line);max-height:240px;overflow:auto}
+.modal .nysublist .dotc{width:10px;height:10px;border-radius:50%;flex:none}
+.modal label.nyopt{border:1px solid var(--line);border-radius:10px;background:var(--card2);margin:0 0 8px}
+.nyprev{margin:12px 0 0;padding:10px 12px;border-radius:10px;background:var(--acc-soft);font-size:.82rem;color:var(--tx)}
+.nyprev.bad{background:var(--bad-soft);color:var(--bad)}
+.yearcard{margin:0 0 14px}
+.yc-b{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.yc-b .btn{min-height:44px}
+@media (prefers-reduced-motion:reduce){.yearsw{transition:none}}
 .syncintro{margin:4px 0 12px;max-width:62ch}
 .syncbtns{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
 .syncbtns.end{justify-content:flex-end;margin-top:6px}

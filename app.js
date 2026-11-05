@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.33.0";
+const APP_VERSION = "2.34.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -65,7 +65,7 @@ function baseState() {
   return {
     v: 2, settings: defaultSettings(),
     subjects: [], projects: [], evals: [], tasks: [], notes: [], habits: [], sessions: [],
-    dayLog: {}, dayPlan: {},
+    dayLog: {}, dayPlan: {}, years: [defaultFirstYear()],
     timer: { phase: "focus", left: 25 * 60, total: 25 * 60, run: false, ends: null, taskId: null, subjectId: null, projectId: null, cycle: 0 },
     meta: { created: todayISO(), migratedV1: false, notified: {}, lastBackup: null },
     sync: syncBlank()
@@ -147,7 +147,7 @@ async function persist() {
   saving = true;
   state.meta.lastSave = Date.now();
   syncTrack();
-  const json = JSON.stringify(state);
+  const json = JSON.stringify(fullState());
   try {
     if (db) await idbPut("kv", "state", json);
     else if (typeof localStorage !== "undefined") localStorage.setItem("aula-state-fallback", json);
@@ -171,7 +171,7 @@ function flushNow() {
   try {
     state.meta.lastSave = Date.now();
     syncTrack();
-    const j = JSON.stringify(state);
+    const j = JSON.stringify(fullState());
     try { if (typeof localStorage !== "undefined") localStorage.setItem(EMERGENCY_KEY, j); } catch (e) {}
     if (db) db.transaction("kv", "readwrite").objectStore("kv").put(j, "state");
   } catch (e) {}
@@ -181,7 +181,7 @@ async function dailyBackup() {
   try {
     const k = "auto-" + todayISO();
     if (!db) return;
-    await idbPut("backups", k, { ts: Date.now(), label: "Automática " + fmtD(todayISO()), data: JSON.stringify(state) });
+    await idbPut("backups", k, { ts: Date.now(), label: "Automática " + fmtD(todayISO()), data: JSON.stringify(fullState()) });
     const keys = (await idbKeys("backups")).filter(x => String(x).startsWith("auto-")).sort();
     while (keys.length > 10) await idbDel("backups", keys.shift());
     state.meta.lastBackup = todayISO();
@@ -190,7 +190,7 @@ async function dailyBackup() {
 async function manualBackup() {
   try {
     if (!db) { toast("IndexedDB no disponible en este navegador"); return; }
-    await idbPut("backups", "manual-" + Date.now(), { ts: Date.now(), label: "Manual " + new Date().toLocaleString("es-AR"), data: JSON.stringify(state) });
+    await idbPut("backups", "manual-" + Date.now(), { ts: Date.now(), label: "Manual " + new Date().toLocaleString("es-AR"), data: JSON.stringify(fullState()) });
     const keys = (await idbKeys("backups")).filter(x => String(x).startsWith("manual-")).sort();
     while (keys.length > 10) await idbDel("backups", keys.shift());
     toast("Copia de seguridad creada");
@@ -208,6 +208,7 @@ function normalizeState(s) {
   for (const k of ["subjects", "projects", "evals", "tasks", "notes", "habits", "sessions"]) if (!Array.isArray(s[k])) s[k] = [];
   s.dayLog = s.dayLog || {}; s.dayPlan = s.dayPlan || {}; s.meta = Object.assign(b.meta, s.meta || {});
   s.timer = Object.assign(b.timer, s.timer || {});
+  ensureYears(s);
   s.v = 2;
   return s;
 }
@@ -243,7 +244,7 @@ function syncTrack(now) {
   if (!state) return 0;
   if (!state.sync || typeof state.sync !== "object") state.sync = syncBlank();
   const sy = state.sync; sy.stamps = sy.stamps || {}; sy.tombs = sy.tombs || {};
-  const cur = syncHashesOf(state);
+  const cur = syncHashesOf(fullState());
   if (!syncHashes) { syncHashes = cur; return 0; }
   now = now || Date.now();
   let n = 0;
@@ -252,7 +253,7 @@ function syncTrack(now) {
   syncHashes = cur;
   return n;
 }
-function syncResetHashes() { syncHashes = state ? syncHashesOf(state) : null; }
+function syncResetHashes() { syncHashes = state ? syncHashesOf(fullState()) : null; }
 /* Fusiona dos copias {data, stamps, tombs}. Por clave gana la marca más nueva; un
    borrado gana si es más nuevo que la última edición. Sin marcas (datos de antes de
    la sincronización) cuentan como 0: si los dos lados tienen la misma clave con
@@ -270,7 +271,7 @@ function syncDedupeSubjects(m, now) {
   walk(m.data, (x, f) => refs.set(x[f], (refs.get(x[f]) || 0) + 1));
   const byName = new Map(), drop = new Map();
   for (const sj of subs) {
-    const k = norm(sj.name); if (!k) continue;
+    const k = norm(sj.name) ? yearOf(sj) + "|" + norm(sj.name) : ""; if (!k) continue;
     const o = byName.get(k);
     if (!o) { byName.set(k, sj); continue; }
     const ro = refs.get(o.id) || 0, rs = refs.get(sj.id) || 0;
@@ -376,16 +377,18 @@ function canon(x) {
 }
 function syncLocal() {
   syncTrack();
-  const data = {};
-  for (const k of Object.keys(state)) if (!SYNC_LOCAL.has(k)) data[k] = state[k];
+  const data = {}, f = fullState();
+  for (const k of Object.keys(f)) if (!SYNC_LOCAL.has(k)) data[k] = f[k];
   return { data, stamps: state.sync.stamps, tombs: state.sync.tombs };
 }
 function syncApply(m) {
   const before = canon(syncLocal().data);
+  yearJoin();
   for (const k of Object.keys(state)) if (!SYNC_LOCAL.has(k) && !(k in m.data)) delete state[k];
   for (const k of Object.keys(m.data)) if (!SYNC_LOCAL.has(k)) state[k] = m.data[k];
   state.sync = { stamps: m.stamps, tombs: m.tombs };
   normalizeState(state);
+  yearSplit();
   syncResetHashes();
   if (canon(syncLocal().data) === before) return false;
   markDirty();
@@ -405,7 +408,7 @@ async function syncFetch(method, body) {
   } finally { clearTimeout(tm); }
 }
 async function syncBackup() {
-  try { if (db) await idbPut("backups", "presync-" + Date.now(), { ts: Date.now(), label: "Antes de sincronizar por primera vez", version: APP_VERSION, data: JSON.stringify(state) }); } catch (e) {}
+  try { if (db) await idbPut("backups", "presync-" + Date.now(), { ts: Date.now(), label: "Antes de sincronizar por primera vez", version: APP_VERSION, data: JSON.stringify(fullState()) }); } catch (e) {}
 }
 async function syncNow() {
   if (!syncOn() || !state) return;
@@ -657,13 +660,16 @@ function syncAskChange() {
    - Antes de correr pasos, loadState guarda una copia del estado viejo en
      "Copias de seguridad" (clave premig-…) para poder volver atrás.
    - Cada paso agrega un test que carga tests/fixtures/estado-v2.6.json. */
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 const MIGRATIONS = [
   { to: 2, desc: "Esquema versionado (Aula 2.7)", run: () => {} },
   { to: 3, desc: "Series explícitas con seriesId (Aula 2.10)", run: s => inferSeriesIds(s.tasks) },
   // S1: lugar para las marcas de sincronización. No toca ningún dato: lo existente
   // queda "sin marca" (cuenta como lo más viejo) y se fusiona sin perder nada.
-  { to: 4, desc: "Sincronización entre dispositivos (Aula 2.31)", run: s => { if (!s.sync || typeof s.sync !== "object") s.sync = syncBlank(); } }
+  { to: 4, desc: "Sincronización entre dispositivos (Aula 2.31)", run: s => { if (!s.sync || typeof s.sync !== "object") s.sync = syncBlank(); } },
+  // G1: años de cursado. Agrega state.years con el primer año ("y0"). No toca ningún
+  // elemento: lo que no tiene yearId es del primer año.
+  { to: 5, desc: "Años de cursado (Aula 2.34)", run: s => { ensureYears(s); } }
 ];
 /* A3 · Antes, cualquier par de tareas con el mismo título y materia se mostraba como
    "serie". Ahora una serie es explícita (t.seriesId). Para los datos viejos se
@@ -850,6 +856,240 @@ async function loadState() {
   state.subjects = initialSubjects();
   try { if (typeof localStorage !== "undefined" && localStorage.getItem(OLD_LS_KEY) && migrateV1(state)) toast("Datos de la versión anterior migrados correctamente"); } catch (e) { console.warn("Fallo de migración", e); }
   migrateState(state); // estado nuevo (o recién migrado de la v1): sin datos previos que respaldar
+}
+
+/* ===================== AÑOS DE CURSADO (G1) =====================
+   state.years = [{ id, name, start, end }]. Cada materia, parcial, tarea, proyecto,
+   nota, hábito y sesión pertenece a un año por su campo yearId; si no lo tiene es del
+   primer año ("y0"): así los datos de antes de G1 quedan EXACTAMENTE iguales (no se
+   reescribe ni una tarea) y los dos dispositivos coinciden sin ponerse de acuerdo.
+   El año que se ve es por dispositivo (state.meta.activeYear, no viaja); si no hay
+   uno elegido, se ve el más nuevo.
+   Para no tocar los ~170 lugares que leen state.tasks, state.subjects…, en memoria
+   los arreglos tienen SOLO lo del año que se ve; lo de los otros años espera en
+   yearHidden y fullState() lo vuelve a juntar (en el mismo orden) para guardar,
+   sincronizar, exportar y hacer copias. Lo nuevo que se crea mientras ves un año
+   queda en ese año (fullState le pone el yearId). */
+const YEAR_SCOPED = ["subjects", "projects", "evals", "tasks", "notes", "habits", "sessions"];
+const FIRST_YEAR = "y0";
+let yearHidden = null; // { active, <colección>: { order: [ids], items: Map } }
+function lastDayOfFeb(y) { return new Date(y, 2, 0).getDate(); }
+function defaultFirstYear(y) {
+  y = y || new Date().getFullYear();
+  return { id: FIRST_YEAR, name: y === 2026 ? "3.º año · 2026" : "Año " + y, start: y + "-03-01", end: (y + 1) + "-02-" + lastDayOfFeb(y + 1) };
+}
+function ensureYears(s) {
+  if (!Array.isArray(s.years) || !s.years.length) s.years = [defaultFirstYear()];
+  return s.years;
+}
+const yearOf = x => (x && x.yearId) || FIRST_YEAR;
+function yearsSorted(s) { s = s || state; return (s.years || []).slice().sort((a, b) => String(a.start || "").localeCompare(String(b.start || "")) || String(a.id).localeCompare(String(b.id))); }
+function latestYearId(s) { const ys = yearsSorted(s); return ys.length ? ys[ys.length - 1].id : FIRST_YEAR; }
+function yearById(id) { return (state.years || []).find(y => y.id === id) || null; }
+function activeYearId() {
+  const w = state && state.meta && state.meta.activeYear;
+  return w && (state.years || []).some(y => y.id === w) ? w : latestYearId(state);
+}
+function activeYear() { return yearById(activeYearId()) || yearsSorted()[0] || defaultFirstYear(); }
+function viewingOldYear() { return activeYearId() !== latestYearId(state); }
+/* El estado completo (todos los años), sin tocar `state`. */
+function fullState() {
+  if (!state || !yearHidden) return state;
+  const act = yearHidden.active;
+  if (act !== FIRST_YEAR) for (const c of YEAR_SCOPED) for (const x of state[c] || []) if (x && typeof x === "object" && !x.yearId) x.yearId = act;
+  const out = Object.assign({}, state);
+  for (const c of YEAR_SCOPED) {
+    const h = yearHidden[c]; if (!h || !h.items.size) continue;
+    const cur = Array.isArray(state[c]) ? state[c] : [], ids = new Set(cur.map(x => x && x.id));
+    const res = []; let i = 0;
+    for (const id of h.order) {
+      if (h.items.has(id)) { if (!ids.has(id)) res.push(h.items.get(id)); }
+      else if (i < cur.length) res.push(cur[i++]);
+    }
+    while (i < cur.length) res.push(cur[i++]);
+    out[c] = res;
+  }
+  return out;
+}
+/* `state` tiene que estar completo (recién cargado, restaurado o sincronizado). */
+function yearSplit() {
+  ensureYears(state);
+  // red de seguridad: algo de un año que no está en la lista (una importación a medias, por
+  // ejemplo) no puede quedar invisible para siempre: se le arma su año
+  const known = new Set(state.years.map(y => y.id));
+  for (const c of YEAR_SCOPED) for (const x of state[c] || []) {
+    const yid = yearOf(x);
+    if (!known.has(yid)) { known.add(yid); state.years.push({ id: yid, name: "Año recuperado " + known.size, start: "2000-01-01", end: "2000-12-31" } /* el más viejo: nunca pasa a ser "el actual" */); }
+  }
+  const act = activeYearId();
+  yearHidden = { active: act };
+  for (const c of YEAR_SCOPED) {
+    const all = Array.isArray(state[c]) ? state[c] : [];
+    yearHidden[c] = { order: all.map(x => x && x.id), items: new Map(all.filter(x => yearOf(x) !== act).map(x => [x.id, x])) };
+    state[c] = all.filter(x => yearOf(x) === act);
+  }
+}
+function yearJoin() {
+  if (!yearHidden) return;
+  const f = fullState();
+  for (const c of YEAR_SCOPED) state[c] = f[c];
+  yearHidden = null;
+}
+/* Reemplaza el estado entero (restaurar, importar, reiniciar…) y vuelve a separar por año. */
+function setWholeState(s) { yearHidden = null; state = s; yearSplit(); }
+function setActiveYear(id) {
+  if (!yearById(id) || id === activeYearId()) return;
+  yearJoin();
+  state.meta.activeYear = id === latestYearId(state) ? null : id;
+  yearSplit();
+  ui.serMap = null; ui.calMonth = null;
+  change(); render();
+}
+function yearCounts(id) {
+  const f = fullState(), n = c => (f[c] || []).filter(x => yearOf(x) === id).length;
+  return { subjects: n("subjects"), evals: n("evals"), tasks: n("tasks") };
+}
+
+/* ---------- G1 · pantalla: selector de año, asistente de año nuevo, editar ---------- */
+function fmtYearRange(y) {
+  const f = d => { if (!d) return "?"; const x = dToDate(d); return MESL[x.getMonth()].slice(0, 3) + " " + x.getFullYear(); };
+  return f(y.start) + " – " + f(y.end);
+}
+function yearSwitcherHTML() {
+  const y = activeYear(), old = viewingOldYear();
+  return `<button class="yearsw${old ? " old" : ""}" onclick="openYearPicker()" aria-label="Año: ${escA(y.name)}. Cambiar de año">
+    <span class="yl">${old ? "Viendo un año anterior" : "Año de cursado"}</span>
+    <span class="yn">${esc(y.name)}</span><span class="ych" aria-hidden="true">⌄</span></button>`;
+}
+function oldYearBanner() {
+  if (!viewingOldYear()) return "";
+  const y = activeYear(), cur = yearById(latestYearId(state));
+  return `<div class="yearbanner" role="status"><span class="ybt">Estás viendo <b>${esc(y.name)}</b></span>
+    <button class="btn sm" onclick="setActiveYear('${escA(cur.id)}')" aria-label="Volver a ${escA(cur.name)}">Volver al actual</button></div>`;
+}
+function openYearPicker() {
+  const act = activeYearId(), cur = latestYearId(state);
+  const rows = yearsSorted().slice().reverse().map(y => {
+    const n = yearCounts(y.id);
+    const cnt = !n.subjects && !n.tasks ? "Vacío por ahora" : [n.subjects + (n.subjects === 1 ? " materia" : " materias"), n.tasks + (n.tasks === 1 ? " tarea" : " tareas")].join(" · ");
+    const meta = fmtYearRange(y) + "<br>" + cnt;
+    return `<div class="yrow${y.id === act ? " on" : ""}">
+      <button class="ypick" onclick="closeModal();setActiveYear('${escA(y.id)}')" aria-pressed="${y.id === act}">
+        <span class="ycheck" aria-hidden="true">${y.id === act ? "✓" : ""}</span>
+        <span class="ytx"><span class="ynm">${esc(y.name)}${y.id === cur ? ' <span class="ytag">actual</span>' : ""}</span><span class="tiny">${meta}</span></span></button>
+      <button class="btn sm ghost" onclick="openYearEdit('${escA(y.id)}')" aria-label="Editar ${escA(y.name)}">Editar</button></div>`;
+  }).join("");
+  openModal(`<h3>Tus años</h3>
+    <p class="tiny" style="margin:-6px 0 12px">Cada año es un espacio aparte: sus materias, parciales, tareas y notas. Los anteriores quedan guardados para consultarlos.</p>
+    <div class="ylist">${rows}</div>
+    <div class="mfoot"><button class="btn" onclick="closeModal()">Cerrar</button><button class="btn primary" onclick="openNewYear()">Nuevo año…</button></div>`, false, true);
+}
+function suggestNextYear() {
+  const last = yearById(latestYearId(state)) || defaultFirstYear();
+  const start = last.end ? addDays(last.end, 1) : (new Date().getFullYear() + 1) + "-03-01";
+  const sy = Number(start.slice(0, 4));
+  const end = addDays((sy + 1) + start.slice(4), -1);
+  const m = /^(\d+)\s*\.?\s*º\s*año/i.exec(last.name || "");
+  const name = m ? (Number(m[1]) + 1) + ".º año · " + sy : "Año " + sy;
+  return { name, start, end };
+}
+function openNewYear() {
+  const sug = suggestNextYear(), from = activeYear();
+  const subs = state.subjects.filter(s => !s.archived);
+  ui.nyBring = { subjects: new Set(), habits: false, notes: false };
+  openModal(`<h3>Nuevo año</h3>
+    <p class="tiny" style="margin:-6px 0 4px">Empieza limpio. ${esc(from.name)} queda guardado tal cual y lo podés volver a ver cuando quieras.</p>
+    <label for="ny_name">Nombre</label><input id="ny_name" value="${escA(sug.name)}" maxlength="60" oninput="nyPreview()">
+    <div class="nydates"><div><label for="ny_start">Empieza</label><input type="date" id="ny_start" value="${sug.start}" onchange="nyPreview()"></div>
+    <div><label for="ny_end">Termina</label><input type="date" id="ny_end" value="${sug.end}" onchange="nyPreview()"></div></div>
+    <label>Traer de ${esc(from.name)}</label>
+    <p class="tiny" style="margin:0 0 6px">Opcional. Se copian: lo de ${esc(from.name)} no cambia.</p>
+    ${subs.length ? `<details class="nysubs"><summary>Materias que siguen <span class="tiny" id="ny_subn">ninguna</span></summary>
+      <div class="nysublist">${subs.map(s => `<label class="occl"><input type="checkbox" value="${escA(s.id)}" onchange="nyToggleSub(this)"><span class="dotc" style="background:${escA(s.color)}"></span>${esc(s.name)}</label>`).join("")}</div></details>` : ""}
+    ${state.habits.filter(h => !h.archived).length ? `<label class="occl nyopt"><input type="checkbox" id="ny_habits" onchange="ui.nyBring.habits=this.checked;nyPreview()">Hábitos (sin el historial)</label>` : ""}
+    ${state.notes.length ? `<label class="occl nyopt"><input type="checkbox" id="ny_notes" onchange="ui.nyBring.notes=this.checked;nyPreview()">Notas</label>` : ""}
+    <p class="nyprev" id="ny_prev"></p>
+    <div class="mfoot"><button class="btn" onclick="openYearPicker()">Cancelar</button><button class="btn primary" id="ny_ok" onclick="createYearFromModal()">Crear año</button></div>`);
+  nyPreview();
+}
+function nyToggleSub(cb) { if (cb.checked) ui.nyBring.subjects.add(cb.value); else ui.nyBring.subjects.delete(cb.value); nyPreview(); }
+function nyPreview() {
+  const b = ui.nyBring || { subjects: new Set() }, name = (byId("ny_name") || {}).value || "";
+  const st = (byId("ny_start") || {}).value, en = (byId("ny_end") || {}).value;
+  const n = b.subjects.size, sn = byId("ny_subn"); if (sn) sn.textContent = n ? n + (n === 1 ? " elegida" : " elegidas") : "ninguna";
+  const parts = [];
+  if (n) parts.push(n + (n === 1 ? " materia" : " materias"));
+  if (b.habits) parts.push("tus hábitos");
+  if (b.notes) parts.push(state.notes.length + (state.notes.length === 1 ? " nota" : " notas"));
+  const bad = !name.trim() ? "Ponele un nombre." : !st || !en ? "Elegí las fechas." : en < st ? "La fecha de fin es antes que la de inicio." :
+    (state.years || []).some(y => y.name.trim().toLowerCase() === name.trim().toLowerCase()) ? "Ya tenés un año con ese nombre." : "";
+  const p = byId("ny_prev"); if (p) { p.classList.toggle("bad", !!bad); p.textContent = bad || ("Vas a crear " + name.trim() + (parts.length ? " con " + listJoin(parts) : ", vacío") + "."); }
+  const ok = byId("ny_ok"); if (ok) ok.disabled = !!bad;
+}
+function listJoin(a) { return a.length < 2 ? a.join("") : a.slice(0, -1).join(", ") + " y " + a[a.length - 1]; }
+function createYearFromModal() {
+  const name = byId("ny_name").value.trim(), start = byId("ny_start").value, end = byId("ny_end").value;
+  nyPreview(); if (byId("ny_ok").disabled) return;
+  const b = ui.nyBring;
+  closeModal();
+  createYear({ name, start, end, subjects: [...b.subjects], habits: b.habits, notes: b.notes });
+}
+/* Crea un año y pasa a verlo. Lo que se trae se COPIA (ids nuevos): el año de origen no cambia. */
+function createYear(o) {
+  const prevActive = state.meta.activeYear || null, fromId = activeYearId();
+  yearJoin();
+  const id = "y-" + uid(), today = todayISO(), added = [];
+  state.years.push({ id, name: o.name, start: o.start, end: o.end, createdAt: today });
+  const src = c => state[c].filter(x => yearOf(x) === fromId);
+  for (const s of src("subjects")) if ((o.subjects || []).includes(s.id)) {
+    const c = Object.assign(JSON.parse(JSON.stringify(s)), { id: uid(), yearId: id, createdAt: today, fromYear: fromId, fromId: s.id, archived: false });
+    state.subjects.push(c); added.push(["subjects", c.id]);
+  }
+  if (o.habits) for (const h of src("habits")) if (!h.archived) {
+    const c = Object.assign(JSON.parse(JSON.stringify(h)), { id: uid(), yearId: id, checks: {}, createdAt: today, fromYear: fromId, fromId: h.id });
+    state.habits.push(c); added.push(["habits", c.id]);
+  }
+  if (o.notes) for (const n of src("notes")) {
+    const c = Object.assign({}, JSON.parse(JSON.stringify(n)), { id: uid(), yearId: id, fromYear: fromId, fromId: n.id });
+    state.notes.push(c); added.push(["notes", c.id]);
+  }
+  state.meta.activeYear = id === latestYearId(state) ? null : id;
+  yearSplit();
+  ui.serMap = null; ui.calMonth = null;
+  change(); go("home"); render();
+  toast("Listo: estás en " + o.name, () => {
+    yearJoin();
+    // se sacan solo las copias; si mientras tanto creaste algo en el año nuevo, el año se queda
+    const drop = new Set(added.map(a => a.join(":")));
+    for (const c of YEAR_SCOPED) state[c] = state[c].filter(x => !drop.has(c + ":" + x.id));
+    if (!YEAR_SCOPED.some(c => state[c].some(x => yearOf(x) === id))) state.years = state.years.filter(y => y.id !== id);
+    state.meta.activeYear = prevActive;
+    yearSplit(); change(); render();
+  });
+  return id;
+}
+function openYearEdit(id) {
+  const y = yearById(id); if (!y) return;
+  openModal(`<h3>Editar año</h3>
+    <label for="ye_name">Nombre</label><input id="ye_name" value="${escA(y.name)}" maxlength="60">
+    <div class="nydates"><div><label for="ye_start">Empieza</label><input type="date" id="ye_start" value="${escA(y.start || "")}"></div>
+    <div><label for="ye_end">Termina</label><input type="date" id="ye_end" value="${escA(y.end || "")}"></div></div>
+    <p class="nyprev bad" id="ye_err" hidden></p>
+    <div class="mfoot"><button class="btn" onclick="openYearPicker()">Cancelar</button><button class="btn primary" onclick="saveYearEdit('${escA(id)}')">Guardar</button></div>`);
+}
+function saveYearEdit(id) {
+  const y = yearById(id); if (!y) return;
+  const name = byId("ye_name").value.trim(), start = byId("ye_start").value, end = byId("ye_end").value, err = byId("ye_err");
+  const bad = !name ? "Ponele un nombre." : !start || !end ? "Elegí las fechas." : end < start ? "La fecha de fin es antes que la de inicio." :
+    state.years.some(o => o.id !== id && o.name.trim().toLowerCase() === name.toLowerCase()) ? "Ya tenés un año con ese nombre." : "";
+  if (bad) { err.hidden = false; err.textContent = bad; return; }
+  const wasActive = activeYearId();
+  yearJoin();
+  Object.assign(y, { name, start, end });
+  // cambiar fechas puede cambiar cuál es el "actual": el que estabas viendo se sigue viendo
+  state.meta.activeYear = wasActive === latestYearId(state) ? null : wasActive;
+  yearSplit();
+  change(); openYearPicker(); render();
 }
 
 /* ============================ LOOKUPS ============================ */
@@ -2695,7 +2935,7 @@ function renderSidebar() {
   const cur = NAV_PARENT[route.view] || route.view;
   const label = v => v === "list" ? "Lista completa" : (VIEWS.find(x => x[0] === v) || [v, v])[1];
   const item = v => `<a href="#/${v}" class="${cur === v ? "on" : ""}">${label(v)}</a>`;
-  sb.innerHTML = NAV.map(([sec, vs]) => `<div class="sec">${sec}</div>` + vs.map(item).join("")).join("") +
+  sb.innerHTML = yearSwitcherHTML() + NAV.map(([sec, vs]) => `<div class="sec">${sec}</div>` + vs.map(item).join("")).join("") +
     '<div class="hr" style="margin:10px 6px"></div>' + item("config") +
     '<div style="padding:14px 10px" class="tiny">Aula v' + APP_VERSION + "</div>";
 }
@@ -2726,7 +2966,7 @@ function render() {
     habits: viewHabits, stats: viewStats, history: viewHistory,
     backups: viewBackups, config: viewConfig
   };
-  v.innerHTML = (map[route.view] || viewHome)();
+  v.innerHTML = oldYearBanner() + (map[route.view] || viewHome)();
   if (route.view === "backups") fillBackupsList();
   renderSelBar();
 }
@@ -4297,17 +4537,17 @@ async function restoreBackup(key) {
     title: "Restaurar copia", body: "Se reemplazará el estado actual por el de esta copia. Antes se creará una copia de seguridad del estado actual.", okLabel: "Restaurar", danger: true,
     onOk: async () => {
       try {
-        await idbPut("backups", "pre-restore-" + Date.now(), { ts: Date.now(), label: "Antes de restaurar", data: JSON.stringify(state) });
+        await idbPut("backups", "pre-restore-" + Date.now(), { ts: Date.now(), label: "Antes de restaurar", data: JSON.stringify(fullState()) });
         const b = await idbGet("backups", key);
         const s = JSON.parse(b.data);
         if (!validState(s)) { toast("La copia está dañada"); return; }
-        state = normalizeState(s); migrateState(state); change(); render(); toast("Copia restaurada");
+        const ns = normalizeState(s); migrateState(ns); setWholeState(ns); change(); render(); toast("Copia restaurada");
       } catch (e) { toast("No se pudo restaurar"); }
     }
   });
 }
 function exportJSON() {
-  downloadFile("aula-backup-" + todayISO() + ".json", JSON.stringify(state, null, 2), "application/json");
+  downloadFile("aula-backup-" + todayISO() + ".json", JSON.stringify(fullState(), null, 2), "application/json");
   toast("Datos exportados");
 }
 function importJSON(ev) {
@@ -4320,7 +4560,7 @@ function importJSON(ev) {
     if (isV1) {
       askConfirm({
         title: "Archivo de la versión anterior", body: "Este archivo es de la app anterior. Se migrará su contenido y se agregará al estado actual.", okLabel: "Migrar e importar",
-        onOk: () => { try { localStorage.setItem(OLD_LS_KEY, JSON.stringify(s)); } catch (e) {} const tmp = normalizeState(baseState()); tmp.subjects = state.subjects.length ? JSON.parse(JSON.stringify(state.subjects)) : initialSubjects(); if (migrateV1(tmp)) { migrateState(tmp); mergeStates(state, tmp); change(); render(); toast("Datos de la versión anterior importados"); } else toast("No se pudo migrar el archivo"); }
+        onOk: () => { try { localStorage.setItem(OLD_LS_KEY, JSON.stringify(s)); } catch (e) {} yearJoin(); const tmp = normalizeState(baseState()); tmp.subjects = state.subjects.length ? JSON.parse(JSON.stringify(state.subjects)) : initialSubjects(); if (migrateV1(tmp)) { migrateState(tmp); mergeStates(state, tmp); yearSplit(); change(); render(); toast("Datos de la versión anterior importados"); } else { yearSplit(); toast("No se pudo migrar el archivo"); } }
       });
       ev.target.value = ""; return;
     }
@@ -4333,12 +4573,12 @@ function importJSON(ev) {
       <div class="mfoot"><button class="btn" onclick="closeConfirm()">Cancelar</button>
       <button class="btn" id="impMerge">Fusionar</button>
       <button class="btn danger" id="impReplace">Reemplazar todo</button></div>`;
-    byId("impMerge").onclick = () => { const src = normalizeState(s); migrateState(src); mergeStates(state, src); closeConfirm(); change(); render(); toast("Datos fusionados"); };
+    byId("impMerge").onclick = () => { const src = normalizeState(s); migrateState(src); yearJoin(); mergeStates(state, src); yearSplit(); closeConfirm(); change(); render(); toast("Datos fusionados"); };
     byId("impReplace").onclick = () => {
       closeConfirm();
       askConfirm({
         title: "Reemplazar todo", body: "Se descartará el estado actual y se usará el del archivo. Esta acción no se puede deshacer (se guarda una copia previa).", okLabel: "Reemplazar", danger: true,
-        onOk: async () => { try { if (db) await idbPut("backups", "pre-import-" + Date.now(), { ts: Date.now(), label: "Antes de importar", data: JSON.stringify(state) }); } catch (e) {} state = normalizeState(s); migrateState(state); change(); render(); toast("Datos reemplazados"); }
+        onOk: async () => { try { if (db) await idbPut("backups", "pre-import-" + Date.now(), { ts: Date.now(), label: "Antes de importar", data: JSON.stringify(fullState()) }); } catch (e) {} const ns = normalizeState(s); migrateState(ns); setWholeState(ns); change(); render(); toast("Datos reemplazados"); }
       });
     };
   };
@@ -4347,6 +4587,7 @@ function importJSON(ev) {
 function mergeStates(dst, src) {
   const addNew = (arr, srcArr) => { const ids = new Set(arr.map(x => x.id)); for (const x of srcArr || []) if (!ids.has(x.id)) arr.push(x); };
   addNew(dst.subjects, src.subjects); addNew(dst.projects, src.projects); addNew(dst.evals, src.evals);
+  if (Array.isArray(src.years)) addNew(dst.years, src.years); // G1
   addNew(dst.tasks, src.tasks); addNew(dst.notes, src.notes); addNew(dst.habits, src.habits); addNew(dst.sessions, src.sessions);
   for (const [k, v] of Object.entries(src.dayLog || {})) if (!dst.dayLog[k]) dst.dayLog[k] = v;
 }
@@ -4357,6 +4598,9 @@ function viewConfig() {
   const chk = v => v ? "checked" : "";
   return `<div class="vhead"><h2>Configuración</h2></div>
   <div class="card synccard" id="synccard">${syncCardHTML()}</div>
+  <div class="card yearcard"><div class="yc-h"><div><h3 style="margin:0">Años de cursado</h3>
+    <p class="tiny" style="margin-top:4px">Estás en <b>${esc(activeYear().name)}</b> · ${fmtYearRange(activeYear())}. Cada año tiene sus materias, parciales y tareas; los anteriores quedan para consultar.</p></div></div>
+    <div class="yc-b"><button class="btn" onclick="openYearPicker()">Ver mis años</button><button class="btn primary" onclick="openNewYear()">Nuevo año…</button></div></div>
   <div class="grid2">
   <div class="card" style="margin:0"><h3>Apariencia</h3>
     <label class="tiny" style="font-weight:700">Tema</label>
@@ -4454,8 +4698,8 @@ function resetApp() {
     title: "Reiniciar aplicación", body: "Se borrarán TODAS las tareas, materias, evaluaciones, notas, hábitos y estadísticas de este navegador.", okLabel: "Continuar", danger: true,
     second: { title: "¿Estás completamente seguro?", body: "Esta acción es definitiva. Antes se creará una última copia de seguridad local por si te arrepentís (en Copias de seguridad).", okLabel: "Sí, borrar todo" },
     onOk: async () => {
-      try { if (db) await idbPut("backups", "pre-reset-" + Date.now(), { ts: Date.now(), label: "Antes de reiniciar", data: JSON.stringify(state) }); } catch (e) {}
-      state = baseState(); state.subjects = initialSubjects(); state.meta.migratedV1 = true; migrateState(state);
+      try { if (db) await idbPut("backups", "pre-reset-" + Date.now(), { ts: Date.now(), label: "Antes de reiniciar", data: JSON.stringify(fullState()) }); } catch (e) {}
+      const ns = baseState(); ns.subjects = initialSubjects(); ns.meta.migratedV1 = true; migrateState(ns); setWholeState(ns);
       change(); render(); toast("Aplicación reiniciada");
     }
   });
@@ -5285,6 +5529,7 @@ function trapFocus(e) {
 /* ============================ INIT ============================ */
 async function init() {
   await loadState();
+  yearSplit();
   syncResetHashes();
   applyTheme();
   try { localStorage.setItem("aula-theme", state.settings.theme); localStorage.setItem("aula-accent", state.settings.accent); } catch (e) {}

@@ -10,7 +10,7 @@ test("migración: un estado viejo (esquema 3) gana el lugar de sync sin perder n
   await seedState(page, old);
   const errors = await openApp(page);
   const r = await page.evaluate(() => ({ schema: state.meta.schema, sync: state.sync, n: [state.tasks.length, state.evals.length, state.subjects.length, state.sessions.length, state.notes.length, state.habits.length] }));
-  expect(r.schema).toBe(4);
+  expect(r.schema).toBe(await page.evaluate(() => SCHEMA_VERSION)); // 4 cuando se escribió; G1 agregó el 5
   expect(r.sync).toEqual({ stamps: {}, tombs: {} });
   expect(r.n).toEqual([old.tasks.length, old.evals.length, old.subjects.length, old.sessions.length, old.notes.length, old.habits.length]);
   // cada tarea quedó idéntica (la migración no toca datos)
