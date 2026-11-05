@@ -168,6 +168,49 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
   - Disponible para el año en curso ("hasta ahora") y para los años cerrados. Con el fixture y con 0 datos (no se rompe).
   - Tests de los números con el fixture y de que se navega entera sin errores; capturas de varias pantallas en mobile.
 
+## Noche 3 o siguientes — NO hacer la noche del 5/11 (Bauti lo pidió "para los próximos días")
+
+- [ ] **H1 · Estadísticas que sirvan de verdad, con historial** *(grande: partir en H1a–H1f; hacerlas en orden)*
+  Pedido (4/11 21:08): *"que se puedan hacer más cosas con las estadísticas, nose qué pero algo que me sirva. fijate y pensalo y analizalo bien porfa pero así como están ahora ni me sirven ni son estéticas, necesito algo que me sirva de verdad, no solo de hoy además, un histórico también, tres palabras: QUE ME SIRVA, que sea útil"*.
+
+  **Diagnóstico** (hecho al analizar el código el 4/11):
+  1. **Casi todo depende del "tiempo estudiado"** (`state.sessions`), que hoy solo se carga a mano o con el popup al completar una tarea. Si Bauti saltea el popup, las estadísticas mienten o quedan vacías. Sin datos confiables, ningún gráfico sirve: esto se arregla primero.
+  2. **Progreso solo mira el presente** (esta semana, 14 días, 28 días): no hay forma de ver cómo le fue en octubre, en el cuatrimestre o en el año, ni comparar.
+  3. **"Estadísticas detalladas"** es un tablero genérico (KPIs, evolución, día de la semana, hora, mapa de calor) que muestra datos pero no responde nada ni dice qué hacer, y visualmente es denso y de otro estilo que Progreso.
+  4. **Falta lo que realmente le importa a un estudiante:** ¿cumplo lo que planifico?, ¿la semana que viene es manejable?, ¿cuánto me tengo que preparar para un parcial y qué funcionó la vez pasada?, ¿cómo voy en cada materia y en la carrera?
+
+  **Principio:** cada pantalla responde una pregunta y, si se puede, termina en una acción ("mové 2 tareas del jueves", "empezá a preparar AN"). Modelo Apple Salud: **Resumen** con tarjetas → tocás una → **detalle con historial** y selector `S · M · Cuatri · Año · Todo` + flechas para ir al período anterior. Un solo estilo de gráfico para toda la app.
+
+  - [ ] **H1a · Datos confiables (sin fricción)**
+    - Al completar una tarea: un toque. Por defecto "lo estimado" con chips rápidos (`-30 m · = · +30 m · +1 h · otro`) en una hoja que no bloquea. Opción en Configuración: "no preguntar, usar el estimado".
+    - Registrar **cuándo** se movió una tarea (`moves: [{from, to, at}]`) y su fecha original (`origDate`), para medir "cumplido en el día" y "postergaciones". Migración con copia y test con el fixture.
+    - Test: completar 10 tareas con un toque cada una y que todas sumen tiempo; mover una tarea 2 veces y que quede registrado.
+
+  - [ ] **H1b · "¿Cumplo lo que planifico?"** (lo más útil según el análisis; no necesita tiempo cargado)
+    - Por semana: tareas planificadas vs hechas en su día, hechas tarde, postergadas, sin hacer. Un número grande ("cumpliste 78 %") y la tendencia de las últimas 8 semanas.
+    - Qué se posterga más (por materia y por tipo de tarea) y qué día de la semana falla más.
+    - Con historial (S/M/Cuatri/Año).
+
+  - [ ] **H1c · "¿La semana que viene es manejable?"** (mirar hacia adelante)
+    - Carga planificada por día para las próximas 2–4 semanas (horas de tareas) contra tu **capacidad real** (promedio de lo que efectivamente hacés por día, de H1a/H1b). Días sobrecargados en rojo, parciales marcados.
+    - Acción: "este jueves tenés 6 h y solés hacer 3 h → mover 2 tareas" lleva al menú "Mover a…" (B4).
+
+  - [ ] **H1d · Parciales: preparación y "qué funcionó"**
+    - Para cada parcial por delante: horas preparadas vs las que te llevó prepararte los anteriores de esa materia o en promedio; con cuántos días de anticipación arrancaste.
+    - **Retrospectiva** de los parciales ya rendidos: horas, cuándo empezaste, cumplimiento del plan y nota. Si hay suficientes datos, una conclusión simple y honesta ("con +8 h y empezando 10 días antes, aprobaste 4 de 4"). Nada de correlaciones con 2 datos: si no alcanza, decirlo.
+
+  - [ ] **H1e · Historial por materia y del cuatrimestre/año**
+    - Cada materia tiene su pestaña "Historial": horas por semana a lo largo del cuatrimestre con los parciales marcados, tareas, notas, promedio y estado (cursando / regular / aprobada).
+    - Vista "Mi cursada": todas las materias del año en una tabla limpia (horas, cumplimiento, notas, estado) y, con G1, comparación entre años. Si se carga el plan de la carrera (opcional), avance de la carrera ("aprobadas 18 de 41").
+    - Diario: tocar cualquier día pasado (desde el calendario o el historial) y ver qué hiciste, cuánto y qué quedó pendiente.
+
+  - [ ] **H1f · Rediseño visual y limpieza**
+    - Un solo sistema de gráficos (barras redondeadas, colores por materia, número grande + frase arriba, sin ejes recargados), tema claro y oscuro, animación sutil, accesible (no solo color).
+    - "Estadísticas detalladas" desaparece: lo que sirva se reubica en H1b–H1e; lo que no responde nada (mapa de calor anual, hora del día, etc.) se quita o pasa a "Tu año" (G2). El informe descargable y el CSV se mantienen como "Exportar" en el historial.
+    - Estados vacíos que explican qué hacer para que la tarjeta se llene.
+
+  Listo cuando (para todo H1): números correctos verificados con el fixture (y un fixture más largo, de un cuatrimestre entero, generado para esto); navegación del historial testeada (cambiar de período, ir y volver); capturas mobile y desktop, claro y oscuro; y una sección en la bitácora explicando qué pregunta responde cada pantalla y por qué se descartó lo que se descartó.
+
 ## E. Notificaciones al celular
 
 - [ ] **E1 · Recordatorios que llegan al celu** *(partido en E1a–E1c por el agente, corrida 07:05: es grande y toca el modelo)*
