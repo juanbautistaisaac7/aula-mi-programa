@@ -126,6 +126,34 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
   - Funciona con 0 datos (estado vacío lindo) y con muchos datos (usar el fixture de A1).
   - Tests de que los números son correctos para el fixture.
 
+## Noche 3 (pedidos del 5/11 a la mañana, después de probar en el celu) — HACER PRIMERO, en este orden: S2, M2, M1
+
+- [ ] **S2 · Que los cambios lleguen solos y rápido al otro dispositivo, y poder actualizar a mano**
+  Pedido (5/11 11:43): *"no hay un actualizar en el celu, por lo tanto si hago un cambio en la compu no impacta en el celu hasta que cierre y vuelva a entrar"*.
+  Estado actual (`syncInit`, `syncNow`, `syncApply` en `app.js`): baja cambios al abrir, al volver a primer plano (`visibilitychange`) y cada 60 s con la app visible; `syncApply` ya redibuja. En la práctica, en el iPhone (app en la pantalla de inicio) Bauti no ve los cambios hasta cerrar y abrir. Investigar por qué (¿no llega `visibilitychange` en standalone?, ¿60 s es demasiado?, ¿el SW cachea `/api/`?, ¿`render()` no refresca un modal o una hoja abierta?) y arreglarlo de raíz.
+  Listo cuando:
+  - Con la app abierta, un cambio hecho en otro dispositivo aparece en **≤ 15 s** sin tocar nada. Para no gastar: el `GET` manda la versión que ya tiene y la función responde `304`/"sin cambios" barato si no hay nada nuevo (actualizar `functions/api/sync.js` y sus tests). Escuchar también `pageshow`, `focus` y `online`.
+  - **Actualizar a mano**: en el celu, **tirar hacia abajo** desde arriba de la lista (pull-to-refresh, con su indicador y feedback háptico si existe) y, en todos lados, tocar el indicador "sincronizado" de arriba fuerza una sincronización ("Actualizando…" → "Al día · hace 3 s").
+  - Si estás editando algo (modal abierto o escribiendo), los cambios remotos no te pisan lo que estás escribiendo: se aplican al cerrar.
+  - Tests con dos contextos de navegador y red mockeada: el cambio llega solo en ≤ 15 s (con reloj simulado), el pull-to-refresh sincroniza, el 304 no redibuja ni gasta, y un modal abierto no se pierde.
+
+- [ ] **M2 · Formularios en el celu: nada encimado y el espacio bien usado**
+  Pedido (5/11 11:44): *"temas de interfaz en el celu, cuando hay que crear una tarea, proyecto, etc. la hora se superpone con otros campos, no me fijé en todos pero en algunos pasa, fijate que tampoco otros campos se superpongan y que a la vez se ocupe el espacio lo mejor posible"*.
+  Causa probable: los `<input type="time">` y `type="date"` de **Safari en iOS** tienen un ancho mínimo propio y se salen de las grillas de dos columnas (`.mrow`) aunque en Chrome se vean bien. Ojo: los tests corren en Chrome (WebKit no se puede descargar en este entorno), así que **no alcanza con que se vea bien en las capturas**: hay que hacer el CSS a prueba de Safari (`min-width:0`, `width:100%`, `box-sizing:border-box`, `-webkit-appearance:none` con estilo propio y alto fijo, `font-size:16px` para que iOS no haga zoom al tocar) y que las grillas tengan columnas `minmax(0,1fr)`.
+  Listo cuando:
+  - Inventario de **todos** los formularios y modales (nueva tarea con y sin Repetir y tramos, editar tarea, Mover a…, materia, parcial, proyecto, nota, hábito, año nuevo, avisos, sincronizar, configuración) en `docs/AUDITORIA.md`.
+  - En el celu (390 px y 375 px de ancho, y 320 px como caso extremo): ningún campo se encima con otro ni se sale del modal; lo corto va de a dos por fila (fecha + hora, minutos + materia) y lo largo ocupa el ancho; botones de pie de modal siempre visibles; nada de scroll horizontal.
+  - Test automático que abre cada modal en mobile y falla si dos campos (`input, select, textarea, button`) tienen sus rectángulos superpuestos o si alguno se sale del contenedor. Sumarlo al revisor de L1a.
+  - Capturas de cada modal en mobile (claro y oscuro).
+
+- [ ] **M1 · Deslizar una tarea para borrarla (celu)**
+  Pedido (5/11 11:43): *"en el cel poder eliminar una tarea arrastrando hacia la derecha"*.
+  Listo cuando:
+  - En el celu, **deslizar una tarea hacia la derecha** muestra detrás un fondo rojo con un tachito que crece con el gesto; si pasás el umbral (~40 % del ancho) o soltás rápido, se borra con animación y aparece **Deshacer**. Si soltás antes, vuelve a su lugar.
+  - Tarea de una serie: pregunta "¿solo esta / esta y las siguientes / todas?" (como C3) antes de borrar.
+  - No choca con lo que ya existe: el scroll vertical (si el gesto empieza vertical, es scroll), el mantener apretado para arrastrar (C5), tocar para abrir y el pull-to-refresh (S2). Pista de iOS: en Apple deslizar a la izquierda es borrar; acá va a la **derecha porque lo pidió Bauti**. Evaluar y proponer en la bitácora usar el otro lado (izquierda) para "Mover a…" o completar, sin hacerlo si no aporta.
+  - Tests con touch emulado (borra, cancela, deshacer, serie, scroll vertical no borra) y video en `docs/capturas/M1-*.webm`.
+
 ## Noche 2 (pedidos del 4/11 al mediodía) — HACER PRIMERO, en este orden: C4, C5, S1, G1, G2; después E1, F1, F2
 
 - [x] **C4 · Tiempos de una serie por tramos, en segundos**
