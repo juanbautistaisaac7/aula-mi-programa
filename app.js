@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.28.0";
+const APP_VERSION = "2.41.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -38,6 +38,8 @@ function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
 function byId(id) { return document.getElementById(id); }
 function weekStartOf(dateStr, ws) { const d = dToDate(dateStr); const diff = (d.getDay() - ws + 7) % 7; d.setDate(d.getDate() - diff); return iso(d); }
 function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+/** "1 tarea" / "3 tareas" (L1a2: nada de "1 tareas"). */
+function pl(n, one, many) { return n + " " + (n === 1 ? one : many); }
 /* Hora "HH:MM" según el formato elegido (24 h o 12 h). */
 function fmtTime(hm) {
   const m = hmToMin(hm); if (m == null) return "";
@@ -58,16 +60,18 @@ function defaultSettings() {
     pomo: { f: 25, s: 5, l: 15, c: 4 },
     sounds: true, notif: false, hourFmt: 24, showDone: true,
     upcomingDays: 7, tags: ["repaso", "importante", "entrega"], dayEnd: "04:00",
-    doneKeepDays: 7 // B5: la Lista completa oculta las hechas hace más de N días (0 = nunca)
+    doneKeepDays: 7, // B5: la Lista completa oculta las hechas hace más de N días (0 = nunca)
+    reminderDefaults: defaultReminderDefaults() // E1: lo que trae un parcial que no tiene recordatorios propios
   };
 }
 function baseState() {
   return {
     v: 2, settings: defaultSettings(),
     subjects: [], projects: [], evals: [], tasks: [], notes: [], habits: [], sessions: [],
-    dayLog: {}, dayPlan: {},
+    dayLog: {}, dayPlan: {}, years: [defaultFirstYear()],
     timer: { phase: "focus", left: 25 * 60, total: 25 * 60, run: false, ends: null, taskId: null, subjectId: null, projectId: null, cycle: 0 },
-    meta: { created: todayISO(), migratedV1: false, notified: {}, lastBackup: null }
+    meta: { created: todayISO(), migratedV1: false, notified: {}, lastBackup: null },
+    sync: syncBlank()
   };
 }
 const SUBJ_COLORS = ["#4338ca", "#0e7490", "#b54708", "#067647", "#9f1239", "#175cd3", "#b42318", "#6d28d9", "#0f766e", "#a16207", "#be185d", "#374151"];
@@ -145,13 +149,14 @@ async function persist() {
   if (saving) { savePending = true; return; }
   saving = true;
   state.meta.lastSave = Date.now();
-  const json = JSON.stringify(state);
+  syncTrack();
+  const json = JSON.stringify(fullState());
   try {
     if (db) await idbPut("kv", "state", json);
     else if (typeof localStorage !== "undefined") localStorage.setItem("aula-state-fallback", json);
     try { if (typeof localStorage !== "undefined" && json.length < 3500000) localStorage.setItem(EMERGENCY_KEY, json); } catch (e) {}
     const el = byId("saveInd");
-    if (el) { el.classList.remove("saving"); const t = byId("saveTxt"); if (t) t.textContent = "todo guardado"; }
+    if (el) { el.classList.remove("saving"); const t = byId("saveTxt"); if (t) t.textContent = "todo guardado"; syncPaint(); }
   } catch (e) {
     console.warn("Error al guardar", e);
     try { if (typeof localStorage !== "undefined") localStorage.setItem(EMERGENCY_KEY, json); } catch (e2) {}
@@ -159,7 +164,7 @@ async function persist() {
   saving = false;
   if (savePending) { savePending = false; persist(); }
 }
-function change() { markDirty(); }
+function change() { markDirty(); syncSoon(); }
 /* Guardado sincrónico de último momento (al cerrar, recargar o mandar la app al fondo).
    IndexedDB es asíncrono y el navegador puede cortar la transacción cuando mata la
    página; localStorage es sincrónico y siempre llega. loadState usa la copia de
@@ -168,7 +173,8 @@ function flushNow() {
   if (!state) return;
   try {
     state.meta.lastSave = Date.now();
-    const j = JSON.stringify(state);
+    syncTrack();
+    const j = JSON.stringify(fullState());
     try { if (typeof localStorage !== "undefined") localStorage.setItem(EMERGENCY_KEY, j); } catch (e) {}
     if (db) db.transaction("kv", "readwrite").objectStore("kv").put(j, "state");
   } catch (e) {}
@@ -178,7 +184,7 @@ async function dailyBackup() {
   try {
     const k = "auto-" + todayISO();
     if (!db) return;
-    await idbPut("backups", k, { ts: Date.now(), label: "Automática " + fmtD(todayISO()), data: JSON.stringify(state) });
+    await idbPut("backups", k, { ts: Date.now(), label: "Automática " + fmtD(todayISO()), data: JSON.stringify(fullState()) });
     const keys = (await idbKeys("backups")).filter(x => String(x).startsWith("auto-")).sort();
     while (keys.length > 10) await idbDel("backups", keys.shift());
     state.meta.lastBackup = todayISO();
@@ -187,7 +193,7 @@ async function dailyBackup() {
 async function manualBackup() {
   try {
     if (!db) { toast("IndexedDB no disponible en este navegador"); return; }
-    await idbPut("backups", "manual-" + Date.now(), { ts: Date.now(), label: "Manual " + new Date().toLocaleString("es-AR"), data: JSON.stringify(state) });
+    await idbPut("backups", "manual-" + Date.now(), { ts: Date.now(), label: "Manual " + new Date().toLocaleString("es-AR"), data: JSON.stringify(fullState()) });
     const keys = (await idbKeys("backups")).filter(x => String(x).startsWith("manual-")).sort();
     while (keys.length > 10) await idbDel("backups", keys.shift());
     toast("Copia de seguridad creada");
@@ -205,8 +211,448 @@ function normalizeState(s) {
   for (const k of ["subjects", "projects", "evals", "tasks", "notes", "habits", "sessions"]) if (!Array.isArray(s[k])) s[k] = [];
   s.dayLog = s.dayLog || {}; s.dayPlan = s.dayPlan || {}; s.meta = Object.assign(b.meta, s.meta || {});
   s.timer = Object.assign(b.timer, s.timer || {});
+  ensureYears(s);
   s.v = 2;
   return s;
+}
+
+/* ===================== SINCRONIZACIÓN (S1) — motor =====================
+   Cada "elemento" sincronizable tiene una clave:
+   - arreglos con id (tasks, evals, subjects…): "tasks:<id>"
+   - objetos (settings, dayLog, dayPlan…): "settings.theme", "dayLog.2026-11-04"
+   - otros valores sueltos: el nombre del campo.
+   state.sync.stamps[clave] = cuándo cambió por última vez; state.sync.tombs[clave] =
+   cuándo se borró (la "lápida": así un borrado no revive desde el otro dispositivo).
+   No hace falta tocar cada lugar que edita o borra: al guardar, syncTrack() compara
+   cada elemento con cómo estaba (un hash en memoria) y marca lo que cambió.
+   Lo que es de cada dispositivo (meta, timer, la propia marca de sync) no viaja. */
+const SYNC_LOCAL = new Set(["meta", "sync", "timer", "v"]);
+let syncHashes = null;
+function syncBlank() { return { stamps: {}, tombs: {} }; }
+function syncHash(str) { let h = 0x811c9dc5; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); } return (h >>> 0).toString(36) + ":" + str.length; }
+function syncIsIdArray(v) { return Array.isArray(v) && v.every(x => x && typeof x === "object" && typeof x.id === "string"); }
+/* Recorre el estado y llama fn(clave, valor) por cada elemento sincronizable. */
+function syncEach(s, fn) {
+  for (const c of Object.keys(s)) {
+    if (SYNC_LOCAL.has(c)) continue;
+    const v = s[c];
+    if (syncIsIdArray(v)) v.forEach(x => fn(c + ":" + x.id, x));
+    else if (v && typeof v === "object" && !Array.isArray(v)) for (const k of Object.keys(v)) fn(c + "." + k, v[k]);
+    else fn(c, v);
+  }
+}
+function syncHashesOf(s) { const m = new Map(); syncEach(s, (k, v) => m.set(k, syncHash(JSON.stringify(v === undefined ? null : v)))); return m; }
+/* Marca lo que cambió desde la última vez. Devuelve cuántas claves cambiaron. */
+function syncTrack(now) {
+  if (!state) return 0;
+  if (!state.sync || typeof state.sync !== "object") state.sync = syncBlank();
+  const sy = state.sync; sy.stamps = sy.stamps || {}; sy.tombs = sy.tombs || {};
+  const cur = syncHashesOf(fullState());
+  if (!syncHashes) { syncHashes = cur; return 0; }
+  now = now || Date.now();
+  let n = 0;
+  for (const [k, h] of cur) if (syncHashes.get(k) !== h) { sy.stamps[k] = now; delete sy.tombs[k]; n++; }
+  for (const k of syncHashes.keys()) if (!cur.has(k)) { sy.tombs[k] = now; delete sy.stamps[k]; n++; }
+  syncHashes = cur;
+  return n;
+}
+function syncResetHashes() { syncHashes = state ? syncHashesOf(fullState()) : null; }
+/* Fusiona dos copias {data, stamps, tombs}. Por clave gana la marca más nueva; un
+   borrado gana si es más nuevo que la última edición. Sin marcas (datos de antes de
+   la sincronización) cuentan como 0: si los dos lados tienen la misma clave con
+   distinto contenido y ninguno tiene marca, se elige siempre el mismo (el de JSON
+   mayor) para que los dos dispositivos terminen iguales.
+   Devuelve { data, stamps, tombs } nuevos (no toca las entradas). */
+/* Primera vez: un dispositivo nuevo arranca con las 10 materias de ejemplo (ids al azar).
+   Si los dos lados tienen una materia con el mismo nombre, queda una sola: la que tiene
+   cosas vinculadas (o, si empatan, la de id menor, así los dos eligen la misma), y todo
+   lo que apuntaba a la otra pasa a apuntar a la que queda. */
+function syncDedupeSubjects(m, now) {
+  const subs = m.data.subjects || [], norm = x => String(x || "").trim().toLowerCase();
+  const refs = new Map();
+  const walk = (o, fn) => { for (const c of Object.keys(m.data)) { const v = m.data[c]; if (Array.isArray(v)) v.forEach(x => { if (x && typeof x === "object") for (const f of Object.keys(x)) if (/subjectId$/.test(f)) fn(x, f, c); }); } };
+  walk(m.data, (x, f) => refs.set(x[f], (refs.get(x[f]) || 0) + 1));
+  const byName = new Map(), drop = new Map();
+  for (const sj of subs) {
+    const k = norm(sj.name) ? yearOf(sj) + "|" + norm(sj.name) : ""; if (!k) continue;
+    const o = byName.get(k);
+    if (!o) { byName.set(k, sj); continue; }
+    const ro = refs.get(o.id) || 0, rs = refs.get(sj.id) || 0;
+    const keep = ro !== rs ? (ro > rs ? o : sj) : (o.id < sj.id ? o : sj), gone = keep === o ? sj : o;
+    byName.set(k, keep); drop.set(gone.id, keep.id);
+  }
+  if (!drop.size) return m;
+  m.data.subjects = subs.filter(x => !drop.has(x.id));
+  for (const [id] of drop) { m.tombs["subjects:" + id] = now; delete m.stamps["subjects:" + id]; }
+  walk(m.data, (x, f, c) => { if (drop.has(x[f])) { x[f] = drop.get(x[f]); m.stamps[c + ":" + x.id] = now; } });
+  return m;
+}
+function syncMerge(L, R) {
+  const clone = x => x === undefined ? undefined : JSON.parse(JSON.stringify(x));
+  const out = clone(L.data), stamps = Object.assign({}, R.stamps || {}, L.stamps || {}), tombs = {};
+  const ver = (side, k, alive, val) => {
+    if (alive) return { t: (side.stamps || {})[k] || 0, alive: true, val };
+    const tb = (side.tombs || {})[k];
+    return tb != null ? { t: tb, alive: false } : null;
+  };
+  const pick = (k, l, r) => {
+    if (!l) return r; if (!r) return l;
+    if (l.t !== r.t) return l.t > r.t ? l : r;
+    if (l.alive !== r.alive) return l.alive ? r : l; // empate: gana el borrado
+    if (!l.alive) return l;
+    const a = JSON.stringify(l.val), b = JSON.stringify(r.val);
+    return a >= b ? l : r;
+  };
+  const settle = (k, w) => {
+    delete stamps[k];
+    if (!w) return;
+    if (w.alive) { if (w.t) stamps[k] = w.t; } else tombs[k] = w.t;
+  };
+  const keys = new Set([...Object.keys(L.data || {}), ...Object.keys(R.data || {})]);
+  for (const c of keys) {
+    if (SYNC_LOCAL.has(c)) continue;
+    const lv = (L.data || {})[c], rv = (R.data || {})[c];
+    if (syncIsIdArray(lv === undefined ? [] : lv) && syncIsIdArray(rv === undefined ? [] : rv) && (Array.isArray(lv) || Array.isArray(rv))) {
+      const la = lv || [], ra = rv || [], lm = new Map(la.map(x => [x.id, x])), rm = new Map(ra.map(x => [x.id, x]));
+      const res = [], seen = new Set();
+      const consider = id => {
+        if (seen.has(id)) return; seen.add(id);
+        const k = c + ":" + id;
+        const w = pick(k, ver(L, k, lm.has(id), lm.get(id)), ver(R, k, rm.has(id), rm.get(id)));
+        settle(k, w);
+        if (w && w.alive) res.push(clone(w.val));
+      };
+      // el orden lo da el lado remoto (lo que ya está en el servidor) y después lo nuevo de acá:
+      // así los dos dispositivos terminan con el mismo orden y no se suben cambios de más
+      ra.forEach(x => consider(x.id)); la.forEach(x => consider(x.id));
+      // lápidas de elementos que ya no están en ninguno de los dos lados
+      for (const side of [L, R]) for (const k of Object.keys(side.tombs || {})) if (k.startsWith(c + ":") && !(k in tombs) && !seen.has(k.slice(c.length + 1))) {
+        const o = side === L ? R : L, t2 = (o.tombs || {})[k];
+        tombs[k] = Math.max(side.tombs[k], t2 || 0);
+      }
+      out[c] = res;
+    } else if ((lv && typeof lv === "object" && !Array.isArray(lv)) || (rv && typeof rv === "object" && !Array.isArray(rv))) {
+      const lo = lv && typeof lv === "object" && !Array.isArray(lv) ? lv : {}, ro = rv && typeof rv === "object" && !Array.isArray(rv) ? rv : {};
+      const res = {}, sub = new Set([...Object.keys(lo), ...Object.keys(ro)]);
+      for (const side of [L, R]) for (const k of Object.keys(side.tombs || {})) if (k.startsWith(c + ".")) sub.add(k.slice(c.length + 1));
+      for (const s of sub) {
+        const k = c + "." + s;
+        const w = pick(k, ver(L, k, s in lo, lo[s]), ver(R, k, s in ro, ro[s]));
+        settle(k, w);
+        if (w && w.alive) res[s] = clone(w.val);
+      }
+      out[c] = res;
+    } else {
+      const w = pick(c, ver(L, c, lv !== undefined, lv), ver(R, c, rv !== undefined, rv));
+      settle(c, w);
+      if (w && w.alive) out[c] = clone(w.val); else delete out[c];
+    }
+  }
+  return { data: out, stamps, tombs };
+}
+
+/* ===================== SINCRONIZACIÓN (S1b) — cliente =====================
+   El código de sincronización vive solo en este dispositivo (localStorage), nunca
+   dentro de los datos ni de las copias de seguridad. Una pasada: bajar lo que hay,
+   fusionar (sin espera entre fusionar y aplicar, así no se pierde lo que estés
+   escribiendo), y subir solo si algo cambió (KV gratis tiene ~1000 escrituras por día). */
+const SYNC_CFG_KEY = "aula-sync", SYNC_URL = "api/sync";
+let syncCfg = null, syncBusy = false, syncAgain = false, syncSoonT = null, syncStat = { kind: "off" };
+function syncLoadCfg() { try { syncCfg = JSON.parse(localStorage.getItem(SYNC_CFG_KEY) || "null"); } catch (e) { syncCfg = null; } }
+function syncSaveCfg() { try { if (syncCfg) localStorage.setItem(SYNC_CFG_KEY, JSON.stringify(syncCfg)); else localStorage.removeItem(SYNC_CFG_KEY); } catch (e) {} }
+function syncOn() { return !!(syncCfg && syncCfg.key); }
+const SYNC_TXT = { busy: "sincronizando…", ok: "sincronizado", offline: "sin conexión · se sube después", nokv: "falta activar la sincronización", badkey: "código de sincronización inválido", newer: "actualizá Aula en este dispositivo", error: "no se pudo sincronizar" };
+function syncSetStatus(kind) {
+  syncStat = { kind, at: Date.now() };
+  syncPaint();
+  if (route.view === "config") refreshSyncCard();
+}
+function syncPaint() {
+  const el = byId("saveInd"), t = byId("saveTxt"); if (!el || !t || el.classList.contains("saving")) return;
+  if (!syncOn()) { t.textContent = "todo guardado"; el.className = ""; return; }
+  t.textContent = SYNC_TXT[syncStat.kind] || "todo guardado";
+  el.className = "sync-" + syncStat.kind;
+}
+function canon(x) {
+  if (Array.isArray(x)) return "[" + x.map(canon).join(",") + "]";
+  if (x && typeof x === "object") return "{" + Object.keys(x).sort().filter(k => x[k] !== undefined).map(k => JSON.stringify(k) + ":" + canon(x[k])).join(",") + "}";
+  return JSON.stringify(x === undefined ? null : x);
+}
+function syncLocal() {
+  syncTrack();
+  const data = {}, f = fullState();
+  for (const k of Object.keys(f)) if (!SYNC_LOCAL.has(k)) data[k] = f[k];
+  return { data, stamps: state.sync.stamps, tombs: state.sync.tombs };
+}
+function syncApply(m) {
+  const before = canon(syncLocal().data);
+  yearJoin();
+  for (const k of Object.keys(state)) if (!SYNC_LOCAL.has(k) && !(k in m.data)) delete state[k];
+  for (const k of Object.keys(m.data)) if (!SYNC_LOCAL.has(k)) state[k] = m.data[k];
+  state.sync = { stamps: m.stamps, tombs: m.tombs };
+  normalizeState(state);
+  yearSplit();
+  syncResetHashes();
+  if (canon(syncLocal().data) === before) return false;
+  markDirty();
+  try { applyTheme(); document.documentElement.style.setProperty("--acc", state.settings.accent); } catch (e) {}
+  ui.serMap = null;
+  render();
+  return true;
+}
+async function syncFetch(method, body) {
+  const ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const tm = setTimeout(() => { if (ctl) ctl.abort(); }, 20000);
+  try {
+    const r = await fetch(SYNC_URL, { method, cache: "no-store", signal: ctl ? ctl.signal : undefined,
+      headers: { authorization: "Bearer " + syncCfg.key, "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+    let j = null; try { j = await r.json(); } catch (e) {}
+    return { status: r.status, body: j };
+  } finally { clearTimeout(tm); }
+}
+async function syncBackup() {
+  try { if (db) await idbPut("backups", "presync-" + Date.now(), { ts: Date.now(), label: "Antes de sincronizar por primera vez", version: APP_VERSION, data: JSON.stringify(fullState()) }); } catch (e) {}
+}
+async function syncNow() {
+  if (!syncOn() || !state) return;
+  if (syncBusy) { syncAgain = true; return; }
+  syncBusy = true; clearTimeout(syncSoonT); syncSetStatus("busy");
+  try {
+    let doc = await syncFetch("GET");
+    for (let attempt = 0; attempt < 4; attempt++) {
+      if (doc.status === 503) return syncSetStatus("nokv");
+      if (doc.status === 401) return syncSetStatus("badkey");
+      if (![200, 404, 409].includes(doc.status)) return syncSetStatus("error");
+      const remote = doc.body && doc.body.data && typeof doc.body.data === "object" ? doc.body : null;
+      const baseVersion = (doc.body && Number.isInteger(doc.body.version)) ? doc.body.version : 0;
+      if (remote && Number(remote.data.schema) > SCHEMA_VERSION) return syncSetStatus("newer");
+      if (remote && !syncCfg.merged) await syncBackup();
+      if (remote) {
+        const rs = remote.data.state && typeof remote.data.state === "object" ? remote.data.state : {};
+        const m = syncMerge(syncLocal(), { data: rs, stamps: remote.data.stamps || {}, tombs: remote.data.tombs || {} });
+        syncApply(syncCfg.merged ? m : syncDedupeSubjects(m, Date.now()));
+      }
+      const mine = syncLocal();
+      const payload = { app: APP_VERSION, schema: SCHEMA_VERSION, state: mine.data, stamps: mine.stamps, tombs: mine.tombs };
+      const same = remote && canon({ s: payload.state, a: payload.stamps, b: payload.tombs }) === canon({ s: remote.data.state, a: remote.data.stamps || {}, b: remote.data.tombs || {} });
+      let version = baseVersion;
+      if (!same) {
+        const put = await syncFetch("PUT", { baseVersion, data: payload });
+        if (put.status === 409) { doc = put; continue; } // otro dispositivo escribió en el medio: fusionar otra vez
+        if (put.status !== 200) return syncSetStatus(put.status === 503 ? "nokv" : put.status === 401 ? "badkey" : "error");
+        version = put.body.version;
+      }
+      syncCfg.version = version; syncCfg.merged = true; syncCfg.lastSync = Date.now(); syncSaveCfg();
+      return syncSetStatus("ok");
+    }
+    syncSetStatus("error");
+  } catch (e) { syncSetStatus("offline"); }
+  finally {
+    syncBusy = false;
+    if (syncAgain) { syncAgain = false; syncSoon(1000); }
+  }
+}
+function syncSoon(ms) { if (!syncOn()) return; clearTimeout(syncSoonT); syncSoonT = setTimeout(syncNow, ms == null ? 4000 : ms); }
+function syncNewKey() {
+  const b = new Uint8Array(16); crypto.getRandomValues(b);
+  return btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function syncValidKey(k) { return /^[A-Za-z0-9_-]{22,128}$/.test(String(k || "")); }
+/* Conecta este dispositivo con un código (nuevo o el de otro dispositivo) y sincroniza. */
+function syncConnect(key) {
+  key = String(key || "").trim().replace(/\s+/g, "");
+  if (!syncValidKey(key)) return false;
+  syncCfg = { key, version: 0, merged: false, since: Date.now() };
+  syncSaveCfg(); syncNow();
+  return true;
+}
+function syncDisconnect() { syncCfg = null; syncSaveCfg(); clearTimeout(syncSoonT); syncSetStatus("off"); }
+function syncInit() {
+  syncLoadCfg();
+  if (!syncOn()) return;
+  setTimeout(syncNow, 800);
+  setInterval(() => { if (document.visibilityState === "visible") syncNow(); }, 60000);
+}
+
+/* ============================ QR (S1c) ============================
+   Generador de códigos QR mínimo, sin dependencias: modo byte, corrección M,
+   versiones 1 a 10 (hasta 213 bytes; el link de sincronización usa ~60).
+   Basado en el estándar ISO/IEC 18004 (mismo esquema que la implementación de Nayuki). */
+const QR_EC_M = [null, [10, 1, 16, 0, 0], [16, 1, 28, 0, 0], [26, 1, 44, 0, 0], [18, 2, 32, 0, 0], [24, 2, 43, 0, 0],
+  [16, 4, 27, 0, 0], [18, 4, 31, 0, 0], [22, 2, 38, 2, 39], [22, 3, 36, 2, 37], [26, 4, 43, 1, 44]];
+const QR_ALIGN = [null, [], [6, 18], [6, 22], [6, 26], [6, 30], [6, 34], [6, 22, 38], [6, 24, 42], [6, 26, 46], [6, 28, 50]];
+function qrMul(x, y) { let z = 0; for (let i = 7; i >= 0; i--) { z = (z << 1) ^ ((z >>> 7) * 0x11D); z ^= ((y >>> i) & 1) * x; } return z & 255; }
+function qrDivisor(deg) {
+  const r = new Array(deg).fill(0); r[deg - 1] = 1; let root = 1;
+  for (let i = 0; i < deg; i++) { for (let j = 0; j < deg; j++) { r[j] = qrMul(r[j], root); if (j + 1 < deg) r[j] ^= r[j + 1]; } root = qrMul(root, 2); }
+  return r;
+}
+function qrRemainder(data, div) {
+  const r = div.map(() => 0);
+  for (const b of data) { const f = b ^ r.shift(); r.push(0); div.forEach((c, i) => { r[i] ^= qrMul(c, f); }); }
+  return r;
+}
+function qrEncode(text) {
+  const bytes = [...new TextEncoder().encode(String(text))];
+  let ver = 0;
+  for (let v = 1; v <= 10; v++) { const e = QR_EC_M[v]; if (e[1] * e[2] + e[3] * e[4] >= bytes.length + (v < 10 ? 2 : 3)) { ver = v; break; } }
+  if (!ver) throw new Error("Texto demasiado largo para el QR");
+  const [ecLen, b1, d1, b2, d2] = QR_EC_M[ver], cap = b1 * d1 + b2 * d2;
+  // bits: modo byte (0100) + largo + datos + terminador, relleno a bytes y con 0xEC/0x11
+  const bits = [];
+  const put = (val, n) => { for (let i = n - 1; i >= 0; i--) bits.push((val >>> i) & 1); };
+  put(4, 4); put(bytes.length, ver < 10 ? 8 : 16); bytes.forEach(b => put(b, 8));
+  put(0, Math.min(4, cap * 8 - bits.length));
+  while (bits.length % 8) bits.push(0);
+  const data = [];
+  for (let i = 0; i < bits.length; i += 8) data.push(bits.slice(i, i + 8).reduce((a, b) => a * 2 + b, 0));
+  for (let p = 0; data.length < cap; p ^= 1) data.push(p ? 0x11 : 0xEC);
+  // bloques + corrección de errores, intercalados
+  const div = qrDivisor(ecLen), blocks = [];
+  let k = 0;
+  for (let i = 0; i < b1 + b2; i++) { const n = i < b1 ? d1 : d2; const d = data.slice(k, k + n); k += n; blocks.push({ d, e: qrRemainder(d, div) }); }
+  const cw = [];
+  for (let i = 0; i < Math.max(d1, d2); i++) blocks.forEach(b => { if (i < b.d.length) cw.push(b.d[i]); });
+  for (let i = 0; i < ecLen; i++) blocks.forEach(b => cw.push(b.e[i]));
+  // matriz
+  const size = ver * 4 + 17;
+  const M = Array.from({ length: size }, () => new Array(size).fill(false));
+  const F = Array.from({ length: size }, () => new Array(size).fill(false));
+  const set = (x, y, dark) => { M[y][x] = dark; F[y][x] = true; };
+  for (let i = 0; i < size; i++) { set(6, i, i % 2 === 0); set(i, 6, i % 2 === 0); }
+  const finder = (cx, cy) => { for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) { const x = cx + dx, y = cy + dy, d = Math.max(Math.abs(dx), Math.abs(dy)); if (x >= 0 && x < size && y >= 0 && y < size) set(x, y, d !== 2 && d !== 4); } };
+  finder(3, 3); finder(size - 4, 3); finder(3, size - 4);
+  const al = QR_ALIGN[ver], na = al.length;
+  for (let i = 0; i < na; i++) for (let j = 0; j < na; j++) {
+    if ((i === 0 && j === 0) || (i === 0 && j === na - 1) || (i === na - 1 && j === 0)) continue;
+    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) set(al[i] + dx, al[j] + dy, Math.max(Math.abs(dx), Math.abs(dy)) !== 1);
+  }
+  const drawFormat = mask => {
+    const d = (0 << 3) | mask; let rem = d; // nivel M = 00
+    for (let i = 0; i < 10; i++) rem = (rem << 1) ^ ((rem >>> 9) * 0x537);
+    const b = ((d << 10) | rem) ^ 0x5412, g = i => ((b >>> i) & 1) === 1;
+    for (let i = 0; i <= 5; i++) set(8, i, g(i));
+    set(8, 7, g(6)); set(8, 8, g(7)); set(7, 8, g(8));
+    for (let i = 9; i < 15; i++) set(14 - i, 8, g(i));
+    for (let i = 0; i < 8; i++) set(size - 1 - i, 8, g(i));
+    for (let i = 8; i < 15; i++) set(8, size - 15 + i, g(i));
+    set(8, size - 8, true);
+  };
+  drawFormat(0); // reserva el lugar
+  if (ver >= 7) {
+    let rem = ver; for (let i = 0; i < 12; i++) rem = (rem << 1) ^ ((rem >>> 11) * 0x1F25);
+    const b = (ver << 12) | rem;
+    for (let i = 0; i < 18; i++) { const c = ((b >>> i) & 1) === 1, a = size - 11 + i % 3, bb = Math.floor(i / 3); set(a, bb, c); set(bb, a, c); }
+  }
+  let bi = 0;
+  for (let right = size - 1; right >= 1; right -= 2) {
+    if (right === 6) right = 5;
+    for (let vert = 0; vert < size; vert++) for (let j = 0; j < 2; j++) {
+      const x = right - j, up = ((right + 1) & 2) === 0, y = up ? size - 1 - vert : vert;
+      if (!F[y][x] && bi < cw.length * 8) { M[y][x] = ((cw[bi >>> 3] >>> (7 - (bi & 7))) & 1) === 1; bi++; }
+    }
+  }
+  const maskFn = [(x, y) => (x + y) % 2 === 0, (x, y) => y % 2 === 0, x => x % 3 === 0, (x, y) => (x + y) % 3 === 0,
+    (x, y) => (Math.floor(x / 3) + Math.floor(y / 2)) % 2 === 0, (x, y) => x * y % 2 + x * y % 3 === 0,
+    (x, y) => (x * y % 2 + x * y % 3) % 2 === 0, (x, y) => ((x + y) % 2 + x * y % 3) % 2 === 0];
+  const applyMask = m => { for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) if (!F[y][x] && maskFn[m](x, y)) M[y][x] = !M[y][x]; };
+  const penalty = () => {
+    let p = 0, dark = 0;
+    const line = get => { let run = 1, s = ""; for (let i = 0; i < size; i++) { s += get(i) ? "1" : "0"; if (i && get(i) === get(i - 1)) { run++; if (run === 5) p += 3; else if (run > 5) p++; } else run = 1; }
+      for (const pat of ["10111010000", "00001011101"]) { let at = s.indexOf(pat); while (at >= 0) { p += 40; at = s.indexOf(pat, at + 1); } } };
+    for (let y = 0; y < size; y++) line(x => M[y][x]);
+    for (let x = 0; x < size; x++) line(y => M[y][x]);
+    for (let y = 0; y < size - 1; y++) for (let x = 0; x < size - 1; x++) { const c = M[y][x]; if (c === M[y][x + 1] && c === M[y + 1][x] && c === M[y + 1][x + 1]) p += 3; }
+    for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) if (M[y][x]) dark++;
+    p += Math.floor(Math.abs(dark * 20 - size * size * 10) / (size * size)) * 10;
+    return p;
+  };
+  let best = 0, bestP = Infinity;
+  for (let m = 0; m < 8; m++) { applyMask(m); drawFormat(m); const pe = penalty(); if (pe < bestP) { bestP = pe; best = m; } applyMask(m); }
+  applyMask(best); drawFormat(best);
+  return { size, modules: M, version: ver, mask: best };
+}
+/* SVG con zona de silencio de 4 módulos (siempre negro sobre blanco: los lectores lo necesitan) */
+function qrSVG(text, px) {
+  const q = qrEncode(text), n = q.size + 8;
+  let d = "";
+  for (let y = 0; y < q.size; y++) for (let x = 0; x < q.size; x++) if (q.modules[y][x]) d += `M${x + 4} ${y + 4}h1v1h-1z`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${n} ${n}" width="${px || 200}" height="${px || 200}" shape-rendering="crispEdges" role="img" aria-label="Código QR"><rect width="${n}" height="${n}" fill="#fff"/><path d="${d}" fill="#000"/></svg>`;
+}
+
+/* ===================== SINCRONIZACIÓN (S1c) — pantalla =====================
+   Tarjeta en Configuración. Sin cuentas: un código al azar (128 bits) que se pasa
+   al otro dispositivo con un QR (abre el link en el celu) o copiándolo. */
+function syncLink() { return location.origin + location.pathname + "#/sync?k=" + encodeURIComponent(syncCfg ? syncCfg.key : ""); }
+function syncPretty(k) { return String(k || "").replace(/(.{4})/g, "$1 ").trim(); }
+function syncAgo(ts) {
+  if (!ts) return "";
+  const m = Math.round((Date.now() - ts) / 60000);
+  return m < 1 ? "recién" : m < 60 ? "hace " + m + " min" : m < 1440 ? "hace " + Math.round(m / 60) + " h" : "el " + fmtD(iso(new Date(ts)));
+}
+const SYNC_STEPS = `<ol class="syncsteps">
+  <li>Entrá a <b>dash.cloudflare.com</b> → <b>Storage &amp; Databases → KV</b> → <b>Create namespace</b>. Nombre: <code>aula-sync</code> → <b>Create</b>.</li>
+  <li>Andá a <b>Workers &amp; Pages</b> → el proyecto de Aula → <b>Settings → Bindings</b> → <b>Add</b> → <b>KV namespace</b>. <b>Variable name: <code>AULA_KV</code></b> (exacto, en mayúsculas) y elegí <code>aula-sync</code> → <b>Save</b>.</li>
+  <li>En <b>Deployments</b>, en el último, tocá <b>⋯ → Retry deployment</b> (así toma el cambio).</li>
+  <li>Volvé acá en la compu y tocá <b>Activar</b>. Después, en el celu, escaneá el QR o pegá el código.</li>
+</ol>`;
+function syncCardHTML() {
+  const on = syncOn(), k = syncStat.kind;
+  let h = `<h3>Sincronizar compu y celu</h3>`;
+  if (ui.syncInvite && !(on && syncCfg.key === ui.syncInvite)) {
+    h += `<div class="syncinvite"><p><b>Abriste un link de sincronización.</b> ¿Conectar este dispositivo? Lo que tengas acá se suma a lo del otro (no se borra nada, y antes se guarda una copia).</p>
+      <div class="syncbtns"><button class="btn primary" onclick="syncAcceptInvite()">Conectar este dispositivo</button><button class="btn" onclick="ui.syncInvite=null;refreshSyncCard()">Ahora no</button></div></div>`;
+  }
+  if (!on) {
+    h += `<p class="tiny syncintro">Hoy cada dispositivo guarda sus datos por separado. Conectalos con un código y se mantienen iguales solos, sin cuentas ni contraseñas.</p>
+      <div class="syncbtns"><button class="btn primary" onclick="syncActivate()">Activar en este dispositivo</button>
+        <button class="btn" onclick="ui.syncPaste=!ui.syncPaste;refreshSyncCard()" aria-expanded="${!!ui.syncPaste}">Ya tengo un código</button></div>
+      ${ui.syncPaste ? `<div class="syncpaste"><label for="sync_code">Código del otro dispositivo</label>
+        <div class="syncrow"><input id="sync_code" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Pegalo acá" onkeydown="if(event.key==='Enter')syncPasteGo()">
+        <button class="btn primary" onclick="syncPasteGo()">Conectar</button></div></div>` : ""}
+      <details class="syncsetup"><summary>Antes, una sola vez: activarlo en Cloudflare (2 minutos)</summary>${SYNC_STEPS}</details>`;
+    return h;
+  }
+  const dot = { ok: "ok", busy: "busy", offline: "warn", nokv: "warn", newer: "warn", badkey: "bad", error: "bad" }[k] || "ok";
+  h += `<div class="syncstat"><span class="syncdot ${dot}"></span><div class="grow"><b id="sync_stattxt">${esc(k === "off" ? "Conectado" : capitalize(SYNC_TXT[k] || "conectado"))}</b>
+      <div class="tiny">${syncCfg.lastSync ? "Última sincronización: " + syncAgo(syncCfg.lastSync) : "Todavía no se sincronizó"}</div></div>
+      <button class="btn sm" onclick="syncNow()" ${k === "busy" ? "disabled" : ""}>Sincronizar ahora</button></div>`;
+  if (k === "nokv") h += `<div class="syncwarn"><b>Falta un paso en Cloudflare.</b> Mientras tanto la app anda igual que siempre; tus datos están guardados en este dispositivo.${SYNC_STEPS}</div>`;
+  if (k === "newer") h += `<div class="syncwarn">El otro dispositivo tiene una versión más nueva de Aula. Cerrá y abrí la app para actualizarla.</div>`;
+  h += `<div class="syncshare"><div class="syncqr">${qrSVG(syncLink(), 168)}</div>
+      <div class="grow"><b>Conectar otro dispositivo</b>
+        <p class="tiny">En el celu, escaneá el QR con la cámara. <b>Si usás Aula desde la pantalla de inicio</b>, el link abre Safari y no la app: en ese caso copiá el código y pegalo en la app, en Configuración → <i>Ya tengo un código</i>.</p>
+        <div class="synccode" aria-label="Código de sincronización">${esc(syncPretty(syncCfg.key))}</div>
+        <div class="syncbtns"><button class="btn sm" onclick="syncCopy(syncCfg.key,'Código copiado')">Copiar código</button><button class="btn sm" onclick="syncCopy(syncLink(),'Link copiado')">Copiar link</button></div>
+      </div></div>
+    <p class="tiny">Cualquiera con este código ve tus datos: no lo compartas. Si se filtró, cambialo.</p>
+    <div class="syncbtns end"><button class="btn sm ghost" onclick="syncAskChange()">Cambiar código</button><button class="btn sm danger" onclick="syncAskOff()">Desconectar este dispositivo</button></div>`;
+  return h;
+}
+function refreshSyncCard() { const c = byId("synccard"); if (c) c.innerHTML = syncCardHTML(); }
+function syncActivate() { syncConnect(syncNewKey()); refreshSyncCard(); toast("Sincronización activada en este dispositivo"); }
+function syncPasteGo() {
+  const v = (byId("sync_code") || {}).value || "";
+  const m = /[?&#]k=([A-Za-z0-9_-]+)/.exec(v); // también acepta el link entero
+  if (!syncConnect(m ? m[1] : v)) { toast("Ese código no parece válido: copialo de nuevo desde el otro dispositivo"); return; }
+  ui.syncPaste = false; refreshSyncCard(); toast("Conectado. Trayendo tus datos…");
+}
+function syncAcceptInvite() { const k = ui.syncInvite; ui.syncInvite = null; if (syncConnect(k)) toast("Conectado. Trayendo tus datos…"); refreshSyncCard(); }
+async function syncCopy(text, msg) {
+  try { await navigator.clipboard.writeText(text); toast(msg); }
+  catch (e) {
+    const t = document.createElement("textarea"); t.value = text; t.setAttribute("readonly", ""); t.style.position = "fixed"; t.style.opacity = "0";
+    document.body.appendChild(t); t.select(); let ok = false; try { ok = document.execCommand("copy"); } catch (e2) {}
+    t.remove(); toast(ok ? msg : "No se pudo copiar: mantené apretado el código para copiarlo");
+  }
+}
+function syncAskOff() {
+  askConfirm({ title: "Desconectar este dispositivo", body: "Tus datos se quedan acá, pero dejan de sincronizarse con el otro. Podés volver a conectarlo con el código cuando quieras.", okLabel: "Desconectar",
+    onOk: () => { syncDisconnect(); refreshSyncCard(); toast("Este dispositivo dejó de sincronizarse"); } });
+}
+function syncAskChange() {
+  askConfirm({ title: "Cambiar código", body: "Se crea un código nuevo y el viejo deja de servir. Después vas a tener que conectar el otro dispositivo de nuevo (QR o código).", okLabel: "Cambiar código",
+    onOk: () => { syncCfg = { key: syncNewKey(), version: 0, merged: true, since: Date.now() }; syncSaveCfg(); syncNow(); refreshSyncCard(); toast("Código nuevo listo: conectá el otro dispositivo"); } });
 }
 
 /* ===================== MIGRACIONES VERSIONADAS =====================
@@ -217,10 +663,27 @@ function normalizeState(s) {
    - Antes de correr pasos, loadState guarda una copia del estado viejo en
      "Copias de seguridad" (clave premig-…) para poder volver atrás.
    - Cada paso agrega un test que carga tests/fixtures/estado-v2.6.json. */
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 6;
 const MIGRATIONS = [
   { to: 2, desc: "Esquema versionado (Aula 2.7)", run: () => {} },
-  { to: 3, desc: "Series explícitas con seriesId (Aula 2.10)", run: s => inferSeriesIds(s.tasks) }
+  { to: 3, desc: "Series explícitas con seriesId (Aula 2.10)", run: s => inferSeriesIds(s.tasks) },
+  // S1: lugar para las marcas de sincronización. No toca ningún dato: lo existente
+  // queda "sin marca" (cuenta como lo más viejo) y se fusiona sin perder nada.
+  { to: 4, desc: "Sincronización entre dispositivos (Aula 2.31)", run: s => { if (!s.sync || typeof s.sync !== "object") s.sync = syncBlank(); } },
+  // G1: años de cursado. Agrega state.years con el primer año ("y0"). No toca ningún
+  // elemento: lo que no tiene yearId es del primer año.
+  { to: 5, desc: "Años de cursado (Aula 2.34)", run: s => { ensureYears(s); } },
+  // E1: recordatorios. Solo agrega los valores por defecto en Configuración (si no
+  // estaban). No toca tareas ni parciales: "reminders" es opcional; un parcial sin él
+  // usa los de Configuración y una tarea sin él no avisa.
+  { to: 6, desc: "Recordatorios (Aula 2.40)", run: s => {
+    s.settings = s.settings || {};
+    const d = s.settings.reminderDefaults, base = defaultReminderDefaults();
+    s.settings.reminderDefaults = {
+      eval: d && Array.isArray(d.eval) ? normReminders(d.eval) : base.eval,
+      task: d && Array.isArray(d.task) ? normReminders(d.task) : base.task
+    };
+  } }
 ];
 /* A3 · Antes, cualquier par de tareas con el mismo título y materia se mostraba como
    "serie". Ahora una serie es explícita (t.seriesId). Para los datos viejos se
@@ -409,6 +872,241 @@ async function loadState() {
   migrateState(state); // estado nuevo (o recién migrado de la v1): sin datos previos que respaldar
 }
 
+/* ===================== AÑOS DE CURSADO (G1) =====================
+   state.years = [{ id, name, start, end }]. Cada materia, parcial, tarea, proyecto,
+   nota, hábito y sesión pertenece a un año por su campo yearId; si no lo tiene es del
+   primer año ("y0"): así los datos de antes de G1 quedan EXACTAMENTE iguales (no se
+   reescribe ni una tarea) y los dos dispositivos coinciden sin ponerse de acuerdo.
+   El año que se ve es por dispositivo (state.meta.activeYear, no viaja); si no hay
+   uno elegido, se ve el más nuevo.
+   Para no tocar los ~170 lugares que leen state.tasks, state.subjects…, en memoria
+   los arreglos tienen SOLO lo del año que se ve; lo de los otros años espera en
+   yearHidden y fullState() lo vuelve a juntar (en el mismo orden) para guardar,
+   sincronizar, exportar y hacer copias. Lo nuevo que se crea mientras ves un año
+   queda en ese año (fullState le pone el yearId). */
+const YEAR_SCOPED = ["subjects", "projects", "evals", "tasks", "notes", "habits", "sessions"];
+const FIRST_YEAR = "y0";
+let yearHidden = null; // { active, <colección>: { order: [ids], items: Map } }
+function lastDayOfFeb(y) { return new Date(y, 2, 0).getDate(); }
+function defaultFirstYear(y) {
+  y = y || new Date().getFullYear();
+  return { id: FIRST_YEAR, name: y === 2026 ? "3.º año · 2026" : "Año " + y, start: y + "-03-01", end: (y + 1) + "-02-" + lastDayOfFeb(y + 1) };
+}
+function ensureYears(s) {
+  if (!Array.isArray(s.years) || !s.years.length) s.years = [defaultFirstYear()];
+  return s.years;
+}
+const yearOf = x => (x && x.yearId) || FIRST_YEAR;
+function yearsSorted(s) { s = s || state; return (s.years || []).slice().sort((a, b) => String(a.start || "").localeCompare(String(b.start || "")) || String(a.id).localeCompare(String(b.id))); }
+function latestYearId(s) { const ys = yearsSorted(s); return ys.length ? ys[ys.length - 1].id : FIRST_YEAR; }
+function yearById(id) { return (state.years || []).find(y => y.id === id) || null; }
+function activeYearId() {
+  const w = state && state.meta && state.meta.activeYear;
+  return w && (state.years || []).some(y => y.id === w) ? w : latestYearId(state);
+}
+function activeYear() { return yearById(activeYearId()) || yearsSorted()[0] || defaultFirstYear(); }
+function viewingOldYear() { return activeYearId() !== latestYearId(state); }
+/* El estado completo (todos los años), sin tocar `state`. */
+function fullState() {
+  if (!state || !yearHidden) return state;
+  const act = yearHidden.active;
+  if (act !== FIRST_YEAR) for (const c of YEAR_SCOPED) for (const x of state[c] || []) if (x && typeof x === "object" && !x.yearId) x.yearId = act;
+  const out = Object.assign({}, state);
+  for (const c of YEAR_SCOPED) {
+    const h = yearHidden[c]; if (!h || !h.items.size) continue;
+    const cur = Array.isArray(state[c]) ? state[c] : [], ids = new Set(cur.map(x => x && x.id));
+    const res = []; let i = 0;
+    for (const id of h.order) {
+      if (h.items.has(id)) { if (!ids.has(id)) res.push(h.items.get(id)); }
+      else if (i < cur.length) res.push(cur[i++]);
+    }
+    while (i < cur.length) res.push(cur[i++]);
+    out[c] = res;
+  }
+  return out;
+}
+/* `state` tiene que estar completo (recién cargado, restaurado o sincronizado). */
+function yearSplit() {
+  ensureYears(state);
+  // red de seguridad: algo de un año que no está en la lista (una importación a medias, por
+  // ejemplo) no puede quedar invisible para siempre: se le arma su año
+  const known = new Set(state.years.map(y => y.id));
+  for (const c of YEAR_SCOPED) for (const x of state[c] || []) {
+    const yid = yearOf(x);
+    if (!known.has(yid)) { known.add(yid); state.years.push({ id: yid, name: "Año recuperado " + known.size, start: "2000-01-01", end: "2000-12-31" } /* el más viejo: nunca pasa a ser "el actual" */); }
+  }
+  const act = activeYearId();
+  yearHidden = { active: act };
+  for (const c of YEAR_SCOPED) {
+    const all = Array.isArray(state[c]) ? state[c] : [];
+    yearHidden[c] = { order: all.map(x => x && x.id), items: new Map(all.filter(x => yearOf(x) !== act).map(x => [x.id, x])) };
+    state[c] = all.filter(x => yearOf(x) === act);
+  }
+}
+function yearJoin() {
+  if (!yearHidden) return;
+  const f = fullState();
+  for (const c of YEAR_SCOPED) state[c] = f[c];
+  yearHidden = null;
+}
+/* Reemplaza el estado entero (restaurar, importar, reiniciar…) y vuelve a separar por año. */
+function setWholeState(s) { yearHidden = null; state = s; yearSplit(); }
+function setActiveYear(id) {
+  if (!yearById(id) || id === activeYearId()) return;
+  yearJoin();
+  state.meta.activeYear = id === latestYearId(state) ? null : id;
+  yearSplit();
+  ui.serMap = null; ui.calMonth = null;
+  change(); render();
+}
+function yearCounts(id) {
+  const f = fullState(), n = c => (f[c] || []).filter(x => yearOf(x) === id).length;
+  return { subjects: n("subjects"), evals: n("evals"), tasks: n("tasks") };
+}
+
+/* ---------- G1 · pantalla: selector de año, asistente de año nuevo, editar ---------- */
+function fmtYearRange(y) {
+  const f = d => { if (!d) return "?"; const x = dToDate(d); return MESL[x.getMonth()].slice(0, 3) + " " + x.getFullYear(); };
+  return f(y.start) + " – " + f(y.end);
+}
+function yearSwitcherHTML() {
+  const y = activeYear(), old = viewingOldYear();
+  return `<button class="yearsw${old ? " old" : ""}" onclick="openYearPicker()" aria-label="Año: ${escA(y.name)}. Cambiar de año">
+    <span class="yl">${old ? "Viendo un año anterior" : "Año de cursado"}</span>
+    <span class="yn">${esc(y.name)}</span><span class="ych" aria-hidden="true">⌄</span></button>`;
+}
+function oldYearBanner() {
+  if (!viewingOldYear()) return "";
+  const y = activeYear(), cur = yearById(latestYearId(state));
+  return `<div class="yearbanner" role="status"><span class="ybt">Estás viendo <b>${esc(y.name)}</b></span>
+    <button class="btn sm" onclick="setActiveYear('${escA(cur.id)}')" aria-label="Volver a ${escA(cur.name)}">Volver al actual</button></div>`;
+}
+function openYearPicker() {
+  const act = activeYearId(), cur = latestYearId(state);
+  const rows = yearsSorted().slice().reverse().map(y => {
+    const n = yearCounts(y.id);
+    const cnt = !n.subjects && !n.tasks ? "Vacío por ahora" : [n.subjects + (n.subjects === 1 ? " materia" : " materias"), n.tasks + (n.tasks === 1 ? " tarea" : " tareas")].join(" · ");
+    const meta = fmtYearRange(y) + "<br>" + cnt;
+    return `<div class="yrow${y.id === act ? " on" : ""}">
+      <button class="ypick" onclick="closeModal();setActiveYear('${escA(y.id)}')" aria-pressed="${y.id === act}">
+        <span class="ycheck" aria-hidden="true">${y.id === act ? "✓" : ""}</span>
+        <span class="ytx"><span class="ynm">${esc(y.name)}${y.id === cur ? ' <span class="ytag">actual</span>' : ""}</span><span class="tiny">${meta}</span></span></button>
+      <button class="btn sm ghost" onclick="openWrapped('${escA(y.id)}')" aria-label="Resumen de ${escA(y.name)}">Resumen</button>
+      <button class="btn sm ghost" onclick="openYearEdit('${escA(y.id)}')" aria-label="Editar ${escA(y.name)}">Editar</button></div>`;
+  }).join("");
+  openModal(`<h3>Tus años</h3>
+    <p class="tiny" style="margin:-6px 0 12px">Cada año es un espacio aparte: sus materias, parciales, tareas y notas. Los anteriores quedan guardados para consultarlos.</p>
+    <div class="ylist">${rows}</div>
+    <div class="mfoot"><button class="btn" onclick="closeModal()">Cerrar</button><button class="btn primary" onclick="openNewYear()">Nuevo año…</button></div>`, false, true);
+}
+function suggestNextYear() {
+  const last = yearById(latestYearId(state)) || defaultFirstYear();
+  const start = last.end ? addDays(last.end, 1) : (new Date().getFullYear() + 1) + "-03-01";
+  const sy = Number(start.slice(0, 4));
+  const end = addDays((sy + 1) + start.slice(4), -1);
+  const m = /^(\d+)\s*\.?\s*º\s*año/i.exec(last.name || "");
+  const name = m ? (Number(m[1]) + 1) + ".º año · " + sy : "Año " + sy;
+  return { name, start, end };
+}
+function openNewYear() {
+  const sug = suggestNextYear(), from = activeYear();
+  const subs = state.subjects.filter(s => !s.archived);
+  ui.nyBring = { subjects: new Set(), habits: false, notes: false };
+  openModal(`<h3>Nuevo año</h3>
+    <p class="tiny" style="margin:-6px 0 4px">Empieza limpio. ${esc(from.name)} queda guardado tal cual y lo podés volver a ver cuando quieras.</p>
+    <label for="ny_name">Nombre</label><input id="ny_name" value="${escA(sug.name)}" maxlength="60" oninput="nyPreview()">
+    <div class="nydates"><div><label for="ny_start">Empieza</label><input type="date" id="ny_start" value="${sug.start}" onchange="nyPreview()"></div>
+    <div><label for="ny_end">Termina</label><input type="date" id="ny_end" value="${sug.end}" onchange="nyPreview()"></div></div>
+    <label>Traer de ${esc(from.name)}</label>
+    <p class="tiny" style="margin:0 0 6px">Opcional. Se copian: lo de ${esc(from.name)} no cambia.</p>
+    ${subs.length ? `<details class="nysubs"><summary>Materias que siguen <span class="tiny" id="ny_subn">ninguna</span></summary>
+      <div class="nysublist">${subs.map(s => `<label class="occl"><input type="checkbox" value="${escA(s.id)}" onchange="nyToggleSub(this)"><span class="dotc" style="background:${escA(s.color)}"></span>${esc(s.name)}</label>`).join("")}</div></details>` : ""}
+    ${state.habits.filter(h => !h.archived).length ? `<label class="occl nyopt"><input type="checkbox" id="ny_habits" onchange="ui.nyBring.habits=this.checked;nyPreview()">Hábitos (sin el historial)</label>` : ""}
+    ${state.notes.length ? `<label class="occl nyopt"><input type="checkbox" id="ny_notes" onchange="ui.nyBring.notes=this.checked;nyPreview()">Notas</label>` : ""}
+    <p class="nyprev" id="ny_prev"></p>
+    <div class="mfoot"><button class="btn" onclick="openYearPicker()">Cancelar</button><button class="btn primary" id="ny_ok" onclick="createYearFromModal()">Crear año</button></div>`);
+  nyPreview();
+}
+function nyToggleSub(cb) { if (cb.checked) ui.nyBring.subjects.add(cb.value); else ui.nyBring.subjects.delete(cb.value); nyPreview(); }
+function nyPreview() {
+  const b = ui.nyBring || { subjects: new Set() }, name = (byId("ny_name") || {}).value || "";
+  const st = (byId("ny_start") || {}).value, en = (byId("ny_end") || {}).value;
+  const n = b.subjects.size, sn = byId("ny_subn"); if (sn) sn.textContent = n ? n + (n === 1 ? " elegida" : " elegidas") : "ninguna";
+  const parts = [];
+  if (n) parts.push(n + (n === 1 ? " materia" : " materias"));
+  if (b.habits) parts.push("tus hábitos");
+  if (b.notes) parts.push(state.notes.length + (state.notes.length === 1 ? " nota" : " notas"));
+  const bad = !name.trim() ? "Ponele un nombre." : !st || !en ? "Elegí las fechas." : en < st ? "La fecha de fin es antes que la de inicio." :
+    (state.years || []).some(y => y.name.trim().toLowerCase() === name.trim().toLowerCase()) ? "Ya tenés un año con ese nombre." : "";
+  const p = byId("ny_prev"); if (p) { p.classList.toggle("bad", !!bad); p.textContent = bad || ("Vas a crear " + name.trim() + (parts.length ? " con " + listJoin(parts) : ", vacío") + "."); }
+  const ok = byId("ny_ok"); if (ok) ok.disabled = !!bad;
+}
+function listJoin(a) { return a.length < 2 ? a.join("") : a.slice(0, -1).join(", ") + " y " + a[a.length - 1]; }
+function createYearFromModal() {
+  const name = byId("ny_name").value.trim(), start = byId("ny_start").value, end = byId("ny_end").value;
+  nyPreview(); if (byId("ny_ok").disabled) return;
+  const b = ui.nyBring;
+  closeModal();
+  createYear({ name, start, end, subjects: [...b.subjects], habits: b.habits, notes: b.notes });
+}
+/* Crea un año y pasa a verlo. Lo que se trae se COPIA (ids nuevos): el año de origen no cambia. */
+function createYear(o) {
+  const prevActive = state.meta.activeYear || null, fromId = activeYearId();
+  yearJoin();
+  const id = "y-" + uid(), today = todayISO(), added = [];
+  state.years.push({ id, name: o.name, start: o.start, end: o.end, createdAt: today });
+  const src = c => state[c].filter(x => yearOf(x) === fromId);
+  for (const s of src("subjects")) if ((o.subjects || []).includes(s.id)) {
+    const c = Object.assign(JSON.parse(JSON.stringify(s)), { id: uid(), yearId: id, createdAt: today, fromYear: fromId, fromId: s.id, archived: false });
+    state.subjects.push(c); added.push(["subjects", c.id]);
+  }
+  if (o.habits) for (const h of src("habits")) if (!h.archived) {
+    const c = Object.assign(JSON.parse(JSON.stringify(h)), { id: uid(), yearId: id, checks: {}, createdAt: today, fromYear: fromId, fromId: h.id });
+    state.habits.push(c); added.push(["habits", c.id]);
+  }
+  if (o.notes) for (const n of src("notes")) {
+    const c = Object.assign({}, JSON.parse(JSON.stringify(n)), { id: uid(), yearId: id, fromYear: fromId, fromId: n.id });
+    state.notes.push(c); added.push(["notes", c.id]);
+  }
+  state.meta.activeYear = id === latestYearId(state) ? null : id;
+  yearSplit();
+  ui.serMap = null; ui.calMonth = null;
+  change(); go("home"); render();
+  toast("Listo: estás en " + o.name, () => {
+    yearJoin();
+    // se sacan solo las copias; si mientras tanto creaste algo en el año nuevo, el año se queda
+    const drop = new Set(added.map(a => a.join(":")));
+    for (const c of YEAR_SCOPED) state[c] = state[c].filter(x => !drop.has(c + ":" + x.id));
+    if (!YEAR_SCOPED.some(c => state[c].some(x => yearOf(x) === id))) state.years = state.years.filter(y => y.id !== id);
+    state.meta.activeYear = prevActive;
+    yearSplit(); change(); render();
+  });
+  return id;
+}
+function openYearEdit(id) {
+  const y = yearById(id); if (!y) return;
+  openModal(`<h3>Editar año</h3>
+    <label for="ye_name">Nombre</label><input id="ye_name" value="${escA(y.name)}" maxlength="60">
+    <div class="nydates"><div><label for="ye_start">Empieza</label><input type="date" id="ye_start" value="${escA(y.start || "")}"></div>
+    <div><label for="ye_end">Termina</label><input type="date" id="ye_end" value="${escA(y.end || "")}"></div></div>
+    <p class="nyprev bad" id="ye_err" hidden></p>
+    <div class="mfoot"><button class="btn" onclick="openYearPicker()">Cancelar</button><button class="btn primary" onclick="saveYearEdit('${escA(id)}')">Guardar</button></div>`);
+}
+function saveYearEdit(id) {
+  const y = yearById(id); if (!y) return;
+  const name = byId("ye_name").value.trim(), start = byId("ye_start").value, end = byId("ye_end").value, err = byId("ye_err");
+  const bad = !name ? "Ponele un nombre." : !start || !end ? "Elegí las fechas." : end < start ? "La fecha de fin es antes que la de inicio." :
+    state.years.some(o => o.id !== id && o.name.trim().toLowerCase() === name.toLowerCase()) ? "Ya tenés un año con ese nombre." : "";
+  if (bad) { err.hidden = false; err.textContent = bad; return; }
+  const wasActive = activeYearId();
+  yearJoin();
+  Object.assign(y, { name, start, end });
+  // cambiar fechas puede cambiar cuál es el "actual": el que estabas viendo se sigue viendo
+  state.meta.activeYear = wasActive === latestYearId(state) ? null : wasActive;
+  yearSplit();
+  change(); openYearPicker(); render();
+}
+
 /* ============================ LOOKUPS ============================ */
 const subjById = id => state.subjects.find(s => s.id === id) || null;
 const projById = id => state.projects.find(p => p.id === id) || null;
@@ -439,13 +1137,19 @@ function occursOn(t, date) {
   if (k === "daily") return true;
   if (k === "days") return (t.recur.days || []).includes(d.getDay());
   if (k === "weekly") return d.getDay() === (t.recur.days && t.recur.days.length ? t.recur.days[0] : dToDate(t.recur.start || t.date || todayISO()).getDay());
-  if (k === "monthly") return d.getDate() === dToDate(t.recur.start || t.date || todayISO()).getDate();
+  if (k === "monthly") return isMonthDay(d, dToDate(t.recur.start || t.date || todayISO()).getDate());
   if (k === "interval") {
     const base = t.recur.start || t.date || todayISO();
     const diff = Math.round((d - dToDate(base)) / 864e5);
     return diff >= 0 && diff % Math.max(1, t.recur.n || 1) === 0;
   }
   return false;
+}
+/* L1b #16: "el día N de cada mes"; si el mes no tiene día N (31 en noviembre, 30 en
+   febrero), cae el último día del mes en vez de saltearse el mes entero. */
+function isMonthDay(d, n) {
+  const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  return d.getDate() === Math.min(n, last);
 }
 function isDoneOn(t, date) { return t.recur ? !!(t.recurDone && t.recurDone[date]) : t.status === "done"; }
 function tasksOn(date) {
@@ -475,12 +1179,20 @@ function orderedTasks(list) {
    el mismo día cambia el orden (campo ord), si es otro día cambia la fecha. */
 const LONGPRESS_MS = 400;
 let drag = null;
+/* C5 · Arrastre fluido. Todo lo caro se hace UNA vez al empezar: se miden las
+   zonas y las filas (en coordenadas de documento, así el scroll no las invalida)
+   y después cada movimiento solo guarda la posición; un único requestAnimationFrame
+   por cuadro mueve el fantasma con transform y calcula el destino con esos números
+   (sin getBoundingClientRect ni elementFromPoint). Las clases y los desplazamientos
+   de las filas se tocan solo cuando cambia el destino. */
 function clearDropMarks() {
   document.querySelectorAll(".task.dropbefore,.task.dropafter").forEach(x => x.classList.remove("dropbefore", "dropafter"));
   document.querySelectorAll("[data-dropdate].over").forEach(x => x.classList.remove("over"));
+  document.querySelectorAll(".task.shifted").forEach(x => { x.classList.remove("shifted"); x.style.transform = ""; });
 }
 function canMoveTask(t) { return !!t && !t.recur; }
 function touchUI() { try { return matchMedia("(hover:none)").matches; } catch (e) { return false; } }
+function reducedMotion() { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) { return false; } }
 function dragPointerDown(ev) {
   if (ev.button !== 0 || drag || ui.selMode || selSet().size) return;
   const row = ev.target.closest && ev.target.closest("#view .task[data-id]");
@@ -488,10 +1200,13 @@ function dragPointerDown(ev) {
   const t = taskById(row.dataset.id);
   if (!t || (!canMoveTask(t) && !row.dataset.date)) return; // las que se repiten solo se reordenan dentro del día
   const handle = ev.target.closest(".drag[title]");
-  if (!handle && ev.pointerType === "mouse") return; // con mouse, el clic en la fila abre el editor
+  const mouse = ev.pointerType === "mouse";
+  // con mouse se agarra de toda la fila (si está en una lista ordenable); un clic sin mover sigue abriendo el editor
+  if (mouse && !handle && !row.closest("#view [data-dropdate]")) return;
   drag = { id: t.id, row, pid: ev.pointerId, x0: ev.clientX, y0: ev.clientY, x: ev.clientX, y: ev.clientY,
-    from: row.dataset.date || null, state: handle ? "armed" : "press", timer: null, ghost: null, target: null };
-  if (!handle) drag.timer = setTimeout(dragLift, LONGPRESS_MS);
+    from: row.dataset.date || null, state: handle || mouse ? "armed" : "press", timer: null, ghost: null, target: null,
+    raf: 0, key: "" };
+  if (drag.state === "press") drag.timer = setTimeout(dragLift, LONGPRESS_MS);
   window.addEventListener("pointermove", dragPointerMove, { passive: false });
   window.addEventListener("pointerup", dragPointerUp);
   window.addEventListener("pointercancel", dragCancel);
@@ -505,60 +1220,93 @@ function dragLift() {
 function dragPointerMove(ev) {
   if (!drag || ev.pointerId !== drag.pid) return;
   drag.x = ev.clientX; drag.y = ev.clientY;
+  if (drag.state === "dragging") { ev.preventDefault(); dragSchedule(); return; }
   const dist = Math.hypot(ev.clientX - drag.x0, ev.clientY - drag.y0);
   if (drag.state === "press") { if (dist > 10) dragCancel(); return; } // se movió antes: es scroll
   if (drag.state === "armed" || drag.state === "lifted") {
-    if (dist < (drag.state === "armed" ? 4 : 6)) return;
+    if (dist < (drag.state === "armed" ? 5 : 6)) return;
+    ev.preventDefault();
     dragBegin();
   }
-  if (drag.state === "dragging") { ev.preventDefault(); dragUpdate(); }
 }
 function dragBegin() {
-  const r = drag.row.getBoundingClientRect();
-  const g = drag.row.cloneNode(true);
+  const d = drag, sy = window.scrollY, r = d.row.getBoundingClientRect();
+  try { const sel = window.getSelection(); if (sel) sel.removeAllRanges(); } catch (e) {}
+  // medir todo una sola vez (coordenadas de documento)
+  d.zones = [...document.querySelectorAll("#view [data-dropdate]")].map(z => {
+    const zr = z.getBoundingClientRect();
+    const rows = [...z.querySelectorAll(".task[data-id]")].map(el => { const b = el.getBoundingClientRect(); return { el, id: el.dataset.id, top: b.top + sy, h: b.height, left: b.left, w: b.width }; });
+    return { el: z, date: z.dataset.dropdate, top: zr.top + sy, bottom: zr.bottom + sy, left: zr.left, right: zr.right, rows };
+  });
+  d.home = d.zones.find(z => z.rows.some(x => x.el === d.row)) || null;
+  if (d.home) {
+    const all = d.home.rows, i = all.findIndex(x => x.el === d.row);
+    d.homeIdx = i;
+    d.home.list = all.filter(x => x.el !== d.row);
+    const next = all[i + 1], prev = all[i - 1];
+    d.gap = next ? next.top - (all[i].top + all[i].h) : prev ? all[i].top - (prev.top + prev.h) : 0;
+  }
+  d.zones.forEach(z => { if (!z.list) z.list = z.rows.filter(x => x.el !== d.row); });
+  d.rowTop = r.top + sy; d.rowH = r.height;
+  const g = d.row.cloneNode(true);
   g.classList.remove("lifted", "sel"); g.classList.add("dragghost");
   g.removeAttribute("data-id"); g.setAttribute("aria-hidden", "true");
-  g.style.width = r.width + "px"; g.style.left = r.left + "px"; g.style.top = r.top + "px";
+  g.style.width = r.width + "px"; g.style.height = r.height + "px"; g.style.left = r.left + "px"; g.style.top = r.top + "px";
   document.body.appendChild(g);
-  drag.ghost = g; drag.dx = drag.x0 - r.left; drag.dy = drag.y0 - r.top;
-  drag.row.classList.remove("lifted"); drag.row.classList.add("dragging");
+  d.ghost = g; d.gx = r.left; d.gy = r.top; d.dx = d.x0 - r.left; d.dy = d.y0 - r.top;
+  d.tilt = reducedMotion() ? "" : " scale(1.03) rotate(.6deg)";
+  d.row.classList.remove("lifted"); d.row.classList.add("dragging");
   document.body.classList.add("is-dragging");
-  drag.state = "dragging";
+  d.state = "dragging";
+  dragFrame();
   dragAutoScroll();
 }
-function dragUpdate() {
-  const d = drag;
-  d.ghost.style.left = (d.x - d.dx) + "px"; d.ghost.style.top = (d.y - d.dy) + "px";
+function dragSchedule() { if (drag && !drag.raf) drag.raf = requestAnimationFrame(() => { if (drag) { drag.raf = 0; dragFrame(); } }); }
+/* Un cuadro: mover el fantasma y, si cambió el destino, actualizar marcas y huecos. */
+function dragFrame() {
+  const d = drag; if (!d || d.state !== "dragging") return;
+  d.ghost.style.transform = `translate3d(${d.x - d.dx - d.gx}px,${d.y - d.dy - d.gy}px,0)${d.tilt}`;
+  const py = d.y + window.scrollY, px = d.x;
+  const zone = d.zones.find(z => py >= z.top && py <= z.bottom && px >= z.left && px <= z.right) || null;
+  let k = -1;
+  if (zone) { k = 0; for (const x of zone.list) { if (py > x.top + x.h / 2) k++; else break; } }
+  const key = zone ? zone.date + ":" + k : "";
+  if (key === d.key) return;
+  d.key = key;
   clearDropMarks();
   d.target = null;
-  const el = document.elementFromPoint(d.x, d.y);
-  const zone = el && el.closest && el.closest("#view [data-dropdate]");
   if (!zone) return;
-  zone.classList.add("over");
-  const row = el.closest(".task[data-id]");
-  let before = null, after = false;
-  if (row && zone.contains(row) && row !== d.row) {
-    const r = row.getBoundingClientRect();
-    after = (d.y - r.top) > r.height / 2;
-    before = row.dataset.id;
-    row.classList.add(after ? "dropafter" : "dropbefore");
+  zone.el.classList.add("over");
+  const L = zone.list;
+  d.target = { date: zone.date, near: L.length ? (k < L.length ? L[k].id : L[L.length - 1].id) : null, after: L.length > 0 && k >= L.length,
+    same: zone === d.home && k === d.homeIdx };
+  if (zone === d.home) {
+    // misma lista: las filas se corren para abrir el hueco donde va a caer (como en iOS)
+    const h = d.rowH + d.gap, o = d.homeIdx;
+    L.forEach((x, i) => {
+      const dy = (k > o && i >= o && i < k) ? -h : (k < o && i >= k && i < o) ? h : 0;
+      if (dy) { x.el.classList.add("shifted"); x.el.style.transform = `translate3d(0,${dy}px,0)`; }
+    });
+  } else if (L.length) {
+    // otra lista: una línea marca dónde va a caer
+    (k < L.length ? L[k].el : L[L.length - 1].el).classList.add(k < L.length ? "dropbefore" : "dropafter");
   }
-  d.target = { date: zone.dataset.dropdate, near: before, after };
 }
 function dragAutoScroll() {
   if (!drag || drag.state !== "dragging") return;
   const m = 70, y = drag.y, h = window.innerHeight;
   const v = y < m ? -Math.ceil((m - y) / 5) : y > h - m ? Math.ceil((y - (h - m)) / 5) : 0;
-  if (v) { window.scrollBy(0, v); dragUpdate(); }
+  if (v) { window.scrollBy(0, v); dragFrame(); }
   requestAnimationFrame(dragAutoScroll);
 }
-function dragEnd() {
+function dragEnd(keepGhost) {
   window.removeEventListener("pointermove", dragPointerMove, { passive: false });
   window.removeEventListener("pointerup", dragPointerUp);
   window.removeEventListener("pointercancel", dragCancel);
   if (!drag) return;
   clearTimeout(drag.timer);
-  if (drag.ghost) drag.ghost.remove();
+  if (drag.raf) cancelAnimationFrame(drag.raf);
+  if (drag.ghost && !keepGhost) drag.ghost.remove();
   drag.row.classList.remove("lifted", "dragging");
   document.body.classList.remove("is-dragging");
   clearDropMarks();
@@ -575,12 +1323,29 @@ function swallowNextClick() {
 }
 function dragPointerUp(ev) {
   if (!drag || ev.pointerId !== drag.pid) return;
+  if (drag.state === "dragging") { drag.x = ev.clientX; drag.y = ev.clientY; dragFrame(); } // el último movimiento cuenta
   const d = drag;
-  dragEnd();
+  dragEnd(d.state === "dragging");
   if (d.state === "lifted") { swallowNextClick(); openMoveSheet(d.id); return; }
   if (d.state !== "dragging") return;
   swallowNextClick();
-  if (d.target) dropTask(d.id, d.from, d.target);
+  if (d.target && !d.target.same) dropTask(d.id, d.from, d.target); // soltar donde estaba no cambia nada
+  dragSettle(d);
+}
+/* Al soltar, el fantasma "se asienta" en el lugar donde quedó la fila (ya redibujada). */
+function dragSettle(d) {
+  const g = d.ghost; if (!g) return;
+  const row = document.querySelector(`#view .task[data-id="${CSS.escape(d.id)}"]`);
+  if (!row || reducedMotion()) { g.remove(); return; }
+  const r = row.getBoundingClientRect();
+  if (r.bottom < 0 || r.top > window.innerHeight) { g.remove(); return; }
+  row.style.opacity = "0"; // opacity (no visibility): la fila sigue recibiendo toques
+  g.classList.add("settling");
+  g.style.transform = `translate3d(${r.left - d.gx}px,${r.top - d.gy}px,0)`;
+  let done = false;
+  const fin = () => { if (done) return; done = true; g.remove(); row.style.opacity = ""; };
+  g.addEventListener("transitionend", fin, { once: true });
+  setTimeout(fin, 260);
 }
 function dropTask(id, from, tg) {
   const t = taskById(id); if (!t) return;
@@ -687,6 +1452,27 @@ function upcomingEvals(days) {
   return state.evals.filter(e => e.date >= today && e.date <= lim && !["rendido", "aprob", "desaprob"].includes(e.status))
     .sort((a, b) => a.date < b.date ? -1 : 1);
 }
+
+/* L1a · Si hay varios parciales el mismo día, "el próximo" son todos ellos. */
+function evalsSameDay(evs) { return evs.length ? evs.filter(e => e.date === evs[0].date) : []; }
+function evalGroupLabel(g) {
+  if (g.length <= 1) return g.length ? g[0].name : "";
+  if (g.length > 3) return g.length + " parciales";
+  const subj = e => subjById(e.subjectId);
+  let long = g.map(e => subj(e) ? subj(e).name : e.name);
+  if (new Set(long).size < long.length) long = g.map(e => e.name); // dos de la misma materia: sus nombres
+  if (listJoin(long).length <= 30) return listJoin(long);
+  // se acortan (a la sigla de la materia) primero los nombres más largos, hasta que entre
+  const cur = long.slice();
+  while (listJoin(cur).length > 30) {
+    let k = -1;
+    cur.forEach((x, i) => { const sj = subj(g[i]); if (sj && sj.short && x === sj.name && (k < 0 || x.length > cur[k].length)) k = i; });
+    if (k < 0) break;
+    cur[k] = subj(g[k]).short;
+  }
+  return listJoin(cur).length <= 30 ? listJoin(cur) : g.length + " parciales";
+}
+function whenTxt(n, cap) { return n === 0 ? (cap ? "HOY" : "hoy") : n === 1 ? "mañana" : "en " + n + " días"; }
 
 /* ==================== SESIONES Y ESTADÍSTICAS ==================== */
 function addSession(min, opts = {}) {
@@ -871,9 +1657,19 @@ function addStudyBlock() {
   if (f == null || t == null) { toast("Cargá hora de inicio y de fin"); return; }
   if (t <= f) { toast("La hora de fin debe ser posterior a la de inicio"); return; }
   const dp = state.dayPlan[todayISO()] = state.dayPlan[todayISO()] || { blocks: [] };
+  const choca = dp.blocks.find(b => f < hmToMin(b.to) && t > hmToMin(b.from));
+  if (choca) { toast("Ese horario se superpone con " + choca.from + " – " + choca.to); return; }
   dp.blocks.push({ id: uid(), from, to });
   dp.blocks.sort((a, b) => hmToMin(a.from) - hmToMin(b.from));
   change(); render(); toast("Bloque agregado");
+}
+/* L1b #7: el bloque que se propone arranca donde terminó el último (2 h, sin pasar la medianoche). */
+function nextBlockGuess(blocks) {
+  if (!blocks.length) return { from: "14:00", to: "17:00" };
+  const last = Math.max(...blocks.map(b => hmToMin(b.to) || 0));
+  const hm = m => pad(Math.floor(m / 60)) + ":" + pad(m % 60);
+  const from = Math.min(last, 23 * 60 + 58);
+  return { from: hm(from), to: hm(Math.min(from + 120, 23 * 60 + 59)) };
 }
 function delStudyBlock(id) {
   const dp = state.dayPlan[todayISO()]; if (!dp) return;
@@ -912,6 +1708,7 @@ function studyTodayCard() {
       <button class="btn sm ghost" title="Quitar bloque" onclick="delStudyBlock('${b.id}')">×</button></div>`;
   }).join("");
   const totMin = dp.blocks.reduce((a, b) => a + blockMinutes(b), 0);
+  const nb = nextBlockGuess(dp.blocks);
   let dist = "";
   if (totMin > 0) {
     dist = `<div class="hr"></div>
@@ -924,11 +1721,11 @@ function studyTodayCard() {
   }
   return `<div class="card"><h3>Estudio de hoy<div class="grow"></div>
     <span class="tiny">${totMin ? fmtMin(totMin) + " disponibles" : ""}</span></h3>
-    ${rows || '<p class="tiny" style="margin-bottom:6px">Cargá tus horarios de estudio de hoy. Podés agregar varios bloques (por ejemplo 14:00–17:00 y 20:00–22:00) .</p>'}
+    ${rows || '<p class="tiny" style="margin-bottom:6px">Cargá tus horarios de estudio de hoy. Podés agregar varios bloques (por ejemplo 14:00–17:00 y 20:00–22:00).</p>'}
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
-      <input type="time" id="sb_from" value="14:00" aria-label="Hora de inicio" style="background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:6px">
+      <input type="time" id="sb_from" value="${nb.from}" aria-label="Hora de inicio" style="background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:6px">
       <span class="tiny">a</span>
-      <input type="time" id="sb_to" value="17:00" aria-label="Hora de fin" style="background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:6px">
+      <input type="time" id="sb_to" value="${nb.to}" aria-label="Hora de fin" style="background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:6px">
       <button class="btn sm" onclick="addStudyBlock()">Agregar bloque</button>
     </div>${dist}</div>`;
 }
@@ -949,8 +1746,9 @@ function archiveSubject(id) {
 }
 function deleteSubject(id) {
   const s = subjById(id); if (!s) return;
-  const n = state.tasks.filter(t => t.subjectId === id).length;
-  doubleDelete("la materia “" + s.name + "”" + (n ? " y desvincular " + n + " tareas" : ""), () => {
+  const n = state.tasks.filter(t => t.subjectId === id).length, ne = state.evals.filter(e => e.subjectId === id).length;
+  const what = [n ? pl(n, "tarea", "tareas") : "", ne ? pl(ne, "evaluación", "evaluaciones") : ""].filter(Boolean).join(" y ");
+  doubleDelete("la materia “" + s.name + "”" + (what ? " (" + what + (n + ne === 1 ? " queda" : " quedan") + " sin materia, no se borra" + (n + ne === 1 ? "" : "n") + ")" : ""), () => {
     const idx = state.subjects.indexOf(s); const snapshot = JSON.parse(JSON.stringify(state.tasks));
     state.subjects.splice(idx, 1);
     for (const t of state.tasks) if (t.subjectId === id) t.subjectId = null;
@@ -1015,6 +1813,8 @@ function saveEvalFromModal(id) {
     subjectId: linkVal.startsWith("s:") ? linkVal.slice(2) : null,
     projectId: linkVal.startsWith("p:") ? linkVal.slice(2) : null
   };
+  const rem = remValue("ev_rem");
+  if (rem !== undefined) data.reminders = rem;
   if (id) { Object.assign(evalById(id), data); toast("Evaluación actualizada"); change(); closeModal(); render(); }
   else {
     const ev = Object.assign({ id: uid(), topics: [], createdAt: todayISO() }, data);
@@ -1158,7 +1958,7 @@ function habitDueOn(h, date) {
   if (k === "daily") return true;
   if (k === "days") return (h.freq.days || []).includes(d.getDay());
   if (k === "weekly") return d.getDay() === (h.freq.days && h.freq.days.length ? h.freq.days[0] : 1);
-  if (k === "monthly") return d.getDate() === (h.freq.n || 1);
+  if (k === "monthly") return isMonthDay(d, h.freq.n || 1);
   if (k === "interval") { const base = h.start || todayISO(); const diff = Math.round((d - dToDate(base)) / 864e5); return diff >= 0 && diff % Math.max(1, h.freq.n || 2) === 0; }
   return false;
 }
@@ -1282,16 +2082,132 @@ function logManualSession() {
   closeModal(); render(); toast(fmtMin(min) + " registrados");
 }
 
+/* ===================== RECORDATORIOS (E1) — modelo =====================
+   Un recordatorio es {amount, unit}: "amount unidades antes" de la fecha y hora de
+   una tarea o de un parcial. Se guarda en x.reminders (lista). Si un parcial NO tiene
+   la lista, usa settings.reminderDefaults.eval; una lista vacía = sin avisos. Las
+   tareas sin la lista no avisan, y una tarea sin hora no tiene "antes". */
+const REMINDER_UNITS = { min: 1, h: 60, d: 1440 };
+function defaultReminderDefaults() { return { eval: [{ amount: 7, unit: "d" }, { amount: 1, unit: "d" }], task: [] }; }
+function reminderOffsetMin(r) { return r.amount * REMINDER_UNITS[r.unit]; }
+/* Limpia una lista: números enteros > 0, unidades conocidas, sin repetidos (mismo
+   minuto exacto), del más lejano al más cercano. */
+function normReminders(list) {
+  const out = [], seen = new Set();
+  for (const r of Array.isArray(list) ? list : []) {
+    if (!r || !REMINDER_UNITS[r.unit]) continue;
+    const amount = parseInt(r.amount, 10);
+    if (!(amount > 0) || amount > 999) continue;
+    const x = { amount, unit: r.unit }, k = reminderOffsetMin(x);
+    if (seen.has(k)) continue;
+    seen.add(k); out.push(x);
+  }
+  return out.sort((a, b) => reminderOffsetMin(b) - reminderOffsetMin(a));
+}
+function remindersOf(x, kind) {
+  if (x && Array.isArray(x.reminders)) return normReminders(x.reminders);
+  const d = state && state.settings && state.settings.reminderDefaults;
+  return normReminders(d && d[kind] || []);
+}
+function reminderLabel(r) {
+  if (r.unit === "d") return pl(r.amount, "día", "días") + " antes";
+  return r.amount + (r.unit === "h" ? " h" : " min") + " antes";
+}
+/* Cuándo suena cada recordatorio: [{at: ms, r}], ordenados. Los parciales sin hora
+   toman las 9:00 de ese día; las tareas sin hora o sin fecha no avisan. */
+function reminderTimes(x, kind) {
+  if (!x || !x.date) return [];
+  let hm = hmToMin(x.time);
+  if (hm == null) { if (kind !== "eval") return []; hm = 9 * 60; }
+  const base = dToDate(x.date); base.setHours(Math.floor(hm / 60), hm % 60, 0, 0);
+  return remindersOf(x, kind).map(r => ({ at: base.getTime() - reminderOffsetMin(r) * 60000, r })).sort((a, b) => a.at - b.at);
+}
+
+/* ---------- E1a2 · "Avisarme": el control de recordatorios ----------
+   Lo usan el editor de tarea (te_rem), el de parcial (ev_rem) y Configuración
+   (cfg_rem_eval / cfg_rem_task). El estado vive en ui.rem[id] mientras el editor está
+   abierto; "touched" dice si lo tocaste: si no, al guardar no se escribe nada (un
+   parcial sin lista propia sigue usando los de Configuración y la sync no ve cambios). */
+const REM_PRESETS = {
+  task: [{ amount: 10, unit: "min" }, { amount: 30, unit: "min" }, { amount: 1, unit: "h" }, { amount: 1, unit: "d" }],
+  eval: [{ amount: 2, unit: "h" }, { amount: 1, unit: "d" }, { amount: 3, unit: "d" }, { amount: 7, unit: "d" }]
+};
+function remShort(r) { return reminderLabel(r).replace(/ antes$/, ""); }
+function remFieldHTML(id, kind, x, opts = {}) {
+  const own = x && Array.isArray(x.reminders);
+  ui.rem = ui.rem || {};
+  ui.rem[id] = { kind, cfg: !!opts.cfg, inherit: !opts.cfg && !own, touched: false,
+    orig: own ? normReminders(x.reminders) : undefined,
+    list: opts.cfg ? normReminders(opts.list) : remindersOf(x, kind), other: false };
+  return `<div class="remfield" id="${id}">${remInner(id)}</div>`;
+}
+/* Por qué no se puede avisar (tarea sin fecha u hora), o "" si se puede. */
+function remBlocked(id) {
+  if (id !== "te_rem") return "";
+  const d = byId("te_date"), t = byId("te_time");
+  if (!d || !t) return "";
+  if (hmToMin(t.value) == null) return "Poné una hora para que te pueda avisar.";
+  if (!d.value) return "Poné una fecha para que te pueda avisar.";
+  return "";
+}
+function remInner(id) {
+  const st = ui.rem[id], blocked = remBlocked(id);
+  if (blocked) return `<p class="remnote">${blocked}</p>`;
+  const keys = new Set(st.list.map(reminderOffsetMin));
+  const chipsH = st.list.map((r, i) => `<span class="remchip"><span class="remlbl">${esc(reminderLabel(r))}</span><button type="button" aria-label="Quitar ${escA(reminderLabel(r))}" onclick="remDel('${id}',${i})">×</button></span>`).join("");
+  const note = !st.list.length ? "Sin avisos" : st.inherit ? "Como en Configuración" : "";
+  const adds = REM_PRESETS[st.kind].filter(r => !keys.has(reminderOffsetMin(r)))
+    .map(r => `<button type="button" class="remadd" onclick="remAdd('${id}',${r.amount},'${r.unit}')">+ ${esc(remShort(r))}</button>`).join("");
+  const other = st.other
+    ? `<span class="remcustom"><input id="${id}_n" type="number" min="1" max="999" value="15" aria-label="Cantidad" onkeydown="if(event.key==='Enter'){event.preventDefault();remAddOther('${id}')}">
+        <select id="${id}_u" aria-label="Unidad"><option value="min">min</option><option value="h">h</option><option value="d">días</option></select>
+        <button type="button" class="btn sm primary" id="${id}_ok" onclick="remAddOther('${id}')">Agregar</button></span>`
+    : `<button type="button" class="remadd remother" onclick="remOther('${id}')">Otro…</button>`;
+  return `<div class="remchips">${chipsH}${note ? `<span class="remnote">${note}</span>` : ""}</div>
+    <div class="remadds">${adds}${other}</div>`;
+}
+function remRedraw(id) { const el = byId(id); if (el && ui.rem && ui.rem[id]) el.innerHTML = remInner(id); }
+function remSet(id, list) {
+  const st = ui.rem[id]; if (!st) return;
+  st.list = normReminders(list); st.inherit = false; st.touched = true;
+  if (st.cfg) {
+    const d = state.settings.reminderDefaults = state.settings.reminderDefaults || defaultReminderDefaults();
+    d[st.kind] = st.list.map(r => ({ ...r })); change();
+  }
+  remRedraw(id);
+}
+function remDel(id, i) { const st = ui.rem[id]; if (!st) return; remSet(id, st.list.filter((_, j) => j !== i)); }
+function remAdd(id, amount, unit) { const st = ui.rem[id]; if (!st) return; remSet(id, [...st.list, { amount, unit }]); }
+function remOther(id) { const st = ui.rem[id]; if (!st) return; st.other = true; remRedraw(id); const n = byId(id + "_n"); if (n) { n.focus(); n.select(); } }
+function remAddOther(id) {
+  const st = ui.rem[id]; if (!st) return;
+  const amount = parseInt((byId(id + "_n") || {}).value, 10), unit = (byId(id + "_u") || {}).value;
+  if (!(amount > 0 && amount <= 999)) { toast("Poné un número entre 1 y 999"); return; }
+  st.other = false; remAdd(id, amount, unit);
+}
+/* Lo que hay que guardar: la lista si la tocaste; si no, lo que tenía (puede ser undefined). */
+function remValue(id) { const st = ui.rem && ui.rem[id]; return !st ? undefined : st.touched ? st.list.map(r => ({ ...r })) : st.orig; }
+
 /* ======================== NOTIFICACIONES ======================== */
 function checkReminders() {
   if (!state.settings.notif || typeof Notification === "undefined" || Notification.permission !== "granted") return;
   const today = todayISO();
   const notified = state.meta.notified = state.meta.notified || {};
   const fire = (key, msg) => { if (notified[key] === today) return; notified[key] = today; try { new Notification("Aula", { body: msg }); } catch (e) {} };
-  for (const e of upcomingEvals(state.settings.upcomingDays)) {
-    const n = daysTo(e.date);
-    if (n <= state.settings.upcomingDays) fire("ev-" + e.id, e.name + " — " + (n === 0 ? "es hoy" : n === 1 ? "es mañana" : "en " + n + " días"));
-  }
+  // E1a2: los parciales y las tareas con hora avisan según sus "Avisarme" (los parciales
+  // sin lista propia usan los de Configuración: 7 y 1 día antes). Suena una sola vez,
+  // si la app está abierta dentro de las 12 h siguientes a la hora del aviso.
+  const now = Date.now(), WIN = 12 * 3600e3;
+  const due = (x, kind, id, text) => {
+    for (const { at, r } of reminderTimes(x, kind)) {
+      if (at > now || now - at > WIN) continue;
+      const key = "rem-" + id + "-" + reminderOffsetMin(r) + "-" + x.date + "-" + (x.time || "");
+      if (notified[key]) continue;
+      notified[key] = today; try { new Notification("Aula", { body: text + " · en " + remShort(r) }); } catch (e) {}
+    }
+  };
+  for (const e of state.evals) if (!EV_CLOSED.includes(e.status)) due(e, "eval", e.id, e.name);
+  for (const t of state.tasks) if (!t.archived && !t.recur && t.status !== "done" && t.status !== "canc") due(t, "task", t.id, t.title.slice(0, 60));
   for (const t of state.tasks) {
     if (t.archived || t.recur || t.status === "done" || t.status === "canc") continue;
     if (t.due === today) fire("due-" + t.id, "Vence hoy: " + t.title.slice(0, 60));
@@ -1583,12 +2499,12 @@ function openDayPreview(date) {
   let h = `<h3>${esc(capitalize(fmtDFull(date)))}${isToday ? ' <span class="pill acc">hoy</span>' : ""}</h3>`;
   h += `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px">
     <div class="card" style="margin:0;padding:11px 12px"><div class="statnum" style="font-size:1.25rem">${fmtMin(estTot)}</div><div class="statlab">planificado</div></div>
-    <div class="card" style="margin:0;padding:11px 12px"><div class="statnum" style="font-size:1.25rem">${fmtMin(pendMin)}</div><div class="statlab">pendiente · ${ts.length - doneN} de ${ts.length} tareas</div></div>
+    <div class="card" style="margin:0;padding:11px 12px"><div class="statnum" style="font-size:1.25rem">${fmtMin(pendMin)}</div><div class="statlab">pendiente · ${ts.length - doneN} de ${pl(ts.length, "tarea", "tareas")}</div></div>
     <div class="card" style="margin:0;padding:11px 12px"><div class="statnum" style="font-size:1.25rem;color:var(--ok)">${fmtMin(realTot)}</div><div class="statlab">ya estudiado</div></div>
   </div>`;
 
   if (evs.length) h += `<div style="margin-bottom:10px">${evs.map(e => `<div class="task" style="background:var(--bad-soft);border-radius:8px" onclick="closeModal();go('eval','${e.id}')">
-    <div class="tinfo"><div class="tt"><b>${esc(e.name)}</b> · ${EVAL_KINDS[e.kind] || e.kind}${e.time ? " · " + esc(e.time) + " hs" : ""}</div></div>
+    <div class="tinfo"><div class="tt"><b>${esc(e.name)}</b> · ${EVAL_KINDS[e.kind] || e.kind || "Evaluación"}${e.time ? " · " + esc(e.time) + " hs" : ""}</div></div>
     <span class="pill bad">evaluación</span></div>`).join("")}</div>`;
 
   if (rows.length) {
@@ -1666,7 +2582,7 @@ function viewSeries() {
   const act = all.filter(s => s.active), old = all.filter(s => !s.active);
   const row = s => {
     const lb = seriesLabel(s), recur = s.kind === "recur";
-    const how = recur ? recurLabel(s.tasks[0].recur) + ", sin fin" : seriesPattern(s.tasks.map(t => t.date)).label;
+    const how = recur ? recurLabel(s.tasks[0].recur) + ", " + recurEndText(s.tasks[0].recur) : seriesPattern(s.tasks.map(t => t.date)).label;
     const prog = recur ? "" : ` · ${s.doneN}/${s.tasks.length} hechas`;
     const next = recur ? "" : s.next ? ` · próxima ${fmtD(s.next.date)}` : s.active ? "" : ` · terminó ${fmtD(s.to)}`;
     return `<button type="button" class="serrow" onclick="openSeriesModal('${escA(s.key)}')">
@@ -1686,14 +2602,26 @@ function viewSeries() {
 function recurLabel(r) {
   r = r || {};
   if (r.kind === "daily") return "todos los días";
-  if (r.kind === "weekly") return "cada semana";
-  if (r.kind === "monthly") return "cada mes";
+  if (r.kind === "weekly") { // L1b #15: qué día (la misma regla que occursOn)
+    const wd = r.days && r.days.length ? r.days[0] : r.start ? dToDate(r.start).getDay() : null;
+    return wd == null ? "cada semana" : "todos los " + DAYSL[wd] + (wd === 0 || wd === 6 ? "s" : "");
+  }
+  if (r.kind === "monthly") {
+    if (!r.start) return "cada mes";
+    const dd = dToDate(r.start).getDate();
+    return "el " + dd + " de cada mes" + (dd >= 29 ? " (o el último día)" : "");
+  }
   if (r.kind === "interval") return "cada " + (r.n || 2) + " días";
   if (r.kind === "days" && r.days && r.days.length) {
     const o = [1, 2, 3, 4, 5, 6, 0].filter(d => r.days.includes(d)).map(d => DAYS[d]);
     return o.length === 1 ? "los " + o[0] : "los " + o.slice(0, -1).join(", ") + " y " + o[o.length - 1];
   }
   return "se repite";
+}
+/* L1b #14: hasta cuándo se repite (antes decía "sin fin" aunque tuviera fecha final). */
+function recurEndText(r) {
+  if (!r || !r.end) return "sin fin";
+  return (r.end < todayISO() ? "terminó el " : "hasta el ") + fmtD(r.end);
 }
 /* C3 · "3 de 5": posición de una tarea dentro de su serie. */
 function seriesPos(t) {
@@ -1717,7 +2645,7 @@ function seriesPos(t) {
    aplicar, así se puede encadenar ("+1 h 30 a todas" y después "+10 min a una"). */
 const SR_ACTS = [
   ["add", "Sumar tiempo"], ["sub", "Restar tiempo"], ["set", "Fijar tiempo"],
-  ["move", "Mover de día"], ["time", "Cambiar hora"], ["del", "Borrar"]
+  ["tramos", "Tiempos por tramos"], ["move", "Mover de día"], ["time", "Cambiar hora"], ["del", "Borrar"]
 ];
 function openSeriesModal(key) {
   const s = seriesByKey(key); if (!s) { toast("La serie ya no existe"); return; }
@@ -1726,9 +2654,11 @@ function openSeriesModal(key) {
     ui.srAct = "add"; ui.srMin = 90; ui.srDays = 1; ui.srTime = "";
     ui.srAddMode = "count"; ui.srAddN = 1; ui.srUntil = ""; ui.srAddOne = ""; ui.srAddOpen = false;
   }
-  ui.srOpen = null;
+  ui.srOpen = null; ui.srAnchor = null;
+  if (ui.seriesKey !== key) { ui.srTr = null; ui.srFrom = 1; ui.srTo = Math.min(10, s.tasks.length); }
   ui.seriesKey = key;
   openModal(seriesModalHTML(s), true, true);
+  srLongPressInit();
   srPreview();
 }
 function refreshSeriesModal() {
@@ -1744,17 +2674,18 @@ function refreshSeriesModal() {
 function seriesModalHTML(s) {
   const lb = seriesLabel(s), recur = s.kind === "recur", today = todayISO();
   let h = `<h3>${esc(s.title)}</h3>
-    <p class="tiny">${lb ? esc(lb.full) + " · " : ""}${recur ? esc(recurLabel(s.tasks[0].recur)) + ", sin fin · " + fmtMin(s.tasks[0].estMin) + " cada vez" : `${s.tasks.length} tareas · ${s.doneN} hechas · ${fmtMin(s.totMin)} en total`}</p>`;
+    <p class="tiny">${lb ? esc(lb.full) + " · " : ""}${recur ? esc(recurLabel(s.tasks[0].recur) + ", " + recurEndText(s.tasks[0].recur)) + " · " + fmtMin(s.tasks[0].estMin) + " cada vez" : `${pl(s.tasks.length, "tarea", "tareas")} · ${pl(s.doneN, "hecha", "hechas")} · ${fmtMin(s.totMin)} en total`}</p>`;
   if (!recur) {
     const ids = new Set(s.tasks.map(t => t.id));
     ui.srSel = new Set([...ui.srSel].filter(id => ids.has(id))); // las borradas ya no cuentan
-    const row = t => {
+    const row = (t, i) => {
       const done = t.status === "done", late = !done && t.date < today, open = ui.srOpen === t.id;
       let r = `<div class="occ${done ? " done" : ""}${open ? " open" : ""}" data-id="${escA(t.id)}">
-        <label class="occl"><input type="checkbox" ${ui.srSel.has(t.id) ? "checked" : ""} onchange="srToggle('${escA(t.id)}',this.checked)">
+        <label class="occl" onclick="srClick(event,'${escA(t.id)}')"><input type="checkbox" ${ui.srSel.has(t.id) ? "checked" : ""} onchange="srToggle('${escA(t.id)}',this.checked)">
+        <span class="occn" aria-hidden="true">${i + 1}</span>
         <span class="occd">${fmtD(t.date)}${t.time ? ` <span class="ttime">${esc(t.time)}</span>` : ""}</span>
-        <span class="occst">${done ? "✓ hecha" : late ? "atrasada" : t.date === today ? "hoy" : ""}</span>
-        <span class="occm">${fmtMin(t.estMin)}</span></label>
+        <span class="occst">${done ? "✓ hecha" : late ? "atrasada" : t.date === today ? "hoy" : ""}</span></label>
+        <button type="button" class="occm" id="occm-${escA(t.id)}" title="Tocá para cambiar el tiempo" aria-label="Tiempo de la del ${escA(fmtD(t.date))}: ${escA(fmtMin(t.estMin))}. Tocá para cambiarlo" onclick="srMinEdit('${escA(t.id)}')">${fmtMin(t.estMin)}</button>
         <button type="button" class="occmore" aria-expanded="${open}" aria-label="Editar solo la del ${escA(fmtD(t.date))}" onclick="srEdit('${escA(t.id)}')">${open ? "Listo" : "Editar"}</button></div>`;
       if (open) r += `<div class="occedit">
         <div class="occstep"><span class="tiny">Solo esta</span>
@@ -1775,15 +2706,25 @@ function seriesModalHTML(s) {
         <button type="button" class="btn sm" onclick="srSelect('pend')">Pendientes</button>
         <button type="button" class="btn sm" onclick="srSelect('none')">Ninguna</button>
         <div class="grow"></div><span class="tiny" id="sr_count"></span></div>
+      <div class="srrange"><span class="tiny">De la</span>
+        <input id="sr_from" type="number" min="1" max="${s.tasks.length}" value="${ui.srFrom || 1}" aria-label="Desde la número" oninput="ui.srFrom=this.value">
+        <span class="tiny">a la</span>
+        <input id="sr_to" type="number" min="1" max="${s.tasks.length}" value="${ui.srTo || s.tasks.length}" aria-label="Hasta la número" oninput="ui.srTo=this.value">
+        <button type="button" class="btn sm" onclick="srPick()">Elegir</button>
+        <button type="button" class="btn sm" onclick="srRest()" title="Las que vienen después de la última elegida">Las que quedan</button></div>
       <div class="occlist" id="sr_occ">${s.tasks.map(row).join("")}</div>
+      <p class="tiny srhint">${coarsePointer() ? "Tocá una y mantené apretada otra para elegir todas las del medio. Tocá el tiempo para cambiarlo." : "Shift + clic elige todas las del medio. Hacé clic en el tiempo para cambiarlo."}</p>
+      <div class="srquick" id="sr_quick"><span class="tiny" id="sr_quicklbl"></span>
+        <div class="srchips">${[30, 60, 90, 120, 180].map(m => `<button type="button" class="btn sm" onclick="srQuick(${m})">${fmtMin(m)}</button>`).join("")}<button type="button" class="btn sm ghost" onclick="srQuickOther()">Otro…</button></div></div>
       <div class="srbulk">
         <div class="mrow">
-          <div><label for="sr_act">Qué hacer con las elegidas</label><select id="sr_act" onchange="ui.srAct=this.value;srPreview()">
+          <div><label for="sr_act">Qué hacer con las elegidas</label><select id="sr_act" onchange="ui.srAct=this.value;srTrInit();srPreview()">
             ${SR_ACTS.map(([v, l]) => `<option value="${v}"${ui.srAct === v ? " selected" : ""}>${l}</option>`).join("")}</select></div>
           <div class="srx" id="sr_minwrap"><label for="sr_min">Minutos</label><input id="sr_min" type="number" min="0" step="5" value="${ui.srMin}" oninput="ui.srMin=this.value;srPreview()"></div>
           <div class="srx" id="sr_dayswrap"><label for="sr_days">Días (− antes, + después)</label><input id="sr_days" type="number" step="1" value="${ui.srDays}" oninput="ui.srDays=this.value;srPreview()"></div>
           <div class="srx" id="sr_timewrap"><label for="sr_time">Hora (vacía = sin hora)</label><input id="sr_time" type="time" value="${escA(ui.srTime)}" oninput="ui.srTime=this.value;srPreview()"></div>
         </div>
+        <div class="trbox srx" id="sr_trwrap"></div>
         <div class="srchips srx" id="sr_minchips">${[10, 30, 60, 90, 120].map(m => `<button type="button" class="btn sm" onclick="srSetVal('sr_min',${m})">${fmtMin(m)}</button>`).join("")}</div>
         <div class="srchips srx" id="sr_dayschips">${[-7, -1, 1, 2, 3, 7].map(d => `<button type="button" class="btn sm" onclick="srSetVal('sr_days',${d})">${d > 0 ? "+" : "−"}${Math.abs(d)} d</button>`).join("")}</div>
         <div class="reppreview" id="sr_preview" aria-live="polite"></div>
@@ -1822,12 +2763,99 @@ function seriesModalHTML(s) {
     <button class="btn" onclick="closeModal()">Listo</button></div>`;
   return h;
 }
-function srToggle(id, on) { if (on) ui.srSel.add(id); else ui.srSel.delete(id); srPreview(); }
+function srToggle(id, on) { if (on) ui.srSel.add(id); else ui.srSel.delete(id); ui.srAnchor = id; srPreview(); }
+function srSync() {
+  document.querySelectorAll("#sr_occ .occ").forEach(l => { l.querySelector("input").checked = ui.srSel.has(l.dataset.id); });
+  srPreview();
+}
 function srSelect(which) {
   const s = seriesByKey(ui.seriesKey); if (!s) return;
   ui.srSel = new Set(which === "all" ? s.tasks.map(t => t.id) : which === "pend" ? s.pend.map(t => t.id) : []);
-  document.querySelectorAll("#sr_occ .occ").forEach(l => { l.querySelector("input").checked = ui.srSel.has(l.dataset.id); });
-  srPreview();
+  srSync();
+}
+/* C4 · Selección rápida de rangos */
+function coarsePointer() { try { return matchMedia("(pointer: coarse)").matches; } catch (e) { return false; } }
+function srClick(ev, id) { if (ev.shiftKey) { ev.preventDefault(); srRange(id); } }
+function srRange(id) {
+  const s = seriesByKey(ui.seriesKey); if (!s) return;
+  const ids = s.tasks.map(t => t.id), b = ids.indexOf(id), a = ids.indexOf(ui.srAnchor);
+  if (b < 0) return;
+  if (a < 0) { ui.srSel.add(id); ui.srAnchor = id; srSync(); return; }
+  for (let k = Math.min(a, b); k <= Math.max(a, b); k++) ui.srSel.add(ids[k]);
+  ui.srAnchor = id; srSync();
+  const n = Math.abs(b - a) + 1; toast("Elegidas de la " + (Math.min(a, b) + 1) + " a la " + (Math.max(a, b) + 1) + " (" + n + ")");
+}
+function srPick(from, to) {
+  const s = seriesByKey(ui.seriesKey); if (!s) return;
+  const N = s.tasks.length;
+  from = parseInt(from ?? (byId("sr_from") || {}).value, 10); to = parseInt(to ?? (byId("sr_to") || {}).value, 10);
+  if (!(from >= 1) || !(to >= 1)) { toast("Poné desde qué número y hasta cuál"); return; }
+  if (from > to) [from, to] = [to, from];
+  from = Math.min(from, N); to = Math.min(to, N);
+  ui.srFrom = from; ui.srTo = to;
+  ui.srSel = new Set(s.tasks.slice(from - 1, to).map(t => t.id));
+  ui.srAnchor = s.tasks[to - 1].id;
+  const f = byId("sr_from"), tt = byId("sr_to"); if (f) f.value = from; if (tt) tt.value = to;
+  srSync();
+}
+/* Las que vienen después de la última elegida (si no hay ninguna elegida, todas) */
+function srRest() {
+  const s = seriesByKey(ui.seriesKey); if (!s) return;
+  let last = -1; s.tasks.forEach((t, i) => { if (ui.srSel.has(t.id)) last = i; });
+  if (last >= s.tasks.length - 1) { toast("No quedan tareas después de la última elegida"); return; }
+  srPick(last + 2, s.tasks.length);
+}
+/* Un toque: poner ese tiempo a las elegidas (lo que va a pasar está escrito arriba
+   de los botones; después hay deshacer). Deja listo el rango siguiente. */
+function srQuick(min) {
+  const s = seriesByKey(ui.seriesKey); if (!s) return;
+  const ts = s.tasks.filter(t => ui.srSel.has(t.id));
+  if (!ts.length) { toast("Elegí primero las tareas"); return; }
+  const snap = ts.map(t => ({ t, estMin: t.estMin }));
+  ts.forEach(t => { t.estMin = min; });
+  let last = -1; s.tasks.forEach((t, i) => { if (ui.srSel.has(t.id)) last = i; });
+  if (last < s.tasks.length - 1) { ui.srFrom = last + 2; ui.srTo = s.tasks.length; }
+  change(); render(); refreshSeriesModal();
+  const n = ts.length;
+  toast((n === 1 ? "1 tarea" : n + " tareas") + " en " + fmtMin(min), () => { snap.forEach(x => { x.t.estMin = x.estMin; }); change(); render(); refreshSeriesModal(); });
+}
+function srQuickOther() {
+  ui.srAct = "set"; const a = byId("sr_act"); if (a) a.value = "set";
+  srPreview(); const m = byId("sr_min"); if (m) { m.focus(); m.select(); m.scrollIntoView({ block: "center", behavior: "smooth" }); }
+}
+function srTrInit() { if (ui.srAct === "tramos" && !ui.srTr) { const s = seriesByKey(ui.seriesKey); ui.srTr = defaultTramos(Math.max(2, ui.srSel.size), s && s.pend[0] ? s.pend[0].estMin : 60); } }
+/* Tocar el tiempo de una fila lo convierte en un campo para escribir ("90", "1,5", "1 h 30") */
+function srMinEdit(id) {
+  const t = taskById(id), b = byId("occm-" + id); if (!t || !b) return;
+  const inp = document.createElement("input");
+  inp.className = "occmin"; inp.id = "occmin-" + id; inp.setAttribute("inputmode", "decimal"); inp.setAttribute("enterkeyhint", "done");
+  inp.setAttribute("aria-label", "Minutos de la del " + fmtD(t.date) + " (90, 1,5 o 1 h 30)");
+  inp.value = String(t.estMin || 0); inp.placeholder = "min";
+  let done = false;
+  const commit = ok => {
+    if (done) return; done = true;
+    const v = ok ? parseDur(inp.value) : null;
+    if (ok && v == null) toast("No entendí el tiempo: probá con 90, 1,5 o 1 h 30");
+    if (v != null && v !== (t.estMin || 0)) srOne(id, "min", v); else refreshSeriesModal();
+  };
+  inp.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); commit(true); } else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); commit(false); } });
+  inp.addEventListener("blur", () => commit(true));
+  b.replaceWith(inp); inp.focus(); inp.select();
+}
+function srLongPressInit() {
+  const box = byId("modalbox"); if (!box || box._srlp) return; box._srlp = true;
+  let tm = null, sx = 0, sy = 0;
+  const cancel = () => { clearTimeout(tm); tm = null; };
+  box.addEventListener("pointerdown", e => {
+    const l = e.target.closest && e.target.closest("#sr_occ .occl"); if (!l || e.pointerType === "mouse") return;
+    const id = l.closest(".occ").dataset.id; sx = e.clientX; sy = e.clientY; cancel();
+    tm = setTimeout(() => { tm = null; ui.srLP = Date.now(); srRange(id); }, 450);
+  });
+  box.addEventListener("pointermove", e => { if (tm && Math.hypot(e.clientX - sx, e.clientY - sy) > 10) cancel(); });
+  box.addEventListener("pointerup", cancel); box.addEventListener("pointercancel", cancel);
+  // el clic que sigue al toque largo no tiene que destildar la fila
+  box.addEventListener("click", e => { if (ui.srLP && Date.now() - ui.srLP < 1500 && e.target.closest && e.target.closest("#sr_occ .occl")) { e.preventDefault(); ui.srLP = 0; } }, true);
+  box.addEventListener("contextmenu", e => { if (e.target.closest && e.target.closest("#sr_occ .occl")) e.preventDefault(); });
 }
 function srSetVal(id, v) { const el = byId(id); if (!el) return; el.value = v; el.dispatchEvent(new Event("input")); }
 /* Calcula qué va a pasar con la selección actual, sin tocar nada. */
@@ -1841,9 +2869,13 @@ function srPlan() {
   if (["add", "sub"].includes(act) && min === 0) return { error: "Poné cuántos minutos." };
   if (act === "move" && !days) return { error: "Poné cuántos días (por ejemplo 2 o −1)." };
   if (act === "time" && ui.srTime && hmToMin(ui.srTime) == null) return { error: "La hora no es válida." };
-  const changes = targets.map(t => {
+  let tm = null;
+  if (act === "tramos") { tm = tramosMins(ui.srTr || [], n); if (tm.error) return { error: tm.error }; }
+  const changes = targets.map((t, i) => {
     const c = { t, from: "", to: "" };
-    if (act === "add" || act === "sub" || act === "set") {
+    if (act === "tramos") {
+      const v = tm.mins[i]; c.from = fmtMin(t.estMin); c.to = fmtMin(v); c.apply = () => { t.estMin = v; };
+    } else if (act === "add" || act === "sub" || act === "set") {
       const v = act === "set" ? min : Math.max(0, (t.estMin || 0) + (act === "add" ? min : -min));
       c.from = fmtMin(t.estMin); c.to = fmtMin(v); c.apply = () => { t.estMin = v; };
     } else if (act === "move") {
@@ -1855,12 +2887,13 @@ function srPlan() {
     } else { c.from = fmtD(t.date); }
     return c;
   });
-  const what = act === "add" ? `sumar ${fmtMin(min)} a ${nn}` : act === "sub" ? `restar ${fmtMin(min)} a ${nn}`
+  const totTr = tm ? tm.mins.reduce((a, b) => a + b, 0) : 0;
+  const what = act === "tramos" ? `poner tiempos por tramos a ${nn} (${fmtMin(totTr)} en total)` : act === "add" ? `sumar ${fmtMin(min)} a ${nn}` : act === "sub" ? `restar ${fmtMin(min)} a ${nn}`
     : act === "set" ? `dejar ${nn} en ${fmtMin(min)}` : act === "move" ? `mover ${nn} ${Math.abs(days)} día${Math.abs(days) === 1 ? "" : "s"} ${days > 0 ? "más tarde" : "antes"}`
     : act === "time" ? (ui.srTime ? `poner ${nn} a las ${ui.srTime}` : `sacarle la hora a ${nn}`) : `borrar ${nn}`;
-  const btn = act === "add" ? `Sumar ${fmtMin(min)}` : act === "sub" ? `Restar ${fmtMin(min)}` : act === "set" ? `Fijar en ${fmtMin(min)}`
+  const btn = act === "tramos" ? "Aplicar tramos" : act === "add" ? `Sumar ${fmtMin(min)}` : act === "sub" ? `Restar ${fmtMin(min)}` : act === "set" ? `Fijar en ${fmtMin(min)}`
     : act === "move" ? "Mover" : act === "time" ? "Cambiar hora" : "Borrar";
-  const past = act === "add" ? `Sumaste ${fmtMin(min)} a ${nn}` : act === "sub" ? `Restaste ${fmtMin(min)} a ${nn}`
+  const past = act === "tramos" ? `Tramos aplicados a ${nn}` : act === "add" ? `Sumaste ${fmtMin(min)} a ${nn}` : act === "sub" ? `Restaste ${fmtMin(min)} a ${nn}`
     : act === "set" ? `${n === 1 ? "Quedó" : "Quedaron"} ${nn} en ${fmtMin(min)}` : act === "move" ? `${n === 1 ? "Movida" : "Movidas"} ${nn}`
     : act === "time" ? `Hora cambiada en ${nn}` : `${n === 1 ? "Borrada" : "Borradas"} ${nn}`;
   return { s, act, targets, changes, what, past, btn: btn + (act === "move" || act === "del" ? " " : " a ") + nn, n };
@@ -1872,7 +2905,18 @@ function srPreview() {
   show("sr_minwrap", isMin); show("sr_minchips", isMin);
   show("sr_dayswrap", act === "move"); show("sr_dayschips", act === "move");
   show("sr_timewrap", act === "time");
+  show("sr_trwrap", act === "tramos");
+  const trw = byId("sr_trwrap");
+  if (trw && act === "tramos") { srTrInit(); trw.innerHTML = tramosHTML("sr", ui.srTr, ui.srSel.size); }
   const cnt = byId("sr_count"); if (cnt) cnt.textContent = ui.srSel.size + (ui.srSel.size === 1 ? " elegida" : " elegidas");
+  const ql = byId("sr_quicklbl"), qn = ui.srSel.size;
+  if (ql) {
+    const s0 = seriesByKey(ui.seriesKey), idx = s0 ? s0.tasks.map((t, i) => ui.srSel.has(t.id) ? i + 1 : 0).filter(Boolean) : [];
+    const contiguous = idx.length > 1 && idx[idx.length - 1] - idx[0] + 1 === idx.length;
+    ql.innerHTML = !qn ? "Elegí tareas para ponerles tiempo con un toque"
+      : `Poner a ${qn === 1 ? "la elegida" : contiguous ? `las <b>${qn}</b> elegidas (de la ${idx[0]} a la ${idx[idx.length - 1]})` : `las <b>${qn}</b> elegidas`}:`;
+    byId("sr_quick").classList.toggle("off", !qn);
+  }
   document.querySelectorAll("#sr_occ .occ").forEach(l => l.classList.toggle("on", ui.srSel.has(l.dataset.id)));
   srAddPreview();
   const p = srPlan(); if (!p) return;
@@ -1913,7 +2957,10 @@ function seriesPattern(dates) {
   const pos = gaps.filter(g => g > 0);
   if (!pos.length) return { kind: "gap", n: 1, label: "todos los días" };
   const dom = new Set(ds.map(d => d.slice(8)));
-  if (dom.size === 1 && pos.every(g => g >= 28)) return { kind: "month", label: "cada mes" }; // el 31 se saltea los meses cortos (C1)
+  // "cada mes": mismo día, o el último día en los meses cortos (L1b #16; las series viejas que salteaban el mes también cuentan)
+  const D = Math.max(...ds.map(d => +d.slice(8)));
+  const mesCorto = pos.every(g => g >= 28 && g <= 31) && ds.every(d => isMonthDay(dToDate(d), D));
+  if ((dom.size === 1 && pos.every(g => g >= 28)) || mesCorto) return { kind: "month", day: D, label: "cada mes" };
   const gapLabel = n => n === 1 ? "todos los días" : n === 7 ? "cada semana" : n === 14 ? "cada 2 semanas" : "cada " + n + " días";
   if (new Set(pos).size === 1) return { kind: "gap", n: pos[0], label: gapLabel(pos[0]) };
   const wd = [...new Set(ds.map(d => dToDate(d).getDay()))];
@@ -1931,8 +2978,9 @@ function seriesPattern(dates) {
 }
 function patternNext(pat, d) {
   if (pat.kind === "month") {
-    const x = dToDate(d), day = x.getDate();
-    for (let k = 1; k < 13; k++) { const y = new Date(x.getFullYear(), x.getMonth() + k, day); if (y.getDate() === day) return iso(y); }
+    const x = dToDate(d), day = pat.day || x.getDate();
+    const last = new Date(x.getFullYear(), x.getMonth() + 2, 0).getDate();
+    return iso(new Date(x.getFullYear(), x.getMonth() + 1, Math.min(day, last)));
   }
   if (pat.kind === "wd") { let y = addDays(d, 1); while (!pat.days.includes(dToDate(y).getDay())) y = addDays(y, 1); return y; }
   return addDays(d, pat.n || 1);
@@ -2045,6 +3093,11 @@ const VIEWS = [
 ];
 function go(view, id) { location.hash = "#/" + view + (id ? "/" + id : ""); }
 function parseHash() {
+  const inv = /^#\/sync\?(?:.*&)?k=([A-Za-z0-9_-]+)/.exec(location.hash || "");
+  if (inv) { // link del QR de sincronización: se ofrece conectar en Configuración
+    ui.syncInvite = inv[1];
+    try { history.replaceState(null, "", location.pathname + location.search + "#/config"); } catch (e) { location.hash = "#/config"; }
+  }
   const h = (location.hash || "").replace(/^#\/?/, "").split("/");
   route.view = h[0] || "home"; route.id = h[1] || null;
   if (!VIEWS.some(v => v[0] === route.view) && !["subject", "eval", "project", "list"].includes(route.view)) route.view = "home";
@@ -2070,7 +3123,7 @@ function renderSidebar() {
   const cur = NAV_PARENT[route.view] || route.view;
   const label = v => v === "list" ? "Lista completa" : (VIEWS.find(x => x[0] === v) || [v, v])[1];
   const item = v => `<a href="#/${v}" class="${cur === v ? "on" : ""}">${label(v)}</a>`;
-  sb.innerHTML = NAV.map(([sec, vs]) => `<div class="sec">${sec}</div>` + vs.map(item).join("")).join("") +
+  sb.innerHTML = yearSwitcherHTML() + NAV.map(([sec, vs]) => `<div class="sec">${sec}</div>` + vs.map(item).join("")).join("") +
     '<div class="hr" style="margin:10px 6px"></div>' + item("config") +
     '<div style="padding:14px 10px" class="tiny">Aula v' + APP_VERSION + "</div>";
 }
@@ -2082,7 +3135,11 @@ function renderTop() {
   const ne = byId("nextEv");
   if (ne) {
     const evs = upcomingEvals(60);
-    if (evs.length) { const e = evs[0]; const n = daysTo(e.date); ne.style.display = ""; ne.innerHTML = `${esc(e.name)} · <b>${n === 0 ? "HOY" : n === 1 ? "mañana" : "en " + n + " días"}</b>`; }
+    if (evs.length) {
+      const g = evalsSameDay(evs), n = daysTo(g[0].date);
+      ne.style.display = ""; ne.title = g.map(e => e.name).join(" · ") + " · " + fmtD(g[0].date);
+      ne.innerHTML = `${esc(evalGroupLabel(g))} · <b>${whenTxt(n, true)}</b>`;
+    }
     else ne.style.display = "none";
   }
 }
@@ -2101,7 +3158,7 @@ function render() {
     habits: viewHabits, stats: viewStats, history: viewHistory,
     backups: viewBackups, config: viewConfig
   };
-  v.innerHTML = (map[route.view] || viewHome)();
+  v.innerHTML = oldYearBanner() + (map[route.view] || viewHome)();
   if (route.view === "backups") fillBackupsList();
   renderSelBar();
 }
@@ -2183,7 +3240,7 @@ function viewHome() {
       return `<div class="task" onclick="go('eval','${e.id}')">
         <span class="pill ${n <= 2 ? "bad" : n <= 7 ? "warn" : "acc"}" style="min-width:74px;text-align:center">${n === 0 ? "HOY" : n === 1 ? "mañana" : "en " + n + " días"}</span>
         <div class="tinfo"><div class="tt"><b>${esc(e.name)}</b></div>
-        <div class="tmeta"><span class="tiny">${EVAL_KINDS[e.kind] || e.kind} · ${fmtD(e.date)}${e.time ? " · " + esc(e.time) : ""}</span>
+        <div class="tmeta"><span class="tiny">${EVAL_KINDS[e.kind] || e.kind || "Evaluación"} · ${fmtD(e.date)}${e.time ? " · " + esc(e.time) : ""}</span>
         ${o ? `<span class="tag" style="background:${o.color}1c;color:${o.color}">${esc(o.short)}</span>` : ""}${p ? `<span class="tiny">${esc(p.name)}</span>` : ""}
         ${prep !== null ? `<span class="tiny">preparación ${prep}%</span>` : ""}</div></div></div>`;
     }).join("") + "</div>";
@@ -2228,7 +3285,7 @@ function viewHome() {
       return `<div class="subrow" style="cursor:pointer;border:1px solid var(--line2);border-radius:9px" onclick="go('subject','${s.id}')">
         <span class="iconchip" style="background:${s.color}">${esc(s.icon || s.short)}</span>
         <div style="flex:1;min-width:0"><div style="font-size:.8rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.name)}</div>
-        <div class="tiny">${pend.length} pendientes · ${fmtMin(min)}</div></div></div>`;
+        <div class="tiny">${pl(pend.length, "pendiente", "pendientes")} · ${fmtMin(min)}</div></div></div>`;
     }).join("") + "</div></div>";
   }
   return h;
@@ -2239,11 +3296,11 @@ function saludo() {
 }
 function suggestNow(dayTasks, od, flex, evs) {
   const items = [];
-  if (od.length) items.push(`Tenés <b>${od.length} tareas atrasadas</b>: conviene resolverlas o moverlas antes de seguir.`);
-  const next = evs[0];
-  if (next && daysTo(next.date) <= 3) {
-    const pend = evalPlanTasks(next.id).filter(t => t.status !== "done");
-    items.push(`<b>${esc(next.name)}</b> es ${daysTo(next.date) === 0 ? "hoy" : daysTo(next.date) === 1 ? "mañana" : "en " + daysTo(next.date) + " días"}${pend.length ? ": quedan " + pend.length + " tareas de su plan (" + fmtMin(pend.reduce((a, t) => a + (t.estMin || 0), 0)) + ")" : ""}.`);
+  if (od.length) items.push(`Tenés <b>${od.length === 1 ? "1 tarea atrasada" : od.length + " tareas atrasadas"}</b>: conviene resolverlas o moverlas antes de seguir.`);
+  const g = evalsSameDay(evs);
+  if (g.length && daysTo(g[0].date) <= 3) {
+    const pend = g.flatMap(e => evalPlanTasks(e.id)).filter(t => t.status !== "done"), many = g.length > 1;
+    items.push(`<b>${esc(evalGroupLabel(g))}</b> ${many ? "son" : "es"} ${whenTxt(daysTo(g[0].date))}${pend.length ? ": " + (pend.length === 1 ? "queda 1 tarea de " : "quedan " + pend.length + " tareas de ") + (many ? "sus planes" : "su plan") + " (" + fmtMin(pend.reduce((a, t) => a + (t.estMin || 0), 0)) + ")" : ""}.`);
   }
   const first = dayTasks.filter(t => !isDoneOn(t, todayISO())).sort((a, b) => b.prio - a.prio)[0];
   if (first) items.push(`Siguiente sugerida: <b>${esc(first.title)}</b>${first.estMin ? " (" + fmtMin(first.estMin) + ")" : ""}. <button class="btn sm" onclick="event.stopPropagation();openTaskEditor('${first.id}')">Abrir</button>`);
@@ -2403,7 +3460,7 @@ function viewList() {
   }
   list.sort((a, b) => ((a.date || a.due || "9999") + a.title).localeCompare((b.date || b.due || "9999") + b.title));
   const totMin = list.filter(t => t.status !== "done").reduce((a, t) => a + (t.estMin || 0), 0);
-  let h = `<div class="vhead"><h2>Lista completa</h2><span class="sub">${list.length} tareas · ${fmtMin(totMin)} pendientes</span>
+  let h = `<div class="vhead"><h2>Lista completa</h2><span class="sub">${pl(list.length, "tarea", "tareas")} · ${fmtMin(totMin)} pendientes</span>
     <div class="grow"></div>
     <button class="btn ${ui.selMode ? "primary" : ""}" onclick="toggleSelMode()" title="Elegir varias tareas (o usá Ctrl+clic y Shift+clic)">Seleccionar</button>
     <button class="btn" onclick="selectAllVisible()">Todas</button>
@@ -2421,7 +3478,7 @@ function viewList() {
     <label style="display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--tx2)"><input type="checkbox" style="width:auto" ${f.archived === "1" ? "checked" : ""} onchange="ui.listFilters.archived=this.checked?'1':'';render()">archivadas</label>
     <button class="btn sm ghost" onclick="ui.listFilters={};render()">Limpiar filtros</button></div>`;
   h += `<div class="card">${list.length ? list.map(t => taskRow(t, { showDate: true })).join("") : '<div class="empty">No hay tareas con estos filtros.</div>'}</div>`;
-  if (oldDone) h += `<p class="oldDone tiny">${ui.showOldDone ? `Mostrando ${oldDone} hecha${oldDone > 1 ? "s" : ""} hace más de ${keep} días.` : `${oldDone} tarea${oldDone > 1 ? "s" : ""} hecha${oldDone > 1 ? "s" : ""} hace más de ${keep} días no se muestra${oldDone > 1 ? "n" : ""}.`}
+  if (oldDone) h += `<p class="oldDone tiny">${ui.showOldDone ? `Mostrando ${oldDone} hecha${oldDone > 1 ? "s" : ""} hace más de ${pl(keep, "día", "días")}.` : `${oldDone} tarea${oldDone > 1 ? "s" : ""} hecha${oldDone > 1 ? "s" : ""} hace más de ${pl(keep, "día", "días")} no se muestra${oldDone > 1 ? "n" : ""}.`}
     <button class="btn sm ghost" onclick="ui.showOldDone=!ui.showOldDone;render()">${ui.showOldDone ? "Ocultar hechas antiguas" : "Mostrar hechas antiguas"}</button></p>`;
   return h;
 }
@@ -2440,20 +3497,21 @@ function viewSubjects() {
       <span class="iconchip" style="background:${s.color}">${esc(s.icon || s.short)}</span>
       <div style="flex:1;min-width:0;cursor:pointer" onclick="go('subject','${s.id}')">
         <div style="font-weight:600;font-size:.86rem">${esc(s.name)}</div>
-        <div class="tiny">${esc(s.short)} · ${pend} pendientes · ${fmtMin(min)} estudiadas</div></div>
-      <button class="btn sm ghost" title="Subir" onclick="moveSubject('${s.id}',-1)" ${i === 0 ? "disabled" : ""}>↑</button>
-      <button class="btn sm ghost" title="Bajar" onclick="moveSubject('${s.id}',1)" ${i === act.length - 1 ? "disabled" : ""}>↓</button>
-      <button class="btn sm" onclick="openSubjectEditor('${s.id}')">Editar</button>
-      <button class="btn sm" onclick="archiveSubject('${s.id}')">Archivar</button>
+        <div class="tiny">${esc(s.short)} · ${pend ? pl(pend, "pendiente", "pendientes") : "al día"} · ${min ? fmtMin(min) + " estudiadas" : "sin tiempo registrado"}</div></div>
+      <div class="subacts">
+        <button class="btn sm ghost" title="Subir" aria-label="Subir" onclick="moveSubject('${s.id}',-1)" ${i === 0 ? "disabled" : ""}>↑</button>
+        <button class="btn sm ghost" title="Bajar" aria-label="Bajar" onclick="moveSubject('${s.id}',1)" ${i === act.length - 1 ? "disabled" : ""}>↓</button>
+        <button class="btn sm" onclick="openSubjectEditor('${s.id}')">Editar</button>
+        <button class="btn sm" onclick="archiveSubject('${s.id}')">Archivar</button></div>
     </div>`;
   }).join("") : '<div class="empty">No hay materias activas.</div>';
   h += "</div>";
   if (arch.length) {
     h += `<div class="card"><h3>Archivadas</h3>` + arch.map(s => `<div class="subrow">
       <span class="iconchip" style="background:${s.color};opacity:.5">${esc(s.icon || s.short)}</span>
-      <div style="flex:1"><div style="font-weight:600;font-size:.86rem;color:var(--tx3)">${esc(s.name)}</div></div>
-      <button class="btn sm" onclick="archiveSubject('${s.id}')">Reactivar</button>
-      <button class="btn sm danger" onclick="deleteSubject('${s.id}')">Eliminar</button></div>`).join("") + "</div>";
+      <div style="flex:1;min-width:0"><div style="font-weight:600;font-size:.86rem;color:var(--tx3)">${esc(s.name)}</div></div>
+      <div class="subacts"><button class="btn sm" onclick="archiveSubject('${s.id}')">Reactivar</button>
+      <button class="btn sm danger" onclick="deleteSubject('${s.id}')">Eliminar</button></div></div>`).join("") + "</div>";
   }
   return h;
 }
@@ -2484,9 +3542,10 @@ function viewSubjectDetail() {
   </div>`;
   if (nextEv) {
     const n = daysTo(nextEv.date);
-    h += `<div class="card" style="border-left:3px solid ${s.color}"><h3>Próxima evaluación</h3>
-      <div class="task" onclick="go('eval','${nextEv.id}')"><span class="pill ${n <= 3 ? "bad" : "acc"}">${n === 0 ? "HOY" : "en " + n + " días"}</span>
-      <div class="tinfo"><div class="tt"><b>${esc(nextEv.name)}</b> · ${fmtD(nextEv.date)}</div></div></div></div>`;
+    const same = evs.filter(e => e.date === nextEv.date && !["rendido", "aprob", "desaprob"].includes(e.status));
+    h += `<div class="card" style="border-left:3px solid ${s.color}"><h3>${same.length > 1 ? "Próximas evaluaciones" : "Próxima evaluación"}</h3>
+      ${same.map(e => `<div class="task" onclick="go('eval','${e.id}')"><span class="pill ${n <= 3 ? "bad" : "acc"}">${whenTxt(n, true)}</span>
+      <div class="tinfo"><div class="tt"><b>${esc(e.name)}</b> · ${fmtD(e.date)}</div></div></div>`).join("")}</div>`;
   }
   if (grades.length) h += `<div class="card"><h3>Evaluaciones rendidas</h3>${grades.map(e => `<div class="task" onclick="go('eval','${e.id}')"><div class="tinfo"><div class="tt">${esc(e.name)}</div></div><span class="pill ${e.status === "aprob" ? "ok" : e.status === "desaprob" ? "bad" : ""}">${esc(String(e.grade))}</span></div>`).join("")}</div>`;
   h += `<div class="card"><h3>Pendientes (${pend.length})</h3>${pend.length ? pend.sort((a, b) => ((a.date || a.due || "9999")).localeCompare(b.date || b.due || "9999")).map(t => taskRow(t, { showDate: true })).join("") : '<div class="empty">Sin pendientes.</div>'}</div>`;
@@ -2507,7 +3566,7 @@ function viewEvals() {
     return `<div class="task" onclick="go('eval','${e.id}')">
       <span class="pill ${n < 0 ? "" : n <= 2 ? "bad" : n <= 7 ? "warn" : "acc"}" style="min-width:80px;text-align:center">${n < 0 ? fmtD(e.date) : n === 0 ? "HOY" : n === 1 ? "mañana" : "en " + n + " días"}</span>
       <div class="tinfo"><div class="tt"><b>${esc(e.name)}</b></div>
-        <div class="tmeta"><span class="tiny">${EVAL_KINDS[e.kind] || e.kind} · ${fmtD(e.date)}${e.time ? " " + esc(e.time) : ""}</span>
+        <div class="tmeta"><span class="tiny">${EVAL_KINDS[e.kind] || e.kind || "Evaluación"} · ${fmtD(e.date)}${e.time ? " " + esc(e.time) : ""}</span>
         ${o ? `<span class="tag" style="background:${o.color}1c;color:${o.color}">${esc(o.short)}</span>` : ""}
         ${p ? `<span class="tiny">${esc(p.name)}</span>` : ""}
         <span class="pill ${stCls}">${EVAL_STATUS[e.status] || e.status}</span>
@@ -2667,7 +3726,7 @@ function viewPlans() {
     h += `<div class="card"><h3 style="cursor:pointer" onclick="go('eval','${e.id}')">${esc(e.name)}<div class="grow"></div>
       <span class="tiny">${fmtD(e.date)} · ${daysTo(e.date) >= 0 ? fmtRel(e.date) : "pasado"}</span></h3>
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px"><div class="pbar"><i style="width:${pct}%"></i></div><span class="tiny">${done}/${plan.length}</span></div>
-      <div class="tiny">${fmtMin(pend)} pendientes${late ? ` · <span style="color:var(--bad)">${late} atrasadas</span>` : ""}</div>
+      <div class="tiny">${fmtMin(pend)} pendientes${late ? ` · <span style="color:var(--bad)">${pl(late, "atrasada", "atrasadas")}</span>` : ""}</div>
       <div style="display:flex;gap:8px;margin-top:10px">
         <button class="btn sm" onclick="go('eval','${e.id}')">Abrir</button>
         <button class="btn sm" onclick="replanPending('${e.id}')">Replanificar pendientes</button>
@@ -3190,7 +4249,7 @@ function viewStats() {
   if (route.id === "detalle") return viewStatsDetail();
   const p = progressData();
   const pctCol = v => v == null ? "var(--tx3)" : v < 40 ? "var(--bad)" : v < 70 ? "var(--warn)" : "var(--ok)";
-  let h = `<div class="vhead"><h2>Progreso</h2><span class="sub">${esc(capitalize(fmtD(todayISO())))}</span></div><div class="pg">`;
+  let h = `<div class="vhead"><h2>Progreso</h2><span class="sub">${esc(capitalize(fmtD(todayISO())))}</span><div class="grow"></div><button class="btn sm wopen" onclick="openWrapped()">Tu año en Aula</button></div><div class="pg">`;
   // 1 · esta semana
   const W = p.week, diff = W.min - W.lastSame, maxD = Math.max(60, ...W.days.map(x => x.min));
   const sub = !W.min ? "Todavía no registraste tiempo esta semana."
@@ -3223,7 +4282,7 @@ function viewStats() {
     ${p.subjects.length ? p.subjects.map(x => `<div class="pg-srow" onclick="go('subject','${x.s.id}')">
       <div class="pg-row"><span class="pg-sname"><i class="pg-sdot" style="background:${x.s.color}"></i>${esc(x.s.name)}</span><b>${x.min ? fmtMin(x.min) : "—"}</b></div>
       <div class="pg-strack"><i style="width:${Math.round(x.min / maxS * 100)}%;background:${x.s.color}"></i></div>
-      ${x.next ? `<div class="tiny" style="color:${x.nextDays <= 14 && x.min < 120 ? "var(--warn)" : "var(--tx3)"}">${esc(x.next.name)} en ${x.nextDays} día${x.nextDays === 1 ? "" : "s"}${x.nextDays <= 14 && x.min < 120 ? " · le estás dando poco" : ""}</div>` : ""}</div>`).join("")
+      ${x.next ? `<div class="tiny" style="color:${x.nextDays <= 14 && x.min < 120 ? "var(--warn)" : "var(--tx3)"}">${esc(x.next.name)} ${whenTxt(x.nextDays)}${x.nextDays <= 14 && x.min < 120 ? " · le estás dando poco" : ""}</div>` : ""}</div>`).join("")
     : `<div class="pg-sub">Cuando registres tiempo de estudio, acá vas a ver cuánto le das a cada materia.</div>`}</section>`;
   // 5 · constancia
   h += `<section class="card pg-card pg-streak"><div class="pg-q">¿Soy constante?</div>
@@ -3302,7 +4361,7 @@ function viewStatsDetail() {
     h += `<div class="grid2"><div class="card" style="margin:0"><h3>Precisión de tus estimaciones</h3>
       <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
         <div style="width:118px">${chartRing(clamp(100 - Math.abs(1 - ratio) * 100, 0, 100), C, 118, ratio > 1.15 ? C.bad : ratio < .85 ? C.warn : C.ok, Math.round(ratio * 100) + "%", "real/est")}</div>
-        <div style="flex:1;min-width:180px"><p class="muted" style="line-height:1.6">Sobre ${st.timed.length} tareas con tiempo real cargado: estimaste <b>${hClock(st.estSum)}</b> y te llevó <b>${hClock(st.realSum)}</b>.<br>
+        <div style="flex:1;min-width:180px"><p class="muted" style="line-height:1.6">Sobre ${pl(st.timed.length, "tarea", "tareas")} con tiempo real cargado: estimaste <b>${hClock(st.estSum)}</b> y te llevó <b>${hClock(st.realSum)}</b>.<br>
         ${ratio > 1.08 ? "Tendés a <b style='color:var(--bad)'>subestimar</b>: sumale un " + Math.round((ratio - 1) * 100) + "% a lo que calculás." : ratio < .92 ? "Tendés a <b style='color:var(--warn)'>sobreestimar</b>: te sobra un " + Math.round((1 - ratio) * 100) + "% del tiempo que reservás." : "Tus estimaciones son <b style='color:var(--ok)'>muy precisas</b>. Seguí planificando así."}</p></div>
       </div></div>`;
     h += cmpItems.length ? `<div class="card" style="margin:0"><h3>Estimado vs real por materia</h3>${chartDual(cmpItems, C, 430, 210)}</div>` : `<div class="card" style="margin:0"><h3>Estimado vs real por materia</h3><div class="empty">Cargá el tiempo real al completar tareas para ver esta comparación.</div></div>`;
@@ -3329,7 +4388,7 @@ function viewStatsDetail() {
 function buildInsights(st, C) {
   const out = [];
   if (!st.total) return ["Todavía no hay tiempo registrado en este período. Registrá tiempo o completá tareas cargando cuánto te llevaron."];
-  out.push(`Estudiaste <b>${hClock(st.total)}</b> en ${st.activeDays} de ${st.elapsed.length} días (${st.coverage}% de constancia), con un promedio de <b>${hClock(st.avgActive)}</b> los días que te sentaste a estudiar.`);
+  out.push(`Estudiaste <b>${hClock(st.total)}</b> en ${st.activeDays} de ${pl(st.elapsed.length, "día", "días")} (${st.coverage}% de constancia), con un promedio de <b>${hClock(st.avgActive)}</b> los días que te sentaste a estudiar.`);
   const bd = st.dow.map((x, i) => ({ i, avg: x.n ? x.min / x.n : 0 })).sort((a, b) => b.avg - a.avg);
   if (bd[0].avg > 0) {
     const worst = bd.filter(x => x.avg > 0).slice(-1)[0];
@@ -3358,8 +4417,8 @@ function buildInsights(st, C) {
       : `Bajaste un <b style="color:var(--bad)">${p}%</b> respecto del período anterior (${hClock(st.prevTotal)} → ${hClock(st.total)}).`);
   }
   if (st.streak >= 3) out.push(`Llevás <b>${st.streak} días seguidos</b> estudiando${st.streak >= st.bestStreak ? " — es tu mejor racha histórica." : ` (tu récord es ${st.bestStreak}).`}`);
-  if (st.overdue) out.push(`Tenés <b style="color:var(--bad)">${st.overdue} tareas atrasadas</b>: conviene replanificarlas antes de que se acumulen.`);
-  if (st.gradeAvg !== null) out.push(`Tu promedio de notas cargadas es <b>${st.gradeAvg}</b> sobre ${st.graded.length} evaluaciones.`);
+  if (st.overdue) out.push(`Tenés <b style="color:var(--bad)">${pl(st.overdue, "tarea atrasada", "tareas atrasadas")}</b>: conviene replanificarlas antes de que se acumulen.`);
+  if (st.gradeAvg !== null) out.push(`Tu promedio de notas cargadas es <b>${st.gradeAvg}</b> sobre ${pl(st.graded.length, "evaluación", "evaluaciones")}.`);
   return out;
 }
 
@@ -3672,17 +4731,17 @@ async function restoreBackup(key) {
     title: "Restaurar copia", body: "Se reemplazará el estado actual por el de esta copia. Antes se creará una copia de seguridad del estado actual.", okLabel: "Restaurar", danger: true,
     onOk: async () => {
       try {
-        await idbPut("backups", "pre-restore-" + Date.now(), { ts: Date.now(), label: "Antes de restaurar", data: JSON.stringify(state) });
+        await idbPut("backups", "pre-restore-" + Date.now(), { ts: Date.now(), label: "Antes de restaurar", data: JSON.stringify(fullState()) });
         const b = await idbGet("backups", key);
         const s = JSON.parse(b.data);
         if (!validState(s)) { toast("La copia está dañada"); return; }
-        state = normalizeState(s); migrateState(state); change(); render(); toast("Copia restaurada");
+        const ns = normalizeState(s); migrateState(ns); setWholeState(ns); change(); render(); toast("Copia restaurada");
       } catch (e) { toast("No se pudo restaurar"); }
     }
   });
 }
 function exportJSON() {
-  downloadFile("aula-backup-" + todayISO() + ".json", JSON.stringify(state, null, 2), "application/json");
+  downloadFile("aula-backup-" + todayISO() + ".json", JSON.stringify(fullState(), null, 2), "application/json");
   toast("Datos exportados");
 }
 function importJSON(ev) {
@@ -3695,7 +4754,7 @@ function importJSON(ev) {
     if (isV1) {
       askConfirm({
         title: "Archivo de la versión anterior", body: "Este archivo es de la app anterior. Se migrará su contenido y se agregará al estado actual.", okLabel: "Migrar e importar",
-        onOk: () => { try { localStorage.setItem(OLD_LS_KEY, JSON.stringify(s)); } catch (e) {} const tmp = normalizeState(baseState()); tmp.subjects = state.subjects.length ? JSON.parse(JSON.stringify(state.subjects)) : initialSubjects(); if (migrateV1(tmp)) { migrateState(tmp); mergeStates(state, tmp); change(); render(); toast("Datos de la versión anterior importados"); } else toast("No se pudo migrar el archivo"); }
+        onOk: () => { try { localStorage.setItem(OLD_LS_KEY, JSON.stringify(s)); } catch (e) {} yearJoin(); const tmp = normalizeState(baseState()); tmp.subjects = state.subjects.length ? JSON.parse(JSON.stringify(state.subjects)) : initialSubjects(); if (migrateV1(tmp)) { migrateState(tmp); mergeStates(state, tmp); yearSplit(); change(); render(); toast("Datos de la versión anterior importados"); } else { yearSplit(); toast("No se pudo migrar el archivo"); } }
       });
       ev.target.value = ""; return;
     }
@@ -3703,17 +4762,17 @@ function importJSON(ev) {
     const box = byId("confirmbox"), bg = byId("confirmbg");
     bg.classList.add("open");
     box.innerHTML = `<h3>Importar datos</h3>
-      <p class="muted">Archivo válido: ${s.tasks.length} tareas, ${s.subjects.length} materias, ${(s.evals || []).length} evaluaciones, ${(s.notes || []).length} notas.</p>
+      <p class="muted">Archivo válido: ${pl(s.tasks.length, "tarea", "tareas")}, ${pl(s.subjects.length, "materia", "materias")}, ${pl((s.evals || []).length, "evaluación", "evaluaciones")}, ${pl((s.notes || []).length, "nota", "notas")}.</p>
       <p class="muted" style="margin-top:8px">¿Cómo querés aplicarlo?</p>
       <div class="mfoot"><button class="btn" onclick="closeConfirm()">Cancelar</button>
       <button class="btn" id="impMerge">Fusionar</button>
       <button class="btn danger" id="impReplace">Reemplazar todo</button></div>`;
-    byId("impMerge").onclick = () => { const src = normalizeState(s); migrateState(src); mergeStates(state, src); closeConfirm(); change(); render(); toast("Datos fusionados"); };
+    byId("impMerge").onclick = () => { const src = normalizeState(s); migrateState(src); yearJoin(); mergeStates(state, src); yearSplit(); closeConfirm(); change(); render(); toast("Datos fusionados"); };
     byId("impReplace").onclick = () => {
       closeConfirm();
       askConfirm({
         title: "Reemplazar todo", body: "Se descartará el estado actual y se usará el del archivo. Esta acción no se puede deshacer (se guarda una copia previa).", okLabel: "Reemplazar", danger: true,
-        onOk: async () => { try { if (db) await idbPut("backups", "pre-import-" + Date.now(), { ts: Date.now(), label: "Antes de importar", data: JSON.stringify(state) }); } catch (e) {} state = normalizeState(s); migrateState(state); change(); render(); toast("Datos reemplazados"); }
+        onOk: async () => { try { if (db) await idbPut("backups", "pre-import-" + Date.now(), { ts: Date.now(), label: "Antes de importar", data: JSON.stringify(fullState()) }); } catch (e) {} const ns = normalizeState(s); migrateState(ns); setWholeState(ns); change(); render(); toast("Datos reemplazados"); }
       });
     };
   };
@@ -3722,8 +4781,207 @@ function importJSON(ev) {
 function mergeStates(dst, src) {
   const addNew = (arr, srcArr) => { const ids = new Set(arr.map(x => x.id)); for (const x of srcArr || []) if (!ids.has(x.id)) arr.push(x); };
   addNew(dst.subjects, src.subjects); addNew(dst.projects, src.projects); addNew(dst.evals, src.evals);
+  if (Array.isArray(src.years)) addNew(dst.years, src.years); // G1
   addNew(dst.tasks, src.tasks); addNew(dst.notes, src.notes); addNew(dst.habits, src.habits); addNew(dst.sessions, src.sessions);
   for (const [k, v] of Object.entries(src.dayLog || {})) if (!dst.dayLog[k]) dst.dayLog[k] = v;
+}
+
+/* ===================== G2 · TU AÑO EN AULA (resumen tipo "Wrapped") =====================
+   Historia de pantallas a pantalla completa para un año de cursado (G1). Los números
+   salen del estado COMPLETO (fullState) filtrado por yearId, así se puede ver el
+   resumen de cualquier año sin cambiar el que se está mirando. Solo datos reales:
+   si falta un dato, esa pantalla no aparece. No modifica nada del estado. */
+function parseGrade(g) { const n = parseFloat(String(g == null ? "" : g).replace(",", ".")); return isFinite(n) && n > 0 && n <= 10 ? n : null; }
+function wrappedData(yearId) {
+  const f = fullState(), y = (f.years || []).find(x => x.id === yearId) || activeYear();
+  const mine = c => (f[c] || []).filter(x => x && yearOf(x) === y.id);
+  const sess = mine("sessions").filter(s => s.min > 0 && s.date);
+  const subjects = mine("subjects"), tasks = mine("tasks").filter(t => !t.archived), evals = mine("evals");
+  const total = sess.reduce((a, s) => a + s.min, 0);
+  const sum = (key) => { const m = {}; for (const s of sess) { const k = key(s); if (k) m[k] = (m[k] || 0) + s.min; } return Object.entries(m).sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0]))); };
+  const bySubj = sum(s => s.subjectId), byMonth = sum(s => s.date.slice(0, 7)), byDay = sum(s => s.date);
+  const topS = bySubj.length ? subjects.find(s => s.id === bySubj[0][0]) || (f.subjects || []).find(s => s.id === bySubj[0][0]) : null;
+  // tareas hechas (las que se repiten cuentan cada vez que se hicieron)
+  const doneDays = new Set(sess.map(s => s.date));
+  let tasksDone = 0;
+  for (const t of tasks) {
+    if (t.recur) { const ks = Object.keys(t.recurDone || {}).filter(k => t.recurDone[k]); tasksDone += ks.length; ks.forEach(k => doneDays.add(k)); }
+    else if (t.status === "done") { tasksDone++; if (t.doneAt) doneDays.add(t.doneAt); }
+  }
+  let streak = 0; { const srt = [...doneDays].sort(); let cur = 0, prev = null; for (const d of srt) { cur = prev && addDays(prev, 1) === d ? cur + 1 : 1; streak = Math.max(streak, cur); prev = d; } }
+  // parciales
+  const passed = evals.filter(e => e.status === "aprob");
+  const graded = evals.filter(e => ["aprob", "desaprob", "rendido"].includes(e.status) && parseGrade(e.grade) != null);
+  const best = graded.slice().sort((a, b) => parseGrade(b.grade) - parseGrade(a.grade) || String(a.date || "").localeCompare(String(b.date || "")))[0] || null;
+  // a qué hora (solo sesiones medidas en el momento: las cargadas a mano no dicen cuándo)
+  const timed = sess.filter(s => s.ts && !s.manual);
+  const slots = [["madrugada", 0, 6], ["mañana", 6, 12], ["tarde", 12, 19], ["noche", 19, 24]].map(([n, a, b]) => ({ n, min: timed.filter(s => { const h = new Date(s.ts).getHours(); return h >= a && h < b; }).reduce((x, s) => x + s.min, 0) }));
+  const slot = timed.length >= 5 ? slots.slice().sort((a, b) => b.min - a.min)[0] : null;
+  // serie más larga terminada entera
+  const groups = {};
+  for (const t of tasks) if (t.seriesId && !t.recur && t.status !== "canc") (groups[t.seriesId] = groups[t.seriesId] || []).push(t);
+  let series = null;
+  for (const g of Object.values(groups)) if (g.length >= 3 && g.every(t => t.status === "done") && (!series || g.length > series.n)) series = { n: g.length, title: g[0].title };
+  const today = todayISO();
+  return {
+    year: y, ongoing: !y.end || today <= y.end, total, sessions: sess.length,
+    topSubject: topS ? { name: topS.name, color: topS.color, min: bySubj[0][1], pct: Math.round(bySubj[0][1] * 100 / total) } : null,
+    subjectsStudied: bySubj.length,
+    bestMonth: byMonth.length ? { ym: byMonth[0][0], min: byMonth[0][1] } : null,
+    bestDay: byDay.length ? { d: byDay[0][0], min: byDay[0][1] } : null,
+    activeDays: new Set(sess.map(s => s.date)).size,
+    tasksDone, streak, passed: passed.length, rendered: evals.filter(e => ["aprob", "desaprob", "rendido"].includes(e.status)).length,
+    best: best ? { name: best.name, grade: parseGrade(best.grade) } : null,
+    slot, series
+  };
+}
+function fmtNum(n) { return Math.round(n).toLocaleString("es-AR"); }
+function fmtGrade(g) { return String(Math.round(g * 100) / 100).replace(".", ","); }
+function wrappedSlides(d) {
+  const S = [], hours = d.total / 60, yname = d.year.name;
+  S.push({ c: "w-indigo", k: d.ongoing ? "Hasta ahora" : "Resumen del año", big: "Tu año en Aula", sub: yname + (d.ongoing ? " · todavía no terminó" : ""), cta: d.total || d.tasksDone ? "Tocá para empezar" : "" });
+  if (d.total >= 60) {
+    const films = Math.floor(d.total / 120);
+    const eq = hours >= 48 ? `Son ${String(Math.round(hours / 24 * 10) / 10).replace(".", ",")} días enteros, sin dormir.` : films >= 2 ? `Como ver ${films} películas seguidas.` : "";
+    S.push({ c: "w-blue", k: "Estudiaste", big: hours < 10 ? String(Math.round(hours * 10) / 10).replace(".", ",") : fmtNum(hours), unit: Math.round(hours * 10) / 10 === 1 ? "hora" : "horas", sub: `${d.activeDays === 1 ? "en un solo día" : "en " + d.activeDays + " días distintos"}. ${eq}`.trim() });
+  }
+  if (d.topSubject && d.subjectsStudied >= 1) S.push({ c: "w-subject", color: d.topSubject.color, k: "Tu materia del año", big: d.topSubject.name, sub: d.topSubject.pct >= 100 ? `${fmtMin(d.topSubject.min)} · todo tu tiempo de estudio fue para esta materia` : `${fmtMin(d.topSubject.min)} · el ${d.topSubject.pct}% de todo lo que estudiaste`, small: true });
+  if (d.bestMonth && d.bestDay) {
+    const [yy, mm] = d.bestMonth.ym.split("-").map(Number);
+    const bd = dToDate(d.bestDay.d), dayTxt = `el ${DAYSL[bd.getDay()]} ${bd.getDate()} de ${MESL[bd.getMonth()]}`;
+    S.push({ c: "w-orange", k: "Tu mes más intenso", big: capitalize(MESL[mm - 1]), sub: d.bestDay.min >= d.bestMonth.min ? `${fmtMin(d.bestMonth.min)}, todas ${dayTxt}.` : `${fmtMin(d.bestMonth.min)} en el mes. Y tu día récord fue ${dayTxt}: ${fmtMin(d.bestDay.min)}.` });
+  }
+  if (d.tasksDone) S.push({ c: "w-green", k: "Completaste", big: fmtNum(d.tasksDone), unit: d.tasksDone === 1 ? "tarea" : "tareas", sub: d.series ? `La serie más larga que terminaste entera: «${d.series.title}», ${d.series.n} de ${d.series.n}.` : "Una por una, todas cuentan." });
+  if (d.streak >= 2) S.push({ c: "w-red", k: "Tu racha más larga", big: String(d.streak), unit: "días seguidos", sub: "estudiando o tachando tareas, sin cortar." });
+  if (d.slot) {
+    const t = { madrugada: "Sos de estudiar de madrugada", "mañana": "Sos de estudiar a la mañana", tarde: "Sos de estudiar a la tarde", noche: "Sos de estudiar de noche" }[d.slot.n];
+    S.push({ c: "w-night", k: "A qué hora rendís", big: t, sub: `${fmtMin(d.slot.min)} de tu tiempo medido fue a la ${d.slot.n === "madrugada" ? "madrugada" : d.slot.n}.`.replace("a la noche", "de noche").replace("a la madrugada", "de madrugada"), small: true });
+  }
+  if (d.rendered) S.push({ c: "w-gold", k: d.passed ? "Aprobaste" : "Rendiste", big: String(d.passed || d.rendered), unit: (d.passed || d.rendered) === 1 ? "parcial" : "parciales", sub: d.best ? `Tu mejor nota: ${fmtGrade(d.best.grade)} en «${d.best.name}».` : (d.passed ? `de ${d.rendered} que rendiste.` : "") });
+  const end = !d.total && !d.tasksDone
+    ? { big: "Todavía no hay nada que contar", sub: "Registrá tu tiempo de estudio y tachá tareas: este resumen se arma solo con lo que hagas." }
+    : { big: d.ongoing ? "Y el año sigue" : "Gran año", sub: [d.total >= 60 ? fmtMin(d.total) + " de estudio" : "", d.tasksDone ? pl(d.tasksDone, "tarea", "tareas") : "", d.passed ? pl(d.passed, "parcial aprobado", "parciales aprobados") : ""].filter(Boolean).join(" · ") + (d.ongoing ? ". Lo que falta, también se va a notar acá." : ". Bien ahí.") };
+  S.push(Object.assign({ c: "w-indigo", k: yname, small: true, last: true }, end));
+  return S;
+}
+let wr = null; // { slides, i, yearId }
+function openWrapped(yearId) {
+  closeModal();
+  const d = wrappedData(yearId || activeYearId());
+  wr = { slides: wrappedSlides(d), i: 0, yearId: d.year.id, back: document.activeElement };
+  let el = byId("wrapped");
+  if (!el) { el = document.createElement("div"); el.id = "wrapped"; document.body.appendChild(el); }
+  el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-label", "Tu año en Aula · " + d.year.name);
+  el.className = "open";
+  document.addEventListener("keydown", wrappedKey, true);
+  el.tabIndex = -1;
+  renderWrapped();
+  el.focus({ preventScroll: true }); // el diálogo, no el ✕: así no arranca con un anillo de foco encima
+}
+function closeWrapped() {
+  const el = byId("wrapped"); if (el) { el.className = ""; el.innerHTML = ""; }
+  document.removeEventListener("keydown", wrappedKey, true);
+  const b = wr && wr.back; wr = null;
+  if (b && b.focus) try { b.focus({ preventScroll: true }); } catch (e) {}
+}
+function wrappedKey(e) {
+  if (!wr) return;
+  if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeWrapped(); }
+  else if (e.key === "ArrowRight" || e.key === " ") { e.preventDefault(); e.stopPropagation(); wrappedGo(1); }
+  else if (e.key === "ArrowLeft") { e.preventDefault(); e.stopPropagation(); wrappedGo(-1); }
+  else if (e.key !== "Tab" && e.key !== "Enter") e.stopPropagation(); // los atajos de la app (n, /…) no corren con la historia abierta
+}
+function wrappedGo(dir) {
+  if (!wr) return;
+  const n = wr.i + dir;
+  if (n >= wr.slides.length) { closeWrapped(); return; }
+  if (n < 0) return;
+  wr.i = n; renderWrapped();
+}
+function renderWrapped() {
+  const el = byId("wrapped"); if (!el || !wr) return;
+  const s = wr.slides[wr.i], N = wr.slides.length;
+  const bars = wr.slides.map((_, j) => `<i class="${j < wr.i ? "done" : j === wr.i ? "on" : ""}"></i>`).join("");
+  el.innerHTML = `<div class="wcard ${s.c}"${s.color ? ` style="--wsub:${escA(s.color)}"` : ""}>
+    <div class="wbars" aria-hidden="true">${bars}</div>
+    <button class="wclose" onclick="closeWrapped()" aria-label="Cerrar">✕</button>
+    <div class="wbody" aria-live="polite">
+      <div class="wk">${esc(s.k)}</div>
+      <div class="wbig${s.small ? " sm" : ""}">${esc(s.big)}${s.unit ? `<span class="wunit">${esc(s.unit)}</span>` : ""}</div>
+      ${s.sub ? `<div class="wsub">${esc(s.sub)}</div>` : ""}
+      ${s.cta ? `<div class="wcta">${esc(s.cta)} ›</div>` : ""}
+      ${s.last ? `<div class="wend"><button class="wbtn" onclick="wr.i=0;renderWrapped()">Ver de nuevo</button><button class="wbtn solid" onclick="closeWrapped()">Listo</button></div>` : ""}
+    </div>
+    <button class="wnav wprev" onclick="wrappedGo(-1)" aria-label="Anterior" ${wr.i === 0 ? "disabled" : ""}></button>
+    <button class="wnav wnext" onclick="wrappedGo(1)" aria-label="${wr.i === N - 1 ? "Cerrar" : "Siguiente"}"></button>
+    <div class="wcount" aria-hidden="true">${wr.i + 1} / ${N}</div>
+    <button class="wshare" onclick="shareWrapped()" aria-label="Compartir esta pantalla como imagen"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M12 3v12M7 8l5-5 5 5M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+  </div>`;
+}
+
+/* ---------- G2b · compartir/guardar una pantalla como imagen ----------
+   Se dibuja a mano en un canvas de 1080×1920 (formato historia) con los mismos
+   colores y textos: sin librerías y sin depender de cómo se ve la pantalla. */
+const W_COLORS = {
+  "w-indigo": ["#3b2fc9", "#1a1446", "#7c6cff"], "w-blue": ["#1659d6", "#0b1f52", "#5ec8ff"], "w-orange": ["#f0642a", "#6b1a0c", "#ffc46b"],
+  "w-green": ["#0f9f62", "#06331f", "#7bf0b4"], "w-red": ["#e0284f", "#4c0716", "#ff8fa3"], "w-night": ["#141238", "#05040f", "#5b4bd6"], "w-gold": ["#c98a06", "#4a2c00", "#ffe58a"]
+};
+function wrapLines(ctx, text, maxW) {
+  const out = []; let line = "";
+  for (const w of String(text).split(/\s+/)) {
+    const t = line ? line + " " + w : w;
+    if (ctx.measureText(t).width > maxW && line) { out.push(line); line = w; } else line = t;
+  }
+  if (line) out.push(line);
+  return out;
+}
+function wrappedCanvas(s, yearName) {
+  const W = 1080, H = 1920, c = document.createElement("canvas"); c.width = W; c.height = H;
+  const ctx = c.getContext("2d");
+  const col = s.c === "w-subject" ? [s.color || "#4338ca", "#111111", "#ffffff"] : (W_COLORS[s.c] || W_COLORS["w-indigo"]);
+  let g = ctx.createLinearGradient(0, 0, W * 0.4, H); g.addColorStop(0, col[0]); g.addColorStop(1, col[1]);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  g = ctx.createRadialGradient(W * 0.25, H * 0.08, 0, W * 0.25, H * 0.08, W * 1.1); g.addColorStop(0, col[2]); g.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.globalAlpha = s.c === "w-subject" ? 0.35 : 0.75; ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 1;
+  const font = getComputedStyle(document.body).fontFamily || "system-ui, sans-serif";
+  const X = 96, maxW = W - 2 * X;
+  ctx.fillStyle = "#fff"; ctx.textBaseline = "alphabetic";
+  // armar los bloques y centrarlos en vertical
+  const blocks = [];
+  ctx.font = `650 46px ${font}`; blocks.push({ f: ctx.font, lines: wrapLines(ctx, s.k, maxW), lh: 60, a: 0.85, gap: 30 });
+  let size = s.small ? 118 : 300; ctx.font = `800 ${size}px ${font}`;
+  let big = wrapLines(ctx, s.big, maxW);
+  while ((big.length > 3 || big.some(l => ctx.measureText(l).width > maxW)) && size > 60) { size -= 8; ctx.font = `800 ${size}px ${font}`; big = wrapLines(ctx, s.big, maxW); }
+  blocks.push({ f: ctx.font, lines: big, lh: size * 1.05, a: 1, gap: s.unit ? 20 : 50 });
+  if (s.unit) { ctx.font = `700 66px ${font}`; blocks.push({ f: ctx.font, lines: [s.unit], lh: 80, a: 0.95, gap: 50 }); }
+  if (s.sub) { ctx.font = `500 50px ${font}`; blocks.push({ f: ctx.font, lines: wrapLines(ctx, s.sub, maxW), lh: 72, a: 0.9, gap: 0 }); }
+  const total = blocks.reduce((a, b) => a + b.lines.length * b.lh + b.gap, 0);
+  let y = Math.max(220, (H - total) / 2);
+  for (const b of blocks) {
+    ctx.font = b.f; ctx.globalAlpha = b.a;
+    for (const l of b.lines) { y += b.lh; ctx.fillText(l, X, y - b.lh * 0.22); }
+    y += b.gap;
+  }
+  ctx.globalAlpha = 0.7; ctx.font = `700 40px ${font}`; ctx.fillText("Aula", X, H - 120);
+  ctx.globalAlpha = 0.55; ctx.font = `500 36px ${font}`; ctx.fillText(yearName, X, H - 70);
+  ctx.globalAlpha = 1;
+  return c;
+}
+async function shareWrapped() {
+  if (!wr) return;
+  const s = wr.slides[wr.i], y = (fullState().years || []).find(x => x.id === wr.yearId) || activeYear();
+  const blob = await new Promise(res => wrappedCanvas(s, y.name).toBlob(res, "image/png"));
+  if (!blob) { toast("No se pudo armar la imagen"); return; }
+  const name = "aula-" + (y.name || "año").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\w]+/g, "-").replace(/^-|-$/g, "").toLowerCase() + "-" + (wr.i + 1) + ".png";
+  const file = typeof File === "function" ? new File([blob], name, { type: "image/png" }) : null;
+  if (file && navigator.canShare && navigator.share && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: "Mi año en Aula" }); return; }
+    catch (e) { if (e && e.name === "AbortError") return; } // si se cancela, nada; si falla, se descarga
+  }
+  const url = URL.createObjectURL(blob), a = document.createElement("a");
+  a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+  toast("Imagen guardada");
 }
 
 /* ======================= VISTA: CONFIGURACIÓN ======================= */
@@ -3731,6 +4989,10 @@ function viewConfig() {
   const st = state.settings;
   const chk = v => v ? "checked" : "";
   return `<div class="vhead"><h2>Configuración</h2></div>
+  <div class="card synccard" id="synccard">${syncCardHTML()}</div>
+  <div class="card yearcard"><div class="yc-h"><div><h3 style="margin:0">Años de cursado</h3>
+    <p class="tiny" style="margin-top:4px">Estás en <b>${esc(activeYear().name)}</b> · ${fmtYearRange(activeYear())}. Cada año tiene sus materias, parciales y tareas; los anteriores quedan para consultar.</p></div></div>
+    <div class="yc-b"><button class="btn" onclick="openYearPicker()">Ver mis años</button><button class="btn primary" onclick="openNewYear()">Nuevo año…</button></div></div>
   <div class="grid2">
   <div class="card" style="margin:0"><h3>Apariencia</h3>
     <label class="tiny" style="font-weight:700">Tema</label>
@@ -3748,6 +5010,13 @@ function viewConfig() {
     <div class="hr"></div>
     <label class="tiny" style="font-weight:700">Días considerados “próximos”</label>
     <input type="number" min="1" max="30" value="${st.upcomingDays}" onchange="state.settings.upcomingDays=parseInt(this.value)||7;change();render()" style="width:90px;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:7px;margin-top:4px" aria-label="Días próximos">
+  </div>
+  <div class="card" style="margin:0"><h3>Avisos por defecto</h3>
+    <label class="tiny" style="font-weight:700;display:block">Parciales y finales</label>
+    ${remFieldHTML("cfg_rem_eval", "eval", null, { cfg: true, list: (st.reminderDefaults || {}).eval })}
+    <label class="tiny" style="font-weight:700;display:block;margin-top:12px">Tareas con hora</label>
+    ${remFieldHTML("cfg_rem_task", "task", null, { cfg: true, list: (st.reminderDefaults || {}).task })}
+    <p class="tiny" style="margin-top:10px">Cada parcial o tarea puede tener los suyos desde su editor, en “Avisarme”. Por ahora suenan con Aula abierta y las notificaciones activadas; que lleguen con la app cerrada es el próximo paso.</p>
   </div>
   <div class="card" style="margin:0"><h3>Preferencias</h3>
     <label class="tiny" style="font-weight:700;display:block">Primer día de la semana</label>
@@ -3828,8 +5097,8 @@ function resetApp() {
     title: "Reiniciar aplicación", body: "Se borrarán TODAS las tareas, materias, evaluaciones, notas, hábitos y estadísticas de este navegador.", okLabel: "Continuar", danger: true,
     second: { title: "¿Estás completamente seguro?", body: "Esta acción es definitiva. Antes se creará una última copia de seguridad local por si te arrepentís (en Copias de seguridad).", okLabel: "Sí, borrar todo" },
     onOk: async () => {
-      try { if (db) await idbPut("backups", "pre-reset-" + Date.now(), { ts: Date.now(), label: "Antes de reiniciar", data: JSON.stringify(state) }); } catch (e) {}
-      state = baseState(); state.subjects = initialSubjects(); state.meta.migratedV1 = true; migrateState(state);
+      try { if (db) await idbPut("backups", "pre-reset-" + Date.now(), { ts: Date.now(), label: "Antes de reiniciar", data: JSON.stringify(fullState()) }); } catch (e) {}
+      const ns = baseState(); ns.subjects = initialSubjects(); ns.meta.migratedV1 = true; migrateState(ns); setWholeState(ns);
       change(); render(); toast("Aplicación reiniciada");
     }
   });
@@ -3913,6 +5182,7 @@ function quickRoute(k) {
   else if (k === "habit") openHabitEditor();
 }
 function openQuickTask(date, subjectId, projectId) {
+  ui.qtTr = null;
   const sel = subjectId ? "s:" + subjectId : projectId ? "p:" + projectId : "";
   openModal(`<h3>Nueva tarea</h3>
     <label for="qt_title">Título</label><input id="qt_title" placeholder="Ej: resolver práctica de límites" onkeydown="if(event.key==='Enter')saveQuickTask()">
@@ -3921,7 +5191,7 @@ function openQuickTask(date, subjectId, projectId) {
       <div><label for="qt_eval">Parcial / final (opcional)</label><select id="qt_eval" onchange="evalPicked('qt_link','qt_eval')">${evalOptions(sel, null)}</select></div>
     </div>
     <div class="mrow">
-      <div><label for="qt_min">Tiempo estimado (min)</label><input id="qt_min" type="number" value="60" min="0" step="5"></div>
+      <div><label for="qt_min">Tiempo estimado (min)</label><input id="qt_min" type="number" value="60" min="0" step="5" oninput="repPreview()"></div>
     </div>
     <div class="mrow">
       <div><label for="qt_mode">Programación</label><select id="qt_mode" onchange="byId('qt_timewrap').style.display=this.value==='none'?'none':'block';byId('qt_repwrap').style.display=this.value==='d'?'block':'none';repPreview()">
@@ -3937,6 +5207,72 @@ function openQuickTask(date, subjectId, projectId) {
       <button class="btn primary" id="qt_save" onclick="saveQuickTask()">Crear tarea</button></div>`);
   repPreview();
 }
+/* ---------- C4 · Tiempos por tramos ----------
+   "Las primeras 10 de 1 h, después 2 de 1 h 30, el resto de 2 h y las últimas
+   3 de 3 h". Cada tramo es {n, min}; n puede ser "rest" (el resto: lo que no
+   cubren los demás). Se usa igual al crear (control Repetir) y al editar. */
+const DUR_OPTS = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 75, 90, 105, 120, 135, 150, 165, 180, 210, 240, 270, 300, 330, 360, 420, 480];
+function durOptions(cur) {
+  cur = Math.round(+cur || 0);
+  const list = DUR_OPTS.includes(cur) ? DUR_OPTS : [...DUR_OPTS, cur].sort((a, b) => a - b);
+  return list.map(m => `<option value="${m}"${m === cur ? " selected" : ""}>${fmtMin(m)}</option>`).join("");
+}
+/* "90" → 90 min · "1,5" o "1.5" → 1 h 30 · "1 h 30", "1h30", "1:30" → 90 · "45 m" → 45 */
+function parseDur(s) {
+  s = String(s == null ? "" : s).trim().toLowerCase().replace(",", ".");
+  if (!s) return null;
+  let m = /^(\d{1,2}):(\d{1,2})$/.exec(s);
+  if (m) return +m[1] * 60 + +m[2];
+  m = /^(\d+(?:\.\d+)?)\s*h(?:s|oras?)?\s*(?:(\d+)\s*(?:m|min)?)?$/.exec(s);
+  if (m) return Math.round(+m[1] * 60 + (m[2] ? +m[2] : 0));
+  m = /^(\d+)\s*(?:m|min|mins|minutos?)?$/.exec(s);
+  if (m) return +m[1];
+  m = /^\d*\.\d+$/.exec(s);
+  if (m) return Math.round(parseFloat(s) * 60);
+  return null;
+}
+function tramosMins(rows, total) {
+  const pl = n => n + " tarea" + (n === 1 ? "" : "s");
+  const rest = rows.filter(r => r.n === "rest");
+  if (rest.length > 1) return { error: "Solo un tramo puede ser «el resto»." };
+  const fixed = rows.reduce((a, r) => a + (r.n === "rest" ? 0 : (parseInt(r.n, 10) || 0)), 0);
+  if (fixed > total) return { error: `Los tramos suman ${pl(fixed)} y son ${pl(total)}. Achicá alguno.` };
+  if (!rest.length && fixed < total) return { error: `${total - fixed === 1 ? "Falta 1 tarea" : "Faltan " + pl(total - fixed)}: sumá un tramo o elegí «el resto» en alguno.` };
+  const mins = [];
+  for (const r of rows) { const k = r.n === "rest" ? total - fixed : (parseInt(r.n, 10) || 0); for (let i = 0; i < k; i++) mins.push(Math.max(0, Math.round(+r.min || 0))); }
+  return { mins, restN: total - fixed };
+}
+function defaultTramos(total, base) {
+  base = Math.round(+base || 60);
+  const next = DUR_OPTS.find(m => m > base) || base + 30;
+  return [{ n: Math.max(1, Math.min(total - 1, Math.ceil(total / 2))), min: base }, { n: "rest", min: next }];
+}
+/* Filas del editor de tramos. p = prefijo ("qt" al crear, "sr" en el editor de la serie) */
+function tramosHTML(p, rows, total) {
+  const restN = (tramosMins(rows, total).restN);
+  return `<p class="tiny trhint">En orden, de la primera a la última:</p>` + rows.map((r, i) => {
+    const max = Math.max(total, parseInt(r.n, 10) || 0);
+    const nOpts = `<option value="rest"${r.n === "rest" ? " selected" : ""}>El resto${r.n === "rest" && restN >= 0 ? " (" + restN + ")" : ""}</option>`
+      + Array.from({ length: max }, (_, k) => k + 1).map(k => `<option value="${k}"${+r.n === k ? " selected" : ""}>${k}</option>`).join("");
+    return `<div class="trrow" data-i="${i}">
+      <select class="trn" aria-label="Cuántas (tramo ${i + 1})" onchange="trSet('${p}',${i},'n',this.value)">${nOpts}</select>
+      <span class="trde">de</span>
+      <select class="trm" aria-label="Tiempo (tramo ${i + 1})" onchange="trSet('${p}',${i},'min',this.value)">${durOptions(r.min)}</select>
+      ${rows.length > 1 ? `<button type="button" class="trdel" aria-label="Quitar tramo ${i + 1}" onclick="trDel('${p}',${i})">✕</button>` : `<span class="trdel" aria-hidden="true"></span>`}
+    </div>`;
+  }).join("") + `<button type="button" class="tradd" onclick="trAdd('${p}')">+ Agregar tramo</button>`;
+}
+function trRows(p) { return p === "qt" ? ui.qtTr : ui.srTr; }
+function trRefresh(p) { if (p === "qt") repPreview(); else srPreview(); }
+function trSet(p, i, f, v) { const r = trRows(p)[i]; if (!r) return; r[f] = f === "n" ? (v === "rest" ? "rest" : parseInt(v, 10)) : parseInt(v, 10); trRefresh(p); }
+function trDel(p, i) { const rows = trRows(p); if (rows.length < 2) return; rows.splice(i, 1); trRefresh(p); }
+function trAdd(p) {
+  const rows = trRows(p), last = rows[rows.length - 1] || { min: 60 };
+  // se agrega al final ("y las últimas N de…"), con el tiempo siguiente al del último tramo
+  rows.push({ n: 1, min: DUR_OPTS.find(m => m > (+last.min || 0)) || (+last.min || 60) + 30 });
+  trRefresh(p);
+}
+function repTotalLine(mins) { const tot = mins.reduce((a, b) => a + b, 0); return tot ? ` · ${fmtMin(tot)} en total` : ""; }
 /* ---------- C1 · Repetir ----------
    Un solo concepto para el usuario. Internamente:
    - Con fin (fecha o cantidad): se crean tareas individuales con el mismo seriesId.
@@ -3959,6 +5295,10 @@ function repeatControls(start) {
         <option value="until">En una fecha</option><option value="count">Después de N veces</option><option value="never">Sin fin</option></select></div>
       <div class="repx" id="qt_repuntilwrap"><label for="qt_repuntil">Hasta (inclusive)</label><input id="qt_repuntil" type="date" value="${addDays(start, 6)}" onchange="repPreview()"></div>
       <div class="repx" id="qt_repcountwrap"><label for="qt_repcount">Cantidad de veces</label><input id="qt_repcount" type="number" min="1" max="${REP_MAX}" value="5" oninput="repPreview()"></div>
+    </div>
+    <div class="repx" id="qt_trwrap">
+      <label class="trtoggle"><input type="checkbox" id="qt_tron" onchange="trToggleQt(this.checked)"> <span>Tiempos distintos por tramos</span></label>
+      <div class="trbox" id="qt_tr" hidden></div>
     </div>
     <div id="qt_preview" class="reppreview" role="status" aria-live="polite" hidden></div>
   </div>`;
@@ -3992,7 +5332,14 @@ function readRepeat() {
   const dates = repeatDates(start, rule, end, 5);
   if (et !== "never" && dates.length > REP_MAX) return { error: "Serían más de " + REP_MAX + " tareas. Acortá el período o elegí “Sin fin”." };
   if (!dates.length) return { error: "Con esta configuración no cae ningún día." };
-  return { start, rule, end, dates };
+  const base = parseInt(byId("qt_min").value) || 0;
+  let mins = dates.map(() => base), tramos = false;
+  if (et !== "never" && dates.length > 1 && byId("qt_tron") && byId("qt_tron").checked && ui.qtTr) {
+    const tm = tramosMins(ui.qtTr, dates.length);
+    if (tm.error) return { error: tm.error, dates, tramosErr: true };
+    mins = tm.mins; tramos = true;
+  }
+  return { start, rule, end, dates, mins, tramos };
 }
 function repPreview() {
   const kind = byId("qt_rep") ? byId("qt_rep").value : "none";
@@ -4005,14 +5352,27 @@ function repPreview() {
   const pv = byId("qt_preview"), btn = byId("qt_save");
   if (!pv) return;
   const r = readRepeat();
+  // C4 · tramos: solo con fin y más de una tarea
+  const nDates = r && r.dates ? r.dates.length : 0, canTr = kind !== "none" && et !== "never" && nDates > 1;
+  show("qt_trwrap", canTr);
+  const tron = canTr && byId("qt_tron") && byId("qt_tron").checked;
+  const trb = byId("qt_tr");
+  if (trb) { trb.hidden = !tron; if (tron) trb.innerHTML = tramosHTML("qt", ui.qtTr, nDates); }
+  const minEl = byId("qt_min");
+  if (minEl) { minEl.disabled = !!tron; minEl.title = tron ? "Lo definen los tramos" : ""; }
   pv.hidden = !r; pv.classList.toggle("bad", !!(r && r.error));
   if (btn) btn.textContent = r && !r.error && r.end.type !== "never" ? "Crear " + r.dates.length + " tareas" : "Crear tarea";
   if (!r) return;
   if (r.error) { pv.innerHTML = esc(r.error); return; }
-  const list = r.dates.slice(0, 14).map(d => `<span class="repdate">${fmtD(d)}</span>`).join("") + (r.dates.length > 14 ? `<span class="repdate more">y ${r.dates.length - 14} más</span>` : "");
+  const lim = r.tramos ? 40 : 14;
+  const list = r.dates.slice(0, lim).map((d, i) => `<span class="repdate">${fmtD(d)}${r.tramos ? ` · <b>${fmtMin(r.mins[i])}</b>` : ""}</span>`).join("") + (r.dates.length > lim ? `<span class="repdate more">y ${r.dates.length - lim} más</span>` : "");
   pv.innerHTML = r.end.type === "never"
     ? `<b>Sin fin:</b> una sola tarea que se repite. Próximas: <div class="repdates">${list}<span class="repdate more">…</span></div>`
-    : `<b>Se van a crear ${r.dates.length} tarea${r.dates.length > 1 ? "s" : ""}</b>${r.dates.length > 1 ? " (una serie)" : ""}: <div class="repdates">${list}</div>`;
+    : `<b>Se van a crear ${r.dates.length} tarea${r.dates.length > 1 ? "s" : ""}</b>${r.dates.length > 1 ? " (una serie)" : ""}${repTotalLine(r.mins)}: <div class="repdates">${list}</div>`;
+}
+function trToggleQt(on) {
+  if (on) { const r = readRepeat(); ui.qtTr = defaultTramos(r && r.dates ? r.dates.length : 2, byId("qt_min").value); }
+  repPreview();
 }
 function saveQuickTask() {
   const title = byId("qt_title").value.trim();
@@ -4035,7 +5395,7 @@ function saveQuickTask() {
   }
   if (r) {
     const ids = [], seriesId = r.dates.length > 1 ? "sr-" + uid() : null;
-    for (const d of r.dates) ids.push(quickAddTask(Object.assign({ date: d, seriesId }, base)).id);
+    r.dates.forEach((d, i) => ids.push(quickAddTask(Object.assign({}, base, { date: d, seriesId, estMin: r.mins[i] })).id));
     closeModal(); render();
     toast(ids.length + " tareas creadas: " + fmtD(r.dates[0]) + " a " + fmtD(r.dates[r.dates.length - 1]), () => { state.tasks = state.tasks.filter(x => !ids.includes(x.id)); change(); render(); });
     return;
@@ -4061,9 +5421,10 @@ function openTaskEditor(id) {
       <div><label for="te_eval">Parcial / final</label><select id="te_eval" onchange="evalPicked('te_link','te_eval')">${evalOptions(sel, t.evalId)}</select></div>
     </div>
     <div class="mrow">
-      <div><label for="te_date">Fecha programada</label><input id="te_date" type="date" value="${t.date || ""}"></div>
-      <div><label for="te_time">Hora</label><input id="te_time" type="time" value="${t.time || ""}"></div>
+      <div><label for="te_date">Fecha programada</label><input id="te_date" type="date" value="${t.date || ""}" onchange="remRedraw('te_rem')"></div>
+      <div><label for="te_time">Hora</label><input id="te_time" type="time" value="${t.time || ""}" oninput="remRedraw('te_rem')" onchange="remRedraw('te_rem')"></div>
     </div>
+    <label>Avisarme</label>${remFieldHTML("te_rem", "task", t)}
     <div class="mrow">
       <div><label for="te_due">Fecha límite</label><input id="te_due" type="date" value="${t.due || ""}"></div>
       <div><label for="te_min">Estimado (min)</label><input id="te_min" type="number" value="${t.estMin || 0}" min="0" step="5"></div>
@@ -4106,7 +5467,7 @@ function openTaskEditor(id) {
       <div class="grow"></div>
       <button class="btn" onclick="closeModal()">Cancelar</button>
       <button class="btn primary" onclick="saveTaskEditor('${t.id}')">Guardar</button></div>`, true);
-  renderTaskEditorSubtasks(t);
+  renderTaskEditorSubtasks(t); remRedraw("te_rem");
   ui.editingComment = null; renderTaskComments(t);
   ui.teInit = { id, v: editorSharedValues() };
 }
@@ -4180,7 +5541,8 @@ function removeSubtask(taskId, stId) {
    Calendario del iPhone. Fecha, estado, notas y comentarios son siempre de esta. */
 const SERIES_SHARED = [
   ["title", "título"], ["desc", "descripción"], ["subjectId", "materia"], ["projectId", "proyecto"], ["evalId", "parcial"],
-  ["estMin", "minutos"], ["time", "hora"], ["prio", "prioridad"], ["type", "tipo"], ["tags", "etiquetas"]
+  ["estMin", "minutos"], ["time", "hora"], ["prio", "prioridad"], ["type", "tipo"], ["tags", "etiquetas"],
+  ["reminders", "avisos"]
 ];
 function editorSharedValues() {
   const link = byId("te_link").value, tm = byId("te_time").value;
@@ -4189,7 +5551,8 @@ function editorSharedValues() {
     subjectId: link.startsWith("s:") ? link.slice(2) : null, projectId: link.startsWith("p:") ? link.slice(2) : null,
     evalId: byId("te_eval").value || null, estMin: parseInt(byId("te_min").value) || 0,
     time: hmToMin(tm) != null ? tm : null, prio: parseInt(byId("te_prio").value), type: byId("te_type").value,
-    tags: byId("te_tags").value.split(",").map(x => x.trim().replace(/^#/, "")).filter(Boolean)
+    tags: byId("te_tags").value.split(",").map(x => x.trim().replace(/^#/, "")).filter(Boolean),
+    reminders: remValue("te_rem")
   };
 }
 function saveTaskEditor(id, scope) {
@@ -4255,6 +5618,8 @@ function saveTaskEditor(id, scope) {
   t.type = byId("te_type").value;
   t.tags = byId("te_tags").value.split(",").map(x => x.trim().replace(/^#/, "")).filter(Boolean);
   t.notes = byId("te_notes").value;
+  const rem = remValue("te_rem");
+  if (rem !== undefined) t.reminders = rem;
   const rk = byId("te_rec").value;
   if (rk) {
     t.recur = { kind: rk, days: [...document.querySelectorAll(".te_day:checked")].map(x => parseInt(x.value)), n: parseInt((byId("te_n") || {}).value) || 2, start: t.date || todayISO() };
@@ -4314,6 +5679,7 @@ function openEvalEditor(id, presetLink) {
       <div><label for="ev_time">Hora (opcional)</label><input id="ev_time" type="time" value="${e ? (e.time || "") : ""}"></div>
       <div><label for="ev_rev">Días de repaso</label><input id="ev_rev" type="number" min="0" max="14" value="${e ? (e.reviewDays || 0) : 2}"></div>
     </div>
+    <label>Avisarme</label>${remFieldHTML("ev_rem", "eval", e)}
     <div class="mrow">
       <div><label for="ev_mode">Modalidad</label><input id="ev_mode" value="${e ? escA(e.mode || "") : ""}" placeholder="Presencial / Virtual"></div>
       <div><label for="ev_place">Lugar o enlace</label><input id="ev_place" value="${e ? escA(e.place || "") : ""}"></div>
@@ -4336,7 +5702,7 @@ function openPlanWizard(evId) {
   const e = evalById(evId); if (!e) return;
   const existing = evalPlanTasks(evId).filter(t => t.status !== "done").length;
   openModal(`<h3>Generar plan de estudio — ${esc(e.name)}</h3>
-    <p class="tiny">${e.topics.length} temas cargados · examen el ${fmtD(e.date)} (${fmtRel(e.date)}) · ${e.reviewDays || 0} días finales de repaso${existing ? ` · <b style="color:var(--warn)">hay ${existing} tareas pendientes de un plan anterior</b>` : ""}</p>
+    <p class="tiny">${pl(e.topics.length, "tema cargado", "temas cargados")} · examen el ${fmtD(e.date)} (${fmtRel(e.date)}) · ${pl(e.reviewDays || 0, "día final", "días finales")} de repaso${existing ? ` · <b style="color:var(--warn)">hay ${pl(existing, "tarea pendiente", "tareas pendientes")} de un plan anterior</b>` : ""}</p>
     ${e.topics.length === 0 ? '<p class="muted" style="margin-top:8px;color:var(--warn)">No cargaste temas: el plan solo tendrá días de repaso y simulacros.</p>' : ""}
     <div class="mrow">
       <div><label for="pw_start">Empezar el</label><input id="pw_start" type="date" value="${todayISO()}"></div>
@@ -4568,6 +5934,8 @@ function trapFocus(e) {
 /* ============================ INIT ============================ */
 async function init() {
   await loadState();
+  yearSplit();
+  syncResetHashes();
   applyTheme();
   try { localStorage.setItem("aula-theme", state.settings.theme); localStorage.setItem("aula-accent", state.settings.accent); } catch (e) {}
   document.documentElement.style.setProperty("--acc", state.settings.accent);
@@ -4597,7 +5965,9 @@ async function init() {
   setInterval(checkPastEvals, 5 * 60 * 1000);
   window.addEventListener("beforeunload", flushNow);
   window.addEventListener("pagehide", flushNow); // en iOS/Android beforeunload no siempre llega
-  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") { flushNow(); persist(); } });
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") { flushNow(); persist(); } else syncNow(); });
+  window.addEventListener("online", () => syncNow());
+  syncInit();
   if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
     navigator.serviceWorker.register("sw.js").catch(() => {});
   }

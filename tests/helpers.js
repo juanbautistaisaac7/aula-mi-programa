@@ -78,7 +78,8 @@ async function readBackups(page) {
 
 /** Lo que quedó guardado en IndexedDB (no lo que hay en memoria). */
 async function storedState(page) {
-  return page.evaluate(async () => { await persist(); return JSON.parse(await idbGet("kv", "state")); });
+  // si el guardado del arranque está en curso, persist() solo lo encola: esperar a que termine
+  return page.evaluate(async () => { while (saving) await new Promise(r => setTimeout(r, 10)); await persist(); return JSON.parse(await idbGet("kv", "state")); });
 }
 
 /**

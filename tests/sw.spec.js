@@ -18,3 +18,11 @@ test("sw.js existe, tiene sus handlers y su CACHE_VERSION coincide con APP_VERSI
     expect(fs.statSync(path.join(root, f)).size).toBeGreaterThan(100);
   }
 });
+
+test("S1 · el service worker nunca cachea la sincronización (/api/)", async () => {
+  const sw = fs.readFileSync(path.join(root, "sw.js"), "utf8");
+  const fetchHandler = sw.slice(sw.indexOf('addEventListener("fetch"'));
+  const skip = fetchHandler.indexOf('url.pathname.includes("/api/")');
+  expect(skip).toBeGreaterThan(0);
+  expect(skip).toBeLessThan(fetchHandler.indexOf("respondWith")); // se saltea antes de responder desde el caché
+});

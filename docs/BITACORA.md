@@ -6,6 +6,243 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
+## Corrida 04:07–04:50 (hora ARG) — E1a2 («Avisarme») y cierre de la noche
+
+**Resumen de la corrida:** era la última de la noche (la hora de cierre de hoy eran las 04:00). Hice un ítem (E1a2), con tiempo reservado para publicar en `main`, escribir `RESUMEN-NOCHE.md` y crear `TERMINADO`. Versión 2.40.0 → 2.41.0. Sin cambios en la forma de los datos (el esquema 6 ya lo había puesto E1a1).
+
+### E1a2 · «Avisarme» en tareas y parciales
+
+**Plan:** la corrida anterior dejó el modelo de recordatorios listo pero invisible. Faltaba la interfaz: el campo en los dos editores y los valores por defecto en Configuración.
+**Decisiones:**
+- **Un solo control, el mismo en los tres lugares:** los avisos son "pastillas" (`7 días antes ×`) y abajo hay atajos punteados (`+ 2 h`, `+ 3 días`…) y **Otro…** para un número y unidad a mano. Descarté un `<select>` por aviso: con dos o tres avisos se vuelve una planilla, y las pastillas se leen de un vistazo y se tocan bien con el dedo (44 px en el celu).
+- **Atajos distintos según qué es:** para tareas, 10 min · 30 min · 1 h · 1 día; para parciales, 2 h · 1 día · 3 días · 7 días. Son los que tienen sentido en cada caso.
+- **Si no tocás nada, no se escribe nada.** Un parcial que usa los avisos de Configuración muestra "Como en Configuración" y, si guardás sin tocar los avisos, sigue sin lista propia: si mañana cambiás los de Configuración, lo sigue. Además la sincronización no ve cambios falsos. Sacar todos = "Sin avisos" (lista vacía), que es distinto de "los de Configuración".
+- **Tarea sin hora:** en vez de los atajos dice "Poné una hora para que te pueda avisar." y se actualiza apenas ponés la hora.
+- **Series:** "avisos" entra en la pregunta de siempre ("¿solo esta / esta y las siguientes / todas?") si lo cambiás en una tarea de una serie.
+- **Que no sea un botón que no hace nada:** la noche pasada se decidió no mostrar "Avisarme" hasta que avisara algo. Para no caer en eso, `checkReminders` (las notificaciones locales que ya existían) ahora usa estos avisos: con Aula abierta y "Notificaciones locales" activadas, cada aviso suena **una sola vez** a su hora (si la app estaba cerrada, suena al abrirla, hasta 12 h después). Reemplaza al aviso viejo de parciales ("en N días", uno por día): los nuevos por defecto (7 y 1 día antes) cubren lo mismo sin repetir todos los días. El "Vence hoy" de las tareas queda igual. En Configuración lo digo tal cual: que lleguen con la app cerrada (ntfy) es E1b.
+**Salió bien:** los tres editores comparten el mismo código (`remFieldHTML`), y Configuración guarda al instante sin redibujar la pantalla entera.
+**Salió mal / intentos fallidos:** (1) Escribí los tests antes pero, otra vez, no los corrí en rojo antes de implementar (sin las funciones fallaban seguro). (2) El primer intento del test de tarea falló: el aviso "Poné una hora" no salía porque el control se dibujaba antes de que existiera el campo de hora en la pantalla; lo arreglé redibujándolo al abrir el editor. (3) Las primeras capturas "claras" salieron oscuras porque el fixture trae tu tema guardado; las volví a sacar forzando el tema. (4) En una de las dos corridas completas de `npm test` falló 1 test viejo (`anios.spec.js`, desktop) por un error de consola "404" que no es de este cambio: lo corrí 4 veces más y pasó siempre, y no lo pude reproducir cargando la app 20 veces a mano. Lo dejo anotado como posible test inestable (sospecho de un pedido del navegador a un archivo que no existe, como `favicon.ico`, pero no lo confirmé, así que no toqué nada).
+**Tests:** +4 (×2 proyectos) en `tests/recordatorios-ui.spec.js`: parcial (por defecto, guardar sin tocar no escribe, quitar/agregar/Otro, sin avisos), tarea (sin hora no deja, con hora agrega y persiste, otra tarea no gana la lista), Configuración (cambia los por defecto y se ve en un parcial sin propios) y notificación local una sola vez a su hora. `npm test`: **324 pasaron, 0 fallaron** en la corrida final (31 saltados a propósito, como antes).
+**Capturas:** [parcial celu](capturas/E1a2-parcial-mobile-light.png) · [parcial compu](capturas/E1a2-parcial-desktop-light.png) · [tarea celu oscuro](capturas/E1a2-tarea-mobile-dark.png) · [Configuración](capturas/E1a2-config-desktop-light.png) (y las demás `E1a2-*` en claro y oscuro).
+**Commits:** `e686041` feat(recordatorios): E1a2.
+**Para Bauti:** abrí un parcial → "Avisarme": tienen que estar 7 días y 1 día antes. Si querés que suenen hoy con la app abierta, activá "Notificaciones locales" en Configuración. En el iPhone, las notificaciones web solo andan con Aula **instalada en la pantalla de inicio** (iOS 16.4+).
+
+---
+
+## Corrida 03:05–03:33 (hora ARG) — L1b (recorrido pensado de Hoy, Semana, Calendario, Materias, Parciales y Series) y E1a1 (modelo de recordatorios)
+
+**Resumen de la corrida:** dos commits, los dos con `npm test` en verde: L1b (6 arreglos de lógica y textos) y E1a1 (modelo de recordatorios, esquema 6). Versión 2.38.0 → 2.40.0. Tests: de 299 a 317 pasados, 0 fallados. Cerré a los ~30 min en vez de seguir con E1a2: no entraba entero con su revisión visual, y la corrida de las 04:05 (la última) lo puede tomar con tiempo.
+
+### E1a1 · Recordatorios: el modelo (Aula 2.40.0, **esquema 6**)
+
+**Plan:** con el tiempo que quedaba no entraba E1a entero bien hecho (modelo + interfaz en dos editores + Configuración), así que lo partí: ahora el modelo y la migración, que son lo delicado con tus datos; la interfaz queda como E1a2 para la próxima corrida.
+**Decisiones:**
+- **No se toca ninguna tarea ni ningún parcial.** `reminders` es opcional: un parcial que no lo tiene usa los de Configuración (por defecto **7 días y 1 día antes**), una lista vacía significa "sin avisos", y una tarea sin la lista no avisa. Así tus parciales ya cargados quedan con los avisos por defecto sin reescribirlos, y la sincronización no ve "cambios" falsos.
+- La migración (esquema 5 → 6) solo agrega `settings.reminderDefaults`, respetando lo que ya hubiera. Como siempre, antes guarda la copia `premig-v5` en Copias de seguridad.
+- **Parcial sin hora:** avisa tomando las 9:00 de ese día ("1 día antes" = el día anterior a las 9). **Tarea sin hora:** no tiene "antes", no avisa.
+- Unidades: minutos, horas y días (hasta 999). La lista se limpia sola: sin repetidos (30 min y 0,5 h no se duplican), ordenada del más lejano al más cercano.
+**Salió mal / intentos fallidos:** nada. Los tests los escribí antes, pero no los corrí en rojo (sin las funciones fallaban seguro); lo aclaro para ser honesto con el método.
+**Tests:** +2 (×2) en `tests/recordatorios.spec.js`: migración del fixture en esquema 5 (todo idéntico, copia `premig-v5`, idempotente, respeta lo configurado, sin marcas de sync) y cuándo suena cada recordatorio. Actualicé 1 test viejo (`anios.spec.js` esperaba el esquema 5 fijo; ahora compara con `SCHEMA_VERSION`). `npm test`: **317 pasaron, 0 fallaron**.
+**Capturas:** no hay: no cambió nada visible.
+**Para Bauti:** todavía no se ve nada nuevo; es la base para que en E1a2/E1b te lleguen los avisos al celu.
+
+### L1b · Recorrido pensado
+
+**Plan:** lo siguiente del backlog era L1b. En vez de mirar código al azar, usé la app como vos desde el celu (Playwright mobile, 23:40, con el fixture) vista por vista, y probé a propósito los casos borde que pide el backlog: inicio de semana en domingo, fin de mes y día 31, materia borrada con parciales, parcial pasado sin nota. Todo lo encontrado fue primero a `docs/AUDITORIA.md` (#14–#20) y después se arregló con su test. Versión 2.38.0 → 2.39.0. **No cambia la forma de los datos.**
+**Decisiones:**
+- **"Cada mes" el día 31 ahora cae el último día de los meses cortos** (31/10 → 30/11 → 31/12; el 30 cae el 28/2), para tareas que se repiten, series y hábitos. Antes se salteaba el mes entero: una "Pagar cuota el 31" desaparecía en noviembre sin avisar. La corrida de C1 lo había dejado anotado como algo a decidir; lo decidí porque para un estudiante perderse un vencimiento es mucho peor que tenerlo un día antes. (El Calendario del iPhone hace lo contrario, saltea; si lo preferís así, es una línea.) Las series viejas creadas salteando noviembre se siguen reconociendo como "cada mes", y si les agregás más tareas siguen la regla nueva. **Actualicé 2 tests viejos** (`repetir.spec.js` y `series-editar.spec.js`) que verificaban justamente que se salteara: cambió la regla a propósito.
+- **Series:** una tarea que se repite con fecha final decía "sin fin" (la "Clase de consulta" del fixture termina el 15/12). Ahora dice "hasta el mar 15 dic" (o "terminó el …"), en la lista y en el editor. "Cada semana" pasa a "todos los sábados" y "cada mes" a "el 10 de cada mes".
+- **Estudio de hoy:** después de agregar 14–17 el formulario proponía otra vez 14–17. Ahora propone el siguiente desde donde terminó el último (17–19) y avisa si un bloque se superpone. El "05:00 PM" de las capturas es del navegador de prueba (en inglés); en tu iPhone en español sale 24 h. No lo cambié: reemplazar el selector de hora nativo del celu sería peor.
+- **Materias:** "0 pendientes · 0 m estudiadas" → "al día · sin tiempo registrado". Al eliminar una materia, el aviso ahora dice qué pasa con sus tareas **y parciales** ("1 tarea y 1 evaluación quedan sin materia, no se borran"); antes decía "desvincular 1 tareas".
+- **Quedan para F1** (son de diseño, no de lógica): la fecha repetida en las filas de Parciales (#19) y los totales en mayúsculas de Semana (#20).
+**Salió bien:** Calendario, Semana con inicio en domingo y borrar una materia con parciales y sesiones aguantaron bien (ninguna vista mostró `undefined` ni se rompió).
+**Salió mal / intentos fallidos:** (1) una captura de página completa de Hoy mostraba las filas apretadas a la mitad del ancho; perdí un rato hasta ver que era un efecto de la captura "fullPage", no de la app (en pantalla normal están bien). (2) Mi test de Materias fallaba porque "50 m estudiadas" contiene "0 m estudiadas": era el test. Todos los tests nuevos fallaron antes del arreglo.
+**Tests:** +7 (×2 proyectos) en `tests/logica-l1b.spec.js`, 2 viejos actualizados. `npm test`: **313 pasaron, 0 fallaron** (31 saltados a propósito, como antes).
+**Capturas:** [Series, celu oscuro](capturas/L1b-series-mobile-dark.png) · [Series, desktop claro](capturas/L1b-series-desktop-light.png) · [Estudio de hoy, celu](capturas/L1b-estudio-mobile-light.png) · [Materias, desktop claro](capturas/L1b-subjects-desktop-light.png) · [Materias, celu oscuro](capturas/L1b-subjects-mobile-dark.png)
+**Commits:** `1417732` fix(logica): L1b · `0c7ab35` feat(recordatorios): E1a1.
+**Para Bauti:** si tenés alguna tarea "cada mes" el 29, 30 o 31, ahora te va a aparecer también en los meses cortos (el último día). Fijate que eso sea lo que querés.
+
+---
+
+## Corrida 02:06–02:50 (hora ARG) — L1a2 (revisor automático de textos) y G2 completo (Tu año en Aula)
+
+**Resumen de la corrida:** tres commits, cada uno con `npm test` en verde: el revisor automático de textos (L1a2), "Tu año en Aula" (G2a) y compartir cada pantalla como imagen (G2b). Versión 2.35.0 → 2.38.0. Tests: de 261 a 299 pasados, 0 fallados. **No hubo cambios en la forma de los datos** (G2 solo lee).
+
+### G2b · Compartir una pantalla como imagen (Aula 2.38.0)
+
+**Decisiones:**
+- **La imagen se dibuja a mano en un canvas de 1080×1920** (formato historia de Instagram) con los mismos colores y textos, más "Aula · 3.º año · 2026" abajo. Descarté sacar una "foto" del HTML: sin librerías no hay forma confiable, y además así la imagen sale igual en cualquier pantalla. El título grande se achica solo si no entra.
+- **Botón de compartir** (abajo a la derecha, 44 px): en el iPhone abre la **hoja de compartir** con el PNG (para mandarlo por WhatsApp o subirlo a una historia); si cancelás, no pasa nada. Donde no hay hoja de compartir (la compu) se **descarga** el PNG ("Imagen guardada"). El nombre del archivo queda tipo `aula-3-ano-2026-2.png`.
+**Salió mal / intentos fallidos:** (1) el nombre del archivo salía `aula-3-an-o-2026` (al sacar los acentos de "año" quedaba la virgulilla suelta); lo vi gracias al test. (2) Probando un caso borde (un solo día de estudio, una sola materia) aparecieron textos raros: "en 1 día distintos", "el 100% de todo lo que estudiaste" y "5 h en el mes; tu día récord: 5 h". Ahora dice "en un solo día", "todo tu tiempo de estudio fue para esta materia" y "5 h, todas el miércoles 4 de noviembre". Test propio.
+**Tests:** +3 (×2): compartir con la hoja (PNG de 1080×1920, con contenido) y cancelar sin descargar; descarga en la compu (verifica la cabecera PNG y el tamaño) y que todas las pantallas se pueden dibujar; los textos del caso de un solo día. `npm test`: **299 pasaron, 0 fallaron**.
+**Capturas:** [botón en la historia, celu](capturas/G2b-share-mobile-light.png) · imágenes que se comparten: [portada](capturas/G2b-imagen-portada.png) · [materia](capturas/G2b-imagen-materia.png) · [parciales](capturas/G2b-imagen-parciales.png)
+**Commits:** `0404118` feat(año): G2a · `d109fde` feat(año): G2b.
+**Para Bauti:** probá el botón de compartir en el iPhone desde la app instalada: la hoja de compartir con archivos solo se puede probar de verdad ahí (en los tests está simulada).
+
+
+### G2a · Tu año en Aula (Aula 2.37.0)
+
+**Plan:** G2 tiene dos partes bien separadas: los números + la historia, y exportar cada pantalla como imagen. Lo partí en G2a y G2b para cerrar bien la primera con el tiempo que quedaba.
+**Decisiones:**
+- **Los números salen del estado completo filtrado por año** (`wrappedData(yearId)` sobre `fullState()`): se puede ver el resumen de cualquier año **sin cambiar el año que estás mirando**. No modifica nada (el test compara el estado antes y después).
+- **Pantallas** (cada una aparece solo si hay dato real): portada ("Hasta ahora" si el año no terminó), horas estudiadas en cuántos días + equivalente ("como ver 2 películas seguidas"; con 48 h o más, "días enteros sin dormir"), la materia del año con su %, el mes más intenso y el día récord, tareas completadas (las que se repiten cuentan cada vez) + la serie más larga terminada entera, la racha más larga (días seguidos estudiando **o** tachando tareas), "Sos de estudiar de noche/mañana/tarde/madrugada", parciales aprobados con la mejor nota, y un cierre.
+- **"A qué hora estudiás" solo con 5 o más sesiones medidas en el momento.** Las cargadas a mano no dicen a qué hora estudiaste (dicen a qué hora las cargaste), así que no cuentan. Con tus datos de prueba hay 3: esa pantalla no sale. Prefiero saltarla a inventar.
+- **Sin datos** no se rompe: portada y un cierre honesto ("Todavía no hay nada que contar…").
+- **Cómo se usa:** botón "Tu año en Aula" arriba en Progreso, y "Resumen" al lado de cada año en "Tus años". Tocás la derecha para avanzar y la izquierda para volver (como las historias de Instagram); en la compu, flechas, espacio y Esc. Barras de progreso arriba, ✕ de 44 px, animación de entrada de 240 ms que se apaga con "reducir movimiento". En el celu ocupa toda la pantalla; en la compu, una tarjeta vertical centrada.
+- **No pasa sola** (sin temporizador): son números para leer, y que se te vaya la pantalla mientras leés frustra.
+**Salió mal / intentos fallidos:** en la primera captura los decimales salían con punto ("4.8 h", "1.5 h", del `hClock` de Progreso): en el resumen ahora uso "4 h 45 m" y el número grande va con coma ("4,8 horas"). Además, al abrir quedaba un anillo de foco sobre el ✕ (ahora el foco va al diálogo), "Parciales aprobados: 1" quedaba sin unidad (ahora "Aprobaste 1 parcial"), y revisando el diff vi que los atajos de la app (N = nueva tarea) seguían funcionando detrás de la historia: ahora se bloquean (el test falla sin el arreglo). Los tests los escribí después del código, así que no los vi en rojo primero, salvo el del atajo.
+**Tests:** +5 (×2) en `tests/wrapped.spec.js`: los números del fixture calculados a mano (285 min, AN 32%, julio, 7 tareas, racha 3, mejor nota 9…) y el texto de cada pantalla; recorrido entero tocando + teclado + "Ver de nuevo" + Esc, sin cambiar datos; sin datos; "de noche" con 5 sesiones medidas (las cargadas a mano no cuentan); el resumen de un año anterior desde "Tus años" sin cambiar de año. `npm test`: **293 pasaron, 0 fallaron**.
+**Capturas:** [portada, celu](capturas/G2-s0-mobile-dark.png) · [horas](capturas/G2-s1-mobile-dark.png) · [materia del año](capturas/G2-s2-mobile-dark.png) · [mes](capturas/G2-s3-mobile-dark.png) · [parciales, desktop claro](capturas/G2-s6-desktop-light.png) · [cierre](capturas/G2-s7-mobile-dark.png) · [botón en Progreso](capturas/G2-boton-mobile-dark.png)
+**Para Bauti:** abrilo desde Progreso → "Tu año en Aula". Tus números reales van a ser distintos a los de las capturas (son del fixture de prueba). Si alguna pantalla te parece de más o te falta alguna idea, es fácil sumar.
+
+### L1a2 · Revisor automático de textos (Aula 2.36.0)
+
+
+**Plan:** seguía L1a2. Era lo siguiente pendiente antes de G2, y además sirve para todo lo que viene: es un test que recorre la app entera buscando textos rotos, así que cada ítem nuevo (G2, E1, F1) queda revisado gratis.
+**Decisiones:**
+- **Un solo recorredor, muchos estados.** `tests/revisor.spec.js` siembra 9 estados (el fixture, vacío, una materia, 200 tareas, títulos larguísimos, tres parciales en dos días, tareas de 0 min, todo hecho y todo atrasado a las 00:40 de la noche) y en cada uno, en desktop y celu, visita las 16 vistas, el detalle de **cada** materia, parcial y proyecto, y 20 modales (editar tarea, mover, plan, serie, años, informe…). Son 18 tests de ~5 s cada uno: la suite tarda ~1 min más (3,4 → 4,5 min). Me pareció un precio razonable; descarté recorrer todos los modales de todas las tareas porque multiplicaba el tiempo sin encontrar cosas distintas.
+- **Qué busca:** `NaN`, `undefined`, `null`, `Invalid Date`, `[object`, plurales mal ("1 tareas", "1 días"… con una lista de palabras; "11 tareas" o "1/3 tareas" no cuentan), "en 0 días"/"hace 0 días", tiempos negativos, la página corriéndose de costado y elementos que se salen del ancho (salvo los que están dentro de algo que recorta a propósito, como los "…"). También revisa lo escrito en los campos.
+- **Un test del propio revisor:** le inyecto un HTML lleno de errores y verifico que los detecta todos, y que textos correctos ("1 día", "11 días", "3-5 días") no los marca. Sin esto, un revisor que no encuentra nada podría estar ciego.
+- **Helper `pl(n, "tarea", "tareas")`** para los plurales. Además de lo que encontró el revisor, busqué en el código todos los `${n} tareas/días/…` y los pasé a `pl()` (Lista completa, Series, Progreso, Importar copia).
+**Hallazgos (todos arreglados, detalle en `docs/AUDITORIA.md` #8–#13):** "1 pendientes" en Inicio y Materias; "hay 1 tareas pendientes de un plan anterior" en el generador de planes; "1 atrasadas" en Planes; en Progreso "Parcial **en 0 días** · le estás dando poco" cuando el parcial es hoy (ahora "hoy"/"mañana"). Y uno que el revisor **no** podía ver, pero que vi en su captura: **Materias en el celu** tenía los 4 botones al lado del nombre y lo apretaban a una palabra por renglón ("Probabilidad / y / Estadística", el subtítulo en 4 renglones). Ahora el nombre y los datos ocupan un renglón y los botones van debajo, de 40 px de alto, Editar y Archivar más anchos. En la compu no cambia nada.
+**Salió bien:** la primera pasada del revisor falló en 14 de los 18 tests, todos por plurales y el "en 0 días". No encontró `NaN`/`undefined` ni cosas que se salgan de la pantalla en ningún estado, ni con títulos de 150 letras: buena señal para la base.
+**Salió mal / intentos fallidos:** el test de Materias falló de entrada por culpa del test: medía el bloque nombre+subtítulo (2 renglones) en vez del nombre. Corregido el selector, pasa con el arreglo y falla en el celu sin él (lo comprobé sacando el arreglo).
+**Tests:** +19 (×2 proyectos, 9 estados + 1 del revisor + 1 de Materias). `npm test`: **283 pasaron, 0 fallaron** (31 saltados a propósito, como antes).
+**Capturas:** [Materias, celu oscuro](capturas/L1a2-subjects-mobile-dark.png) · [Materias, celu claro](capturas/L1a2-subjects-mobile-light.png) · [Materias, desktop claro](capturas/L1a2-subjects-desktop-light.png) · [plan, celu oscuro](capturas/L1a2-plan-mobile-dark.png) · [plan, desktop claro](capturas/L1a2-plan-desktop-light.png)
+**Commits:** `ab3e5a6` test(revisor): L1a2 revisor automático de textos.
+**Para Bauti:** fijate Materias en el celu. Si preferís que los botones ↑ ↓ / Editar / Archivar estén escondidos (por ejemplo, detrás de un "Editar lista", como en iOS), es un cambio chico: avisá.
+
+---
+
+## Corrida 01:06–01:49 (hora ARG) — G1 (años de cursado) y L1a1 (parciales el mismo día)
+
+**Resumen de la corrida:** hice **G1 completo**: cada año de cursado es un espacio aparte, con selector en el menú, asistente para crear el año nuevo y aviso cuando estás mirando un año anterior. **Cambia la forma de los datos (esquema 5)**, con copia previa automática y tests con el fixture elemento por elemento. Versión 2.33.0 → 2.35.0. Tests: de 240 a 261 pasados, 0 fallados (255 al cerrar G1). Además, **L1a1**: tu caso de los dos parciales el mismo día.
+
+**Plan:** G1 toca el modelo y todas las vistas, así que lo primero fue decidir **cómo** separar por año sin tocar los ~170 lugares del código que leen `state.tasks`, `state.subjects`, etc., y sin arriesgar tus datos ni la sincronización recién hecha (S1).
+
+**Decisiones:**
+- **Los datos viejos no se reescriben.** Se agrega `state.years` con el primer año (`id: "y0"`, "3.º año · 2026", mar 2026 – feb 2027; lo puse así porque tus materias son las de 3.º de Sistemas; se edita en un toque). Cada cosa nueva lleva `yearId`; lo que **no** tiene `yearId` es del primer año. Así la migración no cambia ni una tarea (el test compara las 22 del fixture campo por campo) y **no aparece como "cambio" para la sincronización** (si la migración hubiera marcado todo como recién editado, un celu desactualizado podía pisar ediciones de la compu).
+- **Id fijo para el primer año** (`y0`) en vez de uno al azar: la compu y el celu migran por separado y tienen que llegar al mismo año sin ponerse de acuerdo; con ids al azar te habrían quedado dos "3.º año".
+- **En memoria, solo el año que mirás.** Al cargar, lo de los otros años se aparta (`yearHidden`) y `fullState()` lo vuelve a juntar **en el mismo orden** para guardar, sincronizar, exportar y hacer copias. Ventaja: todas las vistas, Progreso, la búsqueda, el generador de planes y los selectores muestran solo el año activo sin tocar su código, y cualquier vista futura (G2, E1…) también. Lo que se crea mientras mirás un año queda en ese año. Descarté filtrar en cada vista (decenas de cambios, fácil olvidarse uno) y guardar cada año en un lugar distinto del estado (para la sincronización habría sido "borrar y crear" todo).
+- **El año que ves es de cada dispositivo** (no viaja): si en el celu mirás 3.º, la compu sigue en 4.º. Si no elegiste ninguno, ves el más nuevo: cuando crees 4.º en la compu, el celu pasa solo a 4.º al sincronizar.
+- **Años anteriores "en consulta":** se ven con un aviso arriba ("Estás viendo 3.º año · 2026 · Volver al actual") y el selector del menú en amarillo. **No los bloqueé para editar**: corregir una nota de un final viejo es algo real; el aviso alcanza para no confundirse.
+- **Año nuevo** (Configuración → Años de cursado → Nuevo año…, o desde el selector del menú): propone el nombre y las fechas solos ("4.º año · 2027", mar 2027 – feb 2028), arranca **vacío** y deja traer, opcionalmente, **materias que siguen** (las elegís de la lista), **hábitos** (sin el historial) y **notas**. Lo que se trae se **copia**: el año viejo queda exactamente igual. Vista previa antes de crear ("Vas a crear 4.º año · 2027 con 2 materias y tus hábitos"), valida nombre repetido y fechas al revés, y **Deshacer** después.
+- **La sincronización** ya funcionaba para cualquier lista con ids, así que `years` viaja sola. Ajusté dos cosas: el "dedupe" de materias de la primera sincronización ahora compara nombre **y año** (si no, "Economía" de 3.º y la copia de 4.º se habrían fusionado), y todo lo que compara o sube el estado usa el estado completo (si no, cambiar de año habría parecido "borrar" lo del otro año y dejado lápidas).
+- **Red de seguridad:** si algo tuviera un `yearId` que no está en la lista (una importación rara), se le arma un "Año recuperado" en vez de quedar invisible, y nunca pasa a ser el actual. Importar con "Fusionar" también trae los años del archivo.
+- `dayLog`/`dayPlan` (registro por día y bloques de "Estudio de hoy") quedaron **comunes a todos los años**: son por fecha, no por año.
+
+**Salió bien:** el enfoque de "solo el año activo en memoria" hizo que todas las vistas quedaran separadas por año sin tocarlas. El test de dos dispositivos (uno en 3.º editando, otro en 4.º) termina igual en los dos, sin lápidas y sin subidas de más.
+**Salió mal / intentos fallidos:** (1) un test falló de a ratos: no era la app sino el test, que leía las marcas antes de que terminara el guardado del arranque (`persist()` encola si ya hay uno en curso). Lo mismo podía pasarle a `storedState()` del helper, así que lo arreglé ahí también (espera a que no haya un guardado en curso). (2) En la primera captura el aviso de año anterior ocupaba media pantalla del celu (texto en dos renglones + botón grande azul); lo achiqué a un renglón con "Volver al actual". (3) En "Tus años" las cantidades se partían en dos renglones; ahora fechas y cantidades van en renglones propios y un año vacío dice "Vacío por ahora".
+**Tests:** +8 en `tests/anios.spec.js` (×2 proyectos) y +1 en `tests/sync-app.spec.js`: migración del fixture (elementos idénticos, copia `premig-v4`, idempotente, sin marcas de sync); crear 4.º con el asistente → limpio, lo nuevo queda en 4.º, volver a 3.º intacto, recargar mantiene el año, volver con el aviso; traer materias y hábitos (copias con ids nuevos, sin historial) + deshacer; motor (sin lápidas al cambiar de año, mismo orden, la sincronización ve todo, fusión remota con otro año a la vista, dedupe por año); copias y exportación con todos los años; validaciones del asistente; red de seguridad; dos dispositivos con años distintos. Actualicé 1 test viejo (`sync-motor`: esperaba el esquema 4 fijo; ahora compara con `SCHEMA_VERSION`). `npm test`: **255 pasaron, 0 fallaron** (31 saltados a propósito).
+**Capturas:** [asistente, celu claro](capturas/G1-nuevo-mobile-light.png) · [asistente, desktop oscuro](capturas/G1-nuevo-desktop-dark.png) · [tus años, celu oscuro](capturas/G1-selector-mobile-dark.png) · [tus años, desktop claro](capturas/G1-selector-desktop-light.png) · [mirando 3.º, celu oscuro](capturas/G1-viejo-mobile-dark.png) · [mirando 3.º, desktop claro](capturas/G1-viejo-desktop-light.png) · [4.º recién creado, celu](capturas/G1-nuevo-inicio-mobile-light.png)
+**Commits:** `93c5758` G1 · el de L1a1 y cierre (`fix(logica): ...`).
+### L1a1 · Dos parciales el mismo día (Aula 2.35.0)
+
+**Plan:** tu caso exacto primero ("caen dos parciales el mismo día pero arriba dice 'próximo parcial Economía en 2 días'"), y abrir `docs/AUDITORIA.md` para anotar todo lo que vaya apareciendo. El revisor automático de textos (L1a2) lo dejé para la próxima corrida: preferí cerrar G1 y esto bien antes que empezar algo grande con poco tiempo.
+**Decisiones:**
+- "El próximo parcial" ahora son **todos los del mismo día**. Arriba: "Economía y ANP · en 2 días". Para que entre en la pastilla (máx. ~30 letras) se acortan a la sigla **primero los nombres más largos** ("Economía y Análisis Numérico — Práctica" → "Economía y ANP"); con 4 o más, "4 parciales"; si son dos de la misma materia (teoría y práctica), van sus nombres. Al pasar el mouse se ven los nombres completos y la fecha.
+- La sugerencia de Inicio dice "Economía y ANP **son** en 2 días: quedan N tareas de sus planes" (suma los planes de los dos).
+- Detalle de materia: "Próximas evaluaciones" con las dos, y "mañana" en vez de "en 1 días".
+- De paso: "Tenés 1 tareas atrasadas" → "1 tarea atrasada"; y una evaluación sin tipo mostraba "undefined" (lo vi en mi propia captura con datos de prueba; tus datos siempre tienen tipo, pero quedó a prueba de eso).
+**Salió mal:** mi primera captura mostró "undefined" en Próximas evaluaciones: eran mis datos de prueba (sin tipo), pero lo dejé arreglado igual. También vi que en el celu la pastilla de arriba **no se muestra** (está oculta por espacio desde antes): lo anoté en la auditoría para F1.
+**Tests:** +3 (×2) en `tests/logica.spec.js` (fallan sin el arreglo): arriba e Inicio con dos el mismo día; reglas del nombre (2, 3, 4, misma materia); detalle de materia y singular.
+**Capturas:** [Inicio desktop claro](capturas/L1a-home-desktop-light.png) · [desktop oscuro](capturas/L1a-home-desktop-dark.png)
+
+**Para Bauti:**
+- Al abrir la versión nueva no vas a notar nada distinto salvo el selector "Año de cursado · 3.º año · 2026" arriba del menú. Si no estás en 3.º, cambialo en Configuración → Años de cursado → Ver mis años → Editar.
+- **No crees 4.º "para probar" con tus datos reales** salvo que quieras: se puede deshacer en el momento (o desde Copias de seguridad), pero si sincronizás, el año llega al otro dispositivo.
+- Los **recordatorios** de parciales solo miran el año que tenés abierto: si te quedás mirando un año viejo, no te avisa de los del actual. Para uso normal (siempre en el actual) no cambia nada.
+
+---
+
+## Corrida 00:06–00:50 (hora ARG) — C4, C5, S1 (S1a, S1b, S1c)
+
+**Resumen de la corrida:** primera corrida de la noche 2. Hice los tres primeros del orden que pediste: **tiempos de series por tramos** (C4), **arrastre fluido** (C5) y la **sincronización compu-celu** completa (S1, partida en tres). Tests: de 196 a 240 pasados, 0 fallados, en cada commit. Versión 2.28.0 → 2.33.0. Hubo **un cambio de forma de datos** (S1a, esquema 4): solo agrega `state.sync` vacío, con copia previa automática y test con el fixture tarea por tarea.
+
+**Plan:** seguir el orden del backlog. S1 es grande y toca tus datos, así que lo partí en motor (S1a), cliente (S1b) y pantalla (S1c), cada uno con sus tests y su commit, para que si una corrida se cortaba no quedara nada a medias.
+
+### C4 · Tiempos de una serie por tramos
+
+**Plan:** tu caso ("las primeras 10 de 1 h, después 2 de 1 h 30, después 2 h, después 3 h") tenía que poder hacerse **al crear** la serie, sin pasar por el editor, y también arreglarse rápido **después**.
+**Decisiones:**
+- **Al crear** (control Repetir, solo si la serie tiene fin y más de una tarea): un interruptor "Tiempos distintos por tramos". Se abren filas `[10] de [1 h]`, `[2] de [1 h 30 m]`, `[El resto (16)] de [2 h]`, `[3] de [3 h]`, en orden de la primera a la última, con "+ Agregar tramo" y ✕ para quitar. "El resto" puede ir **en cualquier fila** (no solo la última): así entra tu caso de "y las últimas 3 de 3 h". Usé selectores nativos (en el iPhone abren la ruedita) en vez de campos de texto: no hay que tipear nada. La vista previa muestra **el tiempo al lado de cada fecha** y el **total** ("Se van a crear 31 tareas · 54 h en total"). Si los tramos no cierran ("suman 35 y son 31", "dos «el resto»") lo dice y no crea nada. Por defecto apagado: el que no lo necesita no lo ve.
+- **En el editor** de la serie:
+  - Cada fila tiene su **número** (1, 2, 3…) y el **tiempo es tocable**: se vuelve un campo donde escribís `90`, `1,5` o `1 h 30` y Enter (Escape cancela). Usé `inputmode="decimal"` para que en el iPhone salga el teclado numérico: por eso "1,5" = 1 h 30 (con coma son horas; sin coma, minutos).
+  - **Rangos:** "De la [1] a la [10] · Elegir" y "Las que quedan" (las que vienen después de la última elegida). Shift + clic en la compu; en el celu, **tocar una y mantener apretada otra** elige todas las del medio. Descarté "mantener y arrastrar" en el celu: dentro de una lista que scrollea se pelea con el scroll y en iOS es frágil; el toque largo sobre la última hace lo mismo sin pelearse.
+  - **Tiempo en un toque:** con varias elegidas aparece "Poner a las 10 elegidas (de la 1 a la 10):" y chips `30 m · 1 h · 1 h 30 m · 2 h · 3 h · Otro…`. Se aplica al tocar, con **deshacer**. La "vista previa" en este caso es la frase de arriba de los botones (dice exactamente a cuáles); me pareció mejor que pedir un segundo toque de confirmación para algo que se deshace. Después de aplicar, el rango salta solo a "de la 11 a la 31": la cadena de tu caso son 4 rangos y 4 toques.
+  - "Tiempos por tramos" también está como acción en "Qué hacer con las elegidas", con la vista previa de siempre ("Vas a poner tiempos por tramos a 31 tareas (54 h en total)").
+**Salió mal / intentos fallidos:** en la primera captura el interruptor salía roto (la casilla ocupaba todo el ancho por un estilo general de los campos del modal) y "El resto (16)" se cortaba en el celu; los arreglé (y "tareas de" pasó a "de", más corto y se lee igual). Los tests nuevos los escribí antes de mirar la pantalla pero después del código, así que no los vi fallar "en rojo" primero (las funciones no existían: habrían fallado).
+**Tests:** +8 (×2 proyectos, 2 de un solo proyecto) en `tests/series-tramos.spec.js`: tu caso exacto al crear (31 tareas: 10×60, 2×90, 16×120, 3×180, y sobrevive a recargar), tramos que no cierran, la cadena de rangos + toques en el editor (y deshacer), tramos en el editor con vista previa, editar el tiempo en el lugar, Shift+clic (desktop), toque largo (celu) y `parseDur`.
+**Capturas:** [crear, celu claro](capturas/C4-crear-mobile-light.png) · [crear, celu oscuro](capturas/C4-crear-mobile-dark.png) · [crear, desktop oscuro](capturas/C4-crear-desktop-dark.png) · [editor, celu oscuro](capturas/C4-editor-mobile-dark.png) · [editor, desktop claro](capturas/C4-editor-desktop-light.png)
+
+### C5 · Arrastrar para ordenar, fluido
+
+**Plan:** confirmar las causas que había anotado (en la compu) y rehacer el arrastre para que cada movimiento del mouse o del dedo sea barato.
+**Causas confirmadas leyendo el código:** `.task{transition:.12s}` animaba **todas** las propiedades (incluida la línea de destino, que se borraba y volvía a poner en cada `pointermove`, así que parpadeaba); el fantasma se movía con `left/top` (fuerza layout); en cada movimiento había `querySelectorAll` + `elementFromPoint` + `getBoundingClientRect`; el `:hover` de las filas que pasaban bajo el cursor animaba fondo y botones; y con mouse solo se podía agarrar la manija ⣿, que es chiquita y casi transparente.
+**Decisiones:**
+- **Se mide una sola vez**, al empezar: zonas y filas en coordenadas de documento (así el scroll no las invalida). Después, cada movimiento solo guarda la posición y **un único `requestAnimationFrame` por cuadro** mueve el fantasma con `transform: translate3d()` y calcula el destino con esos números. Las clases y los desplazamientos se tocan **solo si cambió el destino**.
+- **Como en iOS:** en la misma lista, las demás filas **se corren animadas** (200 ms) para abrir el hueco donde va a caer; al soltar, el fantasma **se asienta** en el lugar nuevo. Entre Hoy y Mañana dejé la línea de destino en vez de correr filas: correr las de Mañana las hacía pisar lo que hay abajo de la tarjeta.
+- **Con mouse se agarra de toda la fila** con un umbral de 5 px: un clic sin mover sigue abriendo el editor.
+- **iPhone:** iba a agregar un `touchmove` no pasivo para frenar el scroll con la fila levantada, pero al hacer S1b vi que **ya existía** (de B4) y lo saqué para no duplicarlo. En iOS lo que más pesaba era el trabajo por movimiento (layout forzado en cada evento), que ahora no está.
+- Transiciones solo de las propiedades necesarias, sin `:hover` durante el arrastre, y con `prefers-reduced-motion` sin animaciones.
+**Salió mal / intentos fallidos:** un test viejo (una tarea que se repite no pasa a Mañana) falló: después de soltar escondía la fila nueva con `visibility:hidden` mientras se asentaba el fantasma, y un segundo arrastre inmediato no la podía agarrar. Cambié a `opacity:0`. **Honestidad sobre el celu:** los tests táctiles pasan también con el código viejo, porque el Chrome de los tests no reproduce cómo Safari se queda con el gesto; el arreglo de iOS está hecho pero **solo vos lo podés confirmar en el iPhone**.
+**Tests:** +5 en `tests/arrastre.spec.js` (3 desktop, 2 celu): 4 abajo y 2 arriba desde el cuerpo de la fila + clic sigue abriendo el editor; 60 movimientos con **≤ 2 llamadas** a `getBoundingClientRect` (antes, una o más por movimiento), fantasma por `transform` y filas corridas; auto-scroll al borde y soltar abajo; con el dedo 4 abajo y 2 arriba sin `pointercancel` ni scroll; un scroll normal no levanta nada. Los 3 de desktop fallan con el código anterior.
+**Videos:** [arrastre en la compu](capturas/C5-arrastre-desktop.webm) · [arrastre en el celu](capturas/C5-arrastre-mobile.webm) (se generan con `node tests/tools/video-arrastre.js`).
+
+### S1a · Sincronización: el motor (sin pantalla todavía)
+
+**Por qué Cloudflare y no Firebase/Supabase:** Firebase o Supabase te obligan a crear una cuenta y un proyecto nuevo, copiar claves en la app y mantener otra cosa más. Aula ya vive en Cloudflare Pages: una **Pages Function** + un **KV** son parte del mismo proyecto, gratis para este uso, y no hay servidor aparte. Lo que falta de tu lado son 2 minutos de clics (queda en el resumen de la noche cuando esté lista la pantalla, S1c).
+**Plan:** partí S1 en tres: **S1a** motor + función, **S1b** cliente que sincroniza solo, **S1c** pantalla de Configuración con código y QR. Esta corrida hice S1a.
+**Decisiones:**
+- **Fusión por elemento, no "el último pisa todo".** Cada tarea, parcial, materia, nota, sesión… tiene una marca "cambió a tal hora"; los ajustes, por campo (cambiar el tema en el celu no pisa el color de acento que cambiaste en la compu); `dayLog`/`dayPlan`, por día. Por elemento gana lo más nuevo.
+- **Lápidas:** lo borrado deja "se borró a tal hora", así un borrado en el celu no revive desde la compu. Si alguien lo edita **después** del borrado en el otro lado, gana la edición.
+- **No toqué cada lugar que edita o borra** (son decenas y sería fácil olvidarse uno): al guardar, la app compara cada elemento con cómo estaba (un hash en memoria) y marca lo que cambió o desapareció. Así cualquier código nuevo (G1, E1…) queda sincronizado sin hacer nada.
+- **Las marcas no van adentro de cada tarea** sino en `state.sync` aparte: tus datos quedan exactamente iguales (el test lo verifica tarea por tarea).
+- **Lo que es de cada dispositivo no viaja:** `meta` (último guardado, copias) y el temporizador viejo.
+- **Datos de antes de la sincronización** (los tuyos) no tienen marca y cuentan como "lo más viejo": la primera vez se **suman** los dos lados, no se reemplaza nada. Si un mismo elemento existe distinto en los dos sin marca, los dos dispositivos eligen el mismo (regla fija), para terminar iguales.
+- **La función** (`functions/api/sync.js`): `GET`/`PUT` con el código en `Authorization: Bearer`. En KV se guarda bajo el **SHA-256 del código**: sin el código no hay cómo leer nada. `PUT` lleva la versión sobre la que se fusionó: si otro dispositivo escribió en el medio responde **409** con lo nuevo y la app vuelve a fusionar. 5 MB máximo (tus datos hoy son mucho menos). Si el KV no está vinculado responde **503 "no-kv"**, que la app va a mostrar como "falta activar en Cloudflare". KV no es transaccional: con dos dispositivos de una persona alcanza, y si dos escrituras se pisaran, la siguiente pasada vuelve a fusionar.
+- **Migración al esquema 4:** solo agrega `state.sync` vacío; no toca ningún dato. Con copia previa automática en "Copias de seguridad".
+**Salió mal / intentos fallidos:** el test de "los dos lados terminan iguales" falló porque comparaba las lápidas como texto y el orden de las claves era distinto (el contenido era igual); lo comparo ordenado.
+**Tests:** +6: `tests/sync-fn.spec.js` (2, en Node con un KV falso: GET/PUT, conflicto 409, clave hasheada, 401 con código inválido, otro código no ve nada, 503 sin KV, JSON roto, 413 por tamaño) y `tests/sync-motor.spec.js` (4 ×2: migración del fixture tarea por tarea con copia previa e idempotente; marcas y lápidas al guardar; fusión con 8 casos cruzados y simetría; editar después de borrar, y primera vez con datos en los dos lados).
+
+### S1b · Sincronización: el cliente
+
+**Plan:** que la app sincronice sola, sin botones, y que nunca pierda nada aunque estés sin señal.
+**Decisiones:**
+- **Una pasada** = bajar lo que hay en Cloudflare → fusionar con lo de este dispositivo → subir **solo si algo cambió**. Entre fusionar y aplicar no hay espera (la red va antes), así que si estás escribiendo justo en ese momento no se pisa. Subir solo si cambió importa: el KV gratis da ~1000 escrituras por día.
+- **Cuándo:** al abrir la app, al volver a primer plano, cuando vuelve la conexión, ~4 s después de cada cambio y cada 1 min con la app abierta.
+- **El código de sincronización vive solo en el dispositivo** (`localStorage`), nunca dentro de tus datos, copias ni exportaciones.
+- **Indicador:** el "todo guardado" de arriba pasa a "sincronizado", "sincronizando…", "sin conexión · se sube después" (punto amarillo), "falta activar la sincronización" (si Cloudflare no tiene el KV) o "código inválido".
+- **Antes de la primera fusión** se guarda una copia automática ("Antes de sincronizar por primera vez") en Copias de seguridad.
+- **Si otro dispositivo escribió en el medio** (409), se baja lo nuevo, se fusiona otra vez y se reintenta (hasta 4 veces).
+- **El service worker no toca `/api/`**: sin eso, el GET de la sincronización quedaba guardado en el caché para siempre y nunca vería cambios del otro lado (lo encontré leyendo `sw.js`; test nuevo).
+- La función ahora responde **200 con `data: null`** cuando todavía no hay nada (antes 404): el navegador anota los 404 como error de consola y la regla es cero errores.
+**Salió mal / intentos fallidos:** el test "dos dispositivos" encontró dos problemas reales: (1) **materias duplicadas**: un dispositivo nuevo arranca con las 10 materias de ejemplo con ids al azar, así que al sincronizar por primera vez quedaban 20. Ahora, en la primera fusión, si hay dos materias con el mismo nombre queda una (la que tiene cosas vinculadas; si empatan, una regla fija para que los dos dispositivos elijan la misma) y lo vinculado a la otra se pasa a la que queda. (2) **subidas de más**: cada lado ordenaba las listas distinto y se "corregían" mutuamente; ahora el orden lo da lo que ya está en el servidor.
+**Tests:** +5 en `tests/sync-app.spec.js` (dos contextos de navegador contra la función real con un KV falso y la red mockeada): crear/editar/borrar cruzado → iguales, lo borrado no revive y otra vuelta no sube nada; primera vez con datos en los dos lados (se suman, materias sin duplicar, tareas vinculadas bien); sin conexión no se pierde nada y sube solo al volver; conflicto 409 en el medio; sin KV avisa y la app sigue igual. +1 en `tests/sw.spec.js`.
+
+### S1c · Sincronización: la pantalla
+
+**Decisiones:**
+- Tarjeta **arriba de todo en Configuración** ("Sincronizar compu y celu"): apagada muestra **Activar en este dispositivo** y **Ya tengo un código**, más el paso a paso de Cloudflare plegado. Prendida: estado con punto de color y "última sincronización hace X", **QR**, el código en grupos de 4 (se selecciona entero con un toque), **Copiar código**, **Copiar link**, y abajo **Cambiar código** / **Desconectar** (los dos con confirmación).
+- **Código:** 128 bits al azar (`crypto.getRandomValues`), 22 caracteres. Al pegar se aceptan espacios o el link entero.
+- **QR propio, sin librerías:** escribí un generador (modo byte, corrección M, versiones 1–10). Lo verifiqué **decodificándolo con un lector real** (OpenCV) para 5, 20, 60, 100, 150 y 200 caracteres y el link real: todos leyeron bien. El test en `npm test` verifica la estructura (patrones de esquina, timing, módulo oscuro, versión).
+- **El link del QR** (`…/#/sync?k=…`) abre Configuración ofreciendo "Conectar este dispositivo", y **saca el código de la barra de direcciones**.
+- **iPhone, aviso importante:** la app instalada en la pantalla de inicio tiene sus datos **separados** de Safari. El QR abre Safari, no la app instalada. Por eso la pantalla lo dice y ofrece copiar/pegar el código. Lo dejé escrito también en [`docs/SINCRONIZAR.md`](SINCRONIZAR.md).
+**Salió mal / intentos fallidos:** ninguno serio; el primer QR leyó bien a la primera (tenía miedo con la información de versión de la 7 en adelante, por eso probé hasta 200 caracteres).
+**Tests:** +4 (×2) en `tests/sync-ui.spec.js`: activar → estado, QR y código (y que el código **no** quede dentro de tus datos), desconectar con confirmación; el link del QR; pegar código con espacios, el link entero o basura; estructura del QR.
+**Capturas:** [celu, conectado](capturas/S1c-on-mobile-light.png) · [celu oscuro, conectado](capturas/S1c-on-mobile-dark.png) · [desktop oscuro, sin activar](capturas/S1c-off-desktop-dark.png) · [desktop claro, conectado](capturas/S1c-on-desktop-light.png)
+
+**Commits:** `93de8a1` C4 · `78c52ae` C5 · `9ac5522` S1a · `bc4c6b9` S1b · el de S1c y cierre.
+**Tests de la corrida:** `npm test` final: **240 pasaron, 0 fallaron** (30 saltados a propósito: son de un solo proyecto, desktop o mobile).
+
+**Para Bauti:**
+- **Sincronización: falta un paso tuyo en Cloudflare** (2 minutos, está en [`docs/SINCRONIZAR.md`](SINCRONIZAR.md) y en la propia pantalla). Hasta que lo hagas, la app anda exactamente igual que antes y la tarjeta te dice "falta activar".
+- **Ojo con el iPhone:** si usás Aula desde la pantalla de inicio, el QR abre Safari (que tiene sus propios datos, separados de la app instalada). Usá **Copiar código** y pegalo en la app del celu.
+- Probá en la **compu** arrastrar tareas en Hoy agarrándolas de cualquier parte de la fila: decime si ahora se siente fluido. En el iPhone también, porque ahí no lo puedo probar de verdad.
+- Probá crear "Estudiar X" todos los días por un mes con **Tiempos distintos por tramos**, y en el editor de la serie la cadena "De la 1 a la 10 → 1 h → (salta solo a la 11) …".
+
+---
+
 ## Corrida 08:06–08:40 (hora ARG) — X5, X6, X7 y cierre de la noche
 
 **Resumen de la corrida:** era la última corrida (arrancó después de las 08:00), así que hice cosas chicas y seguras y reservé tiempo para publicar en `main`. Encontré **un problema serio que dejó la corrida anterior**: `sw.js` estaba **vacío** (X6). Además arreglé los botones partidos del detalle del parcial en el celu (X5) y un bug de foco que hacía fallar un test de series 1 de cada 3 veces (X7). Tests: de 190 a 196 pasaron, 0 fallaron. Versión 2.27.0 → 2.28.0. Sin cambios de forma de datos.
