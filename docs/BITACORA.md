@@ -18,6 +18,7 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 **Salió mal / intentos fallidos:** (1) el nombre del archivo salía `aula-3-an-o-2026` (al sacar los acentos de "año" quedaba la virgulilla suelta); lo vi gracias al test. (2) Probando un caso borde (un solo día de estudio, una sola materia) aparecieron textos raros: "en 1 día distintos", "el 100% de todo lo que estudiaste" y "5 h en el mes; tu día récord: 5 h". Ahora dice "en un solo día", "todo tu tiempo de estudio fue para esta materia" y "5 h, todas el miércoles 4 de noviembre". Test propio.
 **Tests:** +3 (×2): compartir con la hoja (PNG de 1080×1920, con contenido) y cancelar sin descargar; descarga en la compu (verifica la cabecera PNG y el tamaño) y que todas las pantallas se pueden dibujar; los textos del caso de un solo día. `npm test`: **299 pasaron, 0 fallaron**.
 **Capturas:** [botón en la historia, celu](capturas/G2b-share-mobile-light.png) · imágenes que se comparten: [portada](capturas/G2b-imagen-portada.png) · [materia](capturas/G2b-imagen-materia.png) · [parciales](capturas/G2b-imagen-parciales.png)
+**Commits:** `0404118` feat(año): G2a · `d109fde` feat(año): G2b.
 **Para Bauti:** probá el botón de compartir en el iPhone desde la app instalada: la hoja de compartir con archivos solo se puede probar de verdad ahí (en los tests está simulada).
 
 
@@ -50,7 +51,7 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 **Salió mal / intentos fallidos:** el test de Materias falló de entrada por culpa del test: medía el bloque nombre+subtítulo (2 renglones) en vez del nombre. Corregido el selector, pasa con el arreglo y falla en el celu sin él (lo comprobé sacando el arreglo).
 **Tests:** +19 (×2 proyectos, 9 estados + 1 del revisor + 1 de Materias). `npm test`: **283 pasaron, 0 fallaron** (31 saltados a propósito, como antes).
 **Capturas:** [Materias, celu oscuro](capturas/L1a2-subjects-mobile-dark.png) · [Materias, celu claro](capturas/L1a2-subjects-mobile-light.png) · [Materias, desktop claro](capturas/L1a2-subjects-desktop-light.png) · [plan, celu oscuro](capturas/L1a2-plan-mobile-dark.png) · [plan, desktop claro](capturas/L1a2-plan-desktop-light.png)
-**Commits:** `test(revisor): L1a2 ...` (este).
+**Commits:** `ab3e5a6` test(revisor): L1a2 revisor automático de textos.
 **Para Bauti:** fijate Materias en el celu. Si preferís que los botones ↑ ↓ / Editar / Archivar estén escondidos (por ejemplo, detrás de un "Editar lista", como en iOS), es un cambio chico: avisá.
 
 ---
