@@ -342,3 +342,8 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
 
 - [x] **X7 · Al abrir un modal, el foco se robaba lo que estabas escribiendo** *(agregado por el agente)*
   Por qué: el test de series "cambiar minutos de una…" fallaba ~1 de cada 3 veces (también en el commit anterior, no era nuevo). Causa: `openModal` enfoca el primer campo 30 ms después de abrir; si ya habías tocado otro campo (minutos), le sacaba el foco y lo que escribías caía en el título. Ahora solo enfoca si el foco no está ya dentro del modal.
+
+
+## Ideas del agente
+
+(Funcionalidades nuevas que el agente propone por su cuenta, con el permiso permanente de Bauti del 5/11. Cada una con: qué problema resuelve, cómo la usaría Bauti y por qué vale la pena. Se hacen después de lo pedido.)
