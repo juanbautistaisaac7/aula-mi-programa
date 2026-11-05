@@ -182,6 +182,18 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
   - Disponible para el año en curso ("hasta ahora") y para los años cerrados. Con el fixture y con 0 datos (no se rompe).
   - Tests de los números con el fixture y de que se navega entera sin errores; capturas de varias pantallas en mobile.
 
+- [ ] **L1 · Cazar errores de lógica y de experiencia en toda la app** *(trabajo continuo: arrancar con L1a esta noche si sobra tiempo después de G1; el resto en las noches siguientes, intercalado)*
+  Pedido (4/11 21:49): *"temas de lógica en general, por ejemplo una que vi recién: caen dos parciales el mismo día pero arriba dice 'próximo parcial Economía en 2 días'... que diga Economía y tal en 2 días. Esas cosas que por ahí son pequeñas pero son de lógica o de experiencia de usuario, que debe haber varias... fijate si podés sumar eso también e investigar bien profundo e ir resolviéndolas"*.
+  Método (no al azar, sistemático):
+  1. **Inventario:** abrir `docs/AUDITORIA.md` con una tabla: dónde, qué pasa, qué debería pasar, gravedad (rompe / confunde / detalle), estado. Todo lo que se encuentre va ahí primero.
+  2. **Revisor automático de textos:** un test que carga el fixture (y estados "raros": vacío, 1 materia, 200 tareas, títulos larguísimos, dos parciales el mismo día, tareas de 0 min, todo hecho, todo atrasado), recorre **todas** las vistas y modales en desktop y mobile, y falla si el texto visible contiene `NaN`, `undefined`, `null`, `Invalid Date`, `[object`, plurales mal ("1 días", "1 tareas"), "en 0 días", números negativos donde no van, o elementos que se salen de la pantalla (ancho > viewport).
+  3. **Recorrido pensado**, vista por vista, con preguntas de casos borde: empates (dos cosas el mismo día o la misma hora), límites (medianoche y "mi día termina a las 4", fin de mes, día 31 en repeticiones mensuales, inicio de semana configurable), cosas borradas o archivadas (materia borrada con tareas y parciales, parcial borrado con tareas vinculadas, proyecto terminado), cosas vencidas (tarea con hora que ya pasó hoy, parcial ya pasado sin nota), y coherencia entre vistas (el mismo número en Inicio, Hoy, Progreso y en el detalle).
+  4. Arreglar de a uno, cada uno con su test, y marcar en `AUDITORIA.md`.
+  - [ ] **L1a** · El caso de Bauti: arriba ("próximo parcial", `renderTop` → `nextEv`, que hoy toma `evs[0]`) y en todo lugar que muestre "el próximo parcial" (Inicio, detalle de materia, Progreso, recordatorios): si hay varios el mismo día, mostrarlos juntos ("Economía y AN · en 2 días", o "2 parciales · en 2 días" si no entran). Test con dos y tres parciales el mismo día. Después, el revisor automático de textos (punto 2) y los primeros hallazgos.
+  - [ ] **L1b** · Recorrido pensado (punto 3) de Hoy, Semana, Calendario, Materias, Parciales y Series.
+  - [ ] **L1c** · Recorrido pensado de Progreso/estadísticas, Configuración, Copias, búsqueda, y de las cosas nuevas (sincronización, años). Repetir después de F1.
+  Listo cuando: `docs/AUDITORIA.md` existe y está al día, el revisor automático corre en `npm test`, y no quedan hallazgos "rompe" ni "confunde" abiertos (los "detalle" pueden quedar listados con su porqué).
+
 ## Noche 3 o siguientes — NO hacer la noche del 5/11 (Bauti lo pidió "para los próximos días")
 
 - [ ] **H1 · Estadísticas que sirvan de verdad, con historial** *(grande: partir en H1a–H1f; hacerlas en orden)*
