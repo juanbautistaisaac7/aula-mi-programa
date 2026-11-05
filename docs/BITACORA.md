@@ -6,6 +6,94 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
+## Corrida 00:06–00:50 (hora ARG) — C4, C5, S1 (S1a, S1b, S1c)
+
+**Resumen de la corrida:** primera corrida de la noche 2. Hice los tres primeros del orden que pediste: **tiempos de series por tramos** (C4), **arrastre fluido** (C5) y la **sincronización compu-celu** completa (S1, partida en tres). Tests: de 196 a 240 pasados, 0 fallados, en cada commit. Versión 2.28.0 → 2.33.0. Hubo **un cambio de forma de datos** (S1a, esquema 4): solo agrega `state.sync` vacío, con copia previa automática y test con el fixture tarea por tarea.
+
+**Plan:** seguir el orden del backlog. S1 es grande y toca tus datos, así que lo partí en motor (S1a), cliente (S1b) y pantalla (S1c), cada uno con sus tests y su commit, para que si una corrida se cortaba no quedara nada a medias.
+
+### C4 · Tiempos de una serie por tramos
+
+**Plan:** tu caso ("las primeras 10 de 1 h, después 2 de 1 h 30, después 2 h, después 3 h") tenía que poder hacerse **al crear** la serie, sin pasar por el editor, y también arreglarse rápido **después**.
+**Decisiones:**
+- **Al crear** (control Repetir, solo si la serie tiene fin y más de una tarea): un interruptor "Tiempos distintos por tramos". Se abren filas `[10] de [1 h]`, `[2] de [1 h 30 m]`, `[El resto (16)] de [2 h]`, `[3] de [3 h]`, en orden de la primera a la última, con "+ Agregar tramo" y ✕ para quitar. "El resto" puede ir **en cualquier fila** (no solo la última): así entra tu caso de "y las últimas 3 de 3 h". Usé selectores nativos (en el iPhone abren la ruedita) en vez de campos de texto: no hay que tipear nada. La vista previa muestra **el tiempo al lado de cada fecha** y el **total** ("Se van a crear 31 tareas · 54 h en total"). Si los tramos no cierran ("suman 35 y son 31", "dos «el resto»") lo dice y no crea nada. Por defecto apagado: el que no lo necesita no lo ve.
+- **En el editor** de la serie:
+  - Cada fila tiene su **número** (1, 2, 3…) y el **tiempo es tocable**: se vuelve un campo donde escribís `90`, `1,5` o `1 h 30` y Enter (Escape cancela). Usé `inputmode="decimal"` para que en el iPhone salga el teclado numérico: por eso "1,5" = 1 h 30 (con coma son horas; sin coma, minutos).
+  - **Rangos:** "De la [1] a la [10] · Elegir" y "Las que quedan" (las que vienen después de la última elegida). Shift + clic en la compu; en el celu, **tocar una y mantener apretada otra** elige todas las del medio. Descarté "mantener y arrastrar" en el celu: dentro de una lista que scrollea se pelea con el scroll y en iOS es frágil; el toque largo sobre la última hace lo mismo sin pelearse.
+  - **Tiempo en un toque:** con varias elegidas aparece "Poner a las 10 elegidas (de la 1 a la 10):" y chips `30 m · 1 h · 1 h 30 m · 2 h · 3 h · Otro…`. Se aplica al tocar, con **deshacer**. La "vista previa" en este caso es la frase de arriba de los botones (dice exactamente a cuáles); me pareció mejor que pedir un segundo toque de confirmación para algo que se deshace. Después de aplicar, el rango salta solo a "de la 11 a la 31": la cadena de tu caso son 4 rangos y 4 toques.
+  - "Tiempos por tramos" también está como acción en "Qué hacer con las elegidas", con la vista previa de siempre ("Vas a poner tiempos por tramos a 31 tareas (54 h en total)").
+**Salió mal / intentos fallidos:** en la primera captura el interruptor salía roto (la casilla ocupaba todo el ancho por un estilo general de los campos del modal) y "El resto (16)" se cortaba en el celu; los arreglé (y "tareas de" pasó a "de", más corto y se lee igual). Los tests nuevos los escribí antes de mirar la pantalla pero después del código, así que no los vi fallar "en rojo" primero (las funciones no existían: habrían fallado).
+**Tests:** +8 (×2 proyectos, 2 de un solo proyecto) en `tests/series-tramos.spec.js`: tu caso exacto al crear (31 tareas: 10×60, 2×90, 16×120, 3×180, y sobrevive a recargar), tramos que no cierran, la cadena de rangos + toques en el editor (y deshacer), tramos en el editor con vista previa, editar el tiempo en el lugar, Shift+clic (desktop), toque largo (celu) y `parseDur`.
+**Capturas:** [crear, celu claro](capturas/C4-crear-mobile-light.png) · [crear, celu oscuro](capturas/C4-crear-mobile-dark.png) · [crear, desktop oscuro](capturas/C4-crear-desktop-dark.png) · [editor, celu oscuro](capturas/C4-editor-mobile-dark.png) · [editor, desktop claro](capturas/C4-editor-desktop-light.png)
+
+### C5 · Arrastrar para ordenar, fluido
+
+**Plan:** confirmar las causas que había anotado (en la compu) y rehacer el arrastre para que cada movimiento del mouse o del dedo sea barato.
+**Causas confirmadas leyendo el código:** `.task{transition:.12s}` animaba **todas** las propiedades (incluida la línea de destino, que se borraba y volvía a poner en cada `pointermove`, así que parpadeaba); el fantasma se movía con `left/top` (fuerza layout); en cada movimiento había `querySelectorAll` + `elementFromPoint` + `getBoundingClientRect`; el `:hover` de las filas que pasaban bajo el cursor animaba fondo y botones; y con mouse solo se podía agarrar la manija ⣿, que es chiquita y casi transparente.
+**Decisiones:**
+- **Se mide una sola vez**, al empezar: zonas y filas en coordenadas de documento (así el scroll no las invalida). Después, cada movimiento solo guarda la posición y **un único `requestAnimationFrame` por cuadro** mueve el fantasma con `transform: translate3d()` y calcula el destino con esos números. Las clases y los desplazamientos se tocan **solo si cambió el destino**.
+- **Como en iOS:** en la misma lista, las demás filas **se corren animadas** (200 ms) para abrir el hueco donde va a caer; al soltar, el fantasma **se asienta** en el lugar nuevo. Entre Hoy y Mañana dejé la línea de destino en vez de correr filas: correr las de Mañana las hacía pisar lo que hay abajo de la tarjeta.
+- **Con mouse se agarra de toda la fila** con un umbral de 5 px: un clic sin mover sigue abriendo el editor.
+- **iPhone:** iba a agregar un `touchmove` no pasivo para frenar el scroll con la fila levantada, pero al hacer S1b vi que **ya existía** (de B4) y lo saqué para no duplicarlo. En iOS lo que más pesaba era el trabajo por movimiento (layout forzado en cada evento), que ahora no está.
+- Transiciones solo de las propiedades necesarias, sin `:hover` durante el arrastre, y con `prefers-reduced-motion` sin animaciones.
+**Salió mal / intentos fallidos:** un test viejo (una tarea que se repite no pasa a Mañana) falló: después de soltar escondía la fila nueva con `visibility:hidden` mientras se asentaba el fantasma, y un segundo arrastre inmediato no la podía agarrar. Cambié a `opacity:0`. **Honestidad sobre el celu:** los tests táctiles pasan también con el código viejo, porque el Chrome de los tests no reproduce cómo Safari se queda con el gesto; el arreglo de iOS está hecho pero **solo vos lo podés confirmar en el iPhone**.
+**Tests:** +5 en `tests/arrastre.spec.js` (3 desktop, 2 celu): 4 abajo y 2 arriba desde el cuerpo de la fila + clic sigue abriendo el editor; 60 movimientos con **≤ 2 llamadas** a `getBoundingClientRect` (antes, una o más por movimiento), fantasma por `transform` y filas corridas; auto-scroll al borde y soltar abajo; con el dedo 4 abajo y 2 arriba sin `pointercancel` ni scroll; un scroll normal no levanta nada. Los 3 de desktop fallan con el código anterior.
+**Videos:** [arrastre en la compu](capturas/C5-arrastre-desktop.webm) · [arrastre en el celu](capturas/C5-arrastre-mobile.webm) (se generan con `node tests/tools/video-arrastre.js`).
+
+### S1a · Sincronización: el motor (sin pantalla todavía)
+
+**Por qué Cloudflare y no Firebase/Supabase:** Firebase o Supabase te obligan a crear una cuenta y un proyecto nuevo, copiar claves en la app y mantener otra cosa más. Aula ya vive en Cloudflare Pages: una **Pages Function** + un **KV** son parte del mismo proyecto, gratis para este uso, y no hay servidor aparte. Lo que falta de tu lado son 2 minutos de clics (queda en el resumen de la noche cuando esté lista la pantalla, S1c).
+**Plan:** partí S1 en tres: **S1a** motor + función, **S1b** cliente que sincroniza solo, **S1c** pantalla de Configuración con código y QR. Esta corrida hice S1a.
+**Decisiones:**
+- **Fusión por elemento, no "el último pisa todo".** Cada tarea, parcial, materia, nota, sesión… tiene una marca "cambió a tal hora"; los ajustes, por campo (cambiar el tema en el celu no pisa el color de acento que cambiaste en la compu); `dayLog`/`dayPlan`, por día. Por elemento gana lo más nuevo.
+- **Lápidas:** lo borrado deja "se borró a tal hora", así un borrado en el celu no revive desde la compu. Si alguien lo edita **después** del borrado en el otro lado, gana la edición.
+- **No toqué cada lugar que edita o borra** (son decenas y sería fácil olvidarse uno): al guardar, la app compara cada elemento con cómo estaba (un hash en memoria) y marca lo que cambió o desapareció. Así cualquier código nuevo (G1, E1…) queda sincronizado sin hacer nada.
+- **Las marcas no van adentro de cada tarea** sino en `state.sync` aparte: tus datos quedan exactamente iguales (el test lo verifica tarea por tarea).
+- **Lo que es de cada dispositivo no viaja:** `meta` (último guardado, copias) y el temporizador viejo.
+- **Datos de antes de la sincronización** (los tuyos) no tienen marca y cuentan como "lo más viejo": la primera vez se **suman** los dos lados, no se reemplaza nada. Si un mismo elemento existe distinto en los dos sin marca, los dos dispositivos eligen el mismo (regla fija), para terminar iguales.
+- **La función** (`functions/api/sync.js`): `GET`/`PUT` con el código en `Authorization: Bearer`. En KV se guarda bajo el **SHA-256 del código**: sin el código no hay cómo leer nada. `PUT` lleva la versión sobre la que se fusionó: si otro dispositivo escribió en el medio responde **409** con lo nuevo y la app vuelve a fusionar. 5 MB máximo (tus datos hoy son mucho menos). Si el KV no está vinculado responde **503 "no-kv"**, que la app va a mostrar como "falta activar en Cloudflare". KV no es transaccional: con dos dispositivos de una persona alcanza, y si dos escrituras se pisaran, la siguiente pasada vuelve a fusionar.
+- **Migración al esquema 4:** solo agrega `state.sync` vacío; no toca ningún dato. Con copia previa automática en "Copias de seguridad".
+**Salió mal / intentos fallidos:** el test de "los dos lados terminan iguales" falló porque comparaba las lápidas como texto y el orden de las claves era distinto (el contenido era igual); lo comparo ordenado.
+**Tests:** +6: `tests/sync-fn.spec.js` (2, en Node con un KV falso: GET/PUT, conflicto 409, clave hasheada, 401 con código inválido, otro código no ve nada, 503 sin KV, JSON roto, 413 por tamaño) y `tests/sync-motor.spec.js` (4 ×2: migración del fixture tarea por tarea con copia previa e idempotente; marcas y lápidas al guardar; fusión con 8 casos cruzados y simetría; editar después de borrar, y primera vez con datos en los dos lados).
+
+### S1b · Sincronización: el cliente
+
+**Plan:** que la app sincronice sola, sin botones, y que nunca pierda nada aunque estés sin señal.
+**Decisiones:**
+- **Una pasada** = bajar lo que hay en Cloudflare → fusionar con lo de este dispositivo → subir **solo si algo cambió**. Entre fusionar y aplicar no hay espera (la red va antes), así que si estás escribiendo justo en ese momento no se pisa. Subir solo si cambió importa: el KV gratis da ~1000 escrituras por día.
+- **Cuándo:** al abrir la app, al volver a primer plano, cuando vuelve la conexión, ~4 s después de cada cambio y cada 1 min con la app abierta.
+- **El código de sincronización vive solo en el dispositivo** (`localStorage`), nunca dentro de tus datos, copias ni exportaciones.
+- **Indicador:** el "todo guardado" de arriba pasa a "sincronizado", "sincronizando…", "sin conexión · se sube después" (punto amarillo), "falta activar la sincronización" (si Cloudflare no tiene el KV) o "código inválido".
+- **Antes de la primera fusión** se guarda una copia automática ("Antes de sincronizar por primera vez") en Copias de seguridad.
+- **Si otro dispositivo escribió en el medio** (409), se baja lo nuevo, se fusiona otra vez y se reintenta (hasta 4 veces).
+- **El service worker no toca `/api/`**: sin eso, el GET de la sincronización quedaba guardado en el caché para siempre y nunca vería cambios del otro lado (lo encontré leyendo `sw.js`; test nuevo).
+- La función ahora responde **200 con `data: null`** cuando todavía no hay nada (antes 404): el navegador anota los 404 como error de consola y la regla es cero errores.
+**Salió mal / intentos fallidos:** el test "dos dispositivos" encontró dos problemas reales: (1) **materias duplicadas**: un dispositivo nuevo arranca con las 10 materias de ejemplo con ids al azar, así que al sincronizar por primera vez quedaban 20. Ahora, en la primera fusión, si hay dos materias con el mismo nombre queda una (la que tiene cosas vinculadas; si empatan, una regla fija para que los dos dispositivos elijan la misma) y lo vinculado a la otra se pasa a la que queda. (2) **subidas de más**: cada lado ordenaba las listas distinto y se "corregían" mutuamente; ahora el orden lo da lo que ya está en el servidor.
+**Tests:** +5 en `tests/sync-app.spec.js` (dos contextos de navegador contra la función real con un KV falso y la red mockeada): crear/editar/borrar cruzado → iguales, lo borrado no revive y otra vuelta no sube nada; primera vez con datos en los dos lados (se suman, materias sin duplicar, tareas vinculadas bien); sin conexión no se pierde nada y sube solo al volver; conflicto 409 en el medio; sin KV avisa y la app sigue igual. +1 en `tests/sw.spec.js`.
+
+### S1c · Sincronización: la pantalla
+
+**Decisiones:**
+- Tarjeta **arriba de todo en Configuración** ("Sincronizar compu y celu"): apagada muestra **Activar en este dispositivo** y **Ya tengo un código**, más el paso a paso de Cloudflare plegado. Prendida: estado con punto de color y "última sincronización hace X", **QR**, el código en grupos de 4 (se selecciona entero con un toque), **Copiar código**, **Copiar link**, y abajo **Cambiar código** / **Desconectar** (los dos con confirmación).
+- **Código:** 128 bits al azar (`crypto.getRandomValues`), 22 caracteres. Al pegar se aceptan espacios o el link entero.
+- **QR propio, sin librerías:** escribí un generador (modo byte, corrección M, versiones 1–10). Lo verifiqué **decodificándolo con un lector real** (OpenCV) para 5, 20, 60, 100, 150 y 200 caracteres y el link real: todos leyeron bien. El test en `npm test` verifica la estructura (patrones de esquina, timing, módulo oscuro, versión).
+- **El link del QR** (`…/#/sync?k=…`) abre Configuración ofreciendo "Conectar este dispositivo", y **saca el código de la barra de direcciones**.
+- **iPhone, aviso importante:** la app instalada en la pantalla de inicio tiene sus datos **separados** de Safari. El QR abre Safari, no la app instalada. Por eso la pantalla lo dice y ofrece copiar/pegar el código. Lo dejé escrito también en [`docs/SINCRONIZAR.md`](SINCRONIZAR.md).
+**Salió mal / intentos fallidos:** ninguno serio; el primer QR leyó bien a la primera (tenía miedo con la información de versión de la 7 en adelante, por eso probé hasta 200 caracteres).
+**Tests:** +4 (×2) en `tests/sync-ui.spec.js`: activar → estado, QR y código (y que el código **no** quede dentro de tus datos), desconectar con confirmación; el link del QR; pegar código con espacios, el link entero o basura; estructura del QR.
+**Capturas:** [celu, conectado](capturas/S1c-on-mobile-light.png) · [celu oscuro, conectado](capturas/S1c-on-mobile-dark.png) · [desktop oscuro, sin activar](capturas/S1c-off-desktop-dark.png) · [desktop claro, conectado](capturas/S1c-on-desktop-light.png)
+
+**Commits:** `93de8a1` C4 · `78c52ae` C5 · `9ac5522` S1a · `bc4c6b9` S1b · el de S1c y cierre.
+**Tests de la corrida:** `npm test` final: **240 pasaron, 0 fallaron** (30 saltados a propósito: son de un solo proyecto, desktop o mobile).
+
+**Para Bauti:**
+- **Sincronización: falta un paso tuyo en Cloudflare** (2 minutos, está en [`docs/SINCRONIZAR.md`](SINCRONIZAR.md) y en la propia pantalla). Hasta que lo hagas, la app anda exactamente igual que antes y la tarjeta te dice "falta activar".
+- **Ojo con el iPhone:** si usás Aula desde la pantalla de inicio, el QR abre Safari (que tiene sus propios datos, separados de la app instalada). Usá **Copiar código** y pegalo en la app del celu.
+- Probá en la **compu** arrastrar tareas en Hoy agarrándolas de cualquier parte de la fila: decime si ahora se siente fluido. En el iPhone también, porque ahí no lo puedo probar de verdad.
+- Probá crear "Estudiar X" todos los días por un mes con **Tiempos distintos por tramos**, y en el editor de la serie la cadena "De la 1 a la 10 → 1 h → (salta solo a la 11) …".
+
+---
+
 ## Corrida 08:06–08:40 (hora ARG) — X5, X6, X7 y cierre de la noche
 
 **Resumen de la corrida:** era la última corrida (arrancó después de las 08:00), así que hice cosas chicas y seguras y reservé tiempo para publicar en `main`. Encontré **un problema serio que dejó la corrida anterior**: `sw.js` estaba **vacío** (X6). Además arreglé los botones partidos del detalle del parcial en el celu (X5) y un bug de foco que hacía fallar un test de series 1 de cada 3 veces (X7). Tests: de 190 a 196 pasaron, 0 fallaron. Versión 2.27.0 → 2.28.0. Sin cambios de forma de datos.

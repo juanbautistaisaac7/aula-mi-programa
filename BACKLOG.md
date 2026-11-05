@@ -150,10 +150,10 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
   - Medición: un test que arrastra con 60 movimientos y verifica que el handler de movimiento no fuerza layout síncrono (por ejemplo, contando llamadas a `getBoundingClientRect` durante el arrastre: tienen que ser O(1) por frame) y que el fantasma se mueve por `transform`.
   - **Video** del arrastre en mobile y desktop (Playwright `recordVideo`) en `docs/capturas/C5-*.webm`, para que Bauti lo vea.
 
-- [~] **S1 · Compu y celu sincronizados** *(FUNDAMENTAL según Bauti; grande: partirlo en S1a/S1b/S1c; datos sagrados)*
+- [x] **S1 · Compu y celu sincronizados** *(FUNDAMENTAL según Bauti; grande: partirlo en S1a/S1b/S1c; datos sagrados)*
   - [x] **S1a** · Motor: marcas de cambio (`state.sync.stamps`) y lápidas (`state.sync.tombs`) calculadas solas al guardar (sin tocar cada lugar que edita o borra), fusión por elemento `syncMerge`, migración al esquema 4 con copia previa, y la función `functions/api/sync.js` (GET/PUT con versión, clave hasheada, 401/404/409/413/503) con tests en Node.
   - [x] **S1b** · Cliente: `syncNow()` (bajar, fusionar, subir; reintento ante 409), disparadores (al abrir, al volver a primer plano, unos segundos después de cada cambio, cada ~1 min), indicador "sincronizado / sin conexión / falta activar", copia de seguridad antes de la primera fusión. Tests con dos contextos de navegador y la red mockeada (`page.route`).
-  - [ ] **S1c** · Pantalla en Configuración: activar (código al azar de 128+ bits), QR (generador propio, sin CDN) + copiar código, "ya tengo un código" (pegar o abrir el link del QR), desconectar, cambiar código, y el paso a paso de Cloudflare. Capturas.
+  - [x] **S1c** · Pantalla en Configuración: activar (código al azar de 128+ bits), QR (generador propio, sin CDN) + copiar código, "ya tengo un código" (pegar o abrir el link del QR), desconectar, cambiar código, y el paso a paso de Cloudflare. Capturas.
   Pedido: *"quiero que estén conectados ambos, sino no tiene sentido, ambos dispositivos digo, nose si se maneja con cuenta o como eso, pero eso anotalo también porque es fundamental"*.
   Contexto: hoy cada dispositivo tiene sus datos en su IndexedDB; Bauti abrió la app en el iPhone y la vio vacía. La app ya está publicada en **Cloudflare Pages** (`aula-pi0.pages.dev`, conectada al repo, se despliega sola desde `main`).
   Propuesta (el agente puede mejorarla documentando por qué):

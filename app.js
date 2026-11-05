@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.32.0";
+const APP_VERSION = "2.33.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -361,7 +361,7 @@ const SYNC_TXT = { busy: "sincronizando…", ok: "sincronizado", offline: "sin c
 function syncSetStatus(kind) {
   syncStat = { kind, at: Date.now() };
   syncPaint();
-  if (route.view === "settings" && typeof refreshSyncCard === "function") refreshSyncCard();
+  if (route.view === "config") refreshSyncCard();
 }
 function syncPaint() {
   const el = byId("saveInd"), t = byId("saveTxt"); if (!el || !t || el.classList.contains("saving")) return;
@@ -466,6 +466,187 @@ function syncInit() {
   if (!syncOn()) return;
   setTimeout(syncNow, 800);
   setInterval(() => { if (document.visibilityState === "visible") syncNow(); }, 60000);
+}
+
+/* ============================ QR (S1c) ============================
+   Generador de códigos QR mínimo, sin dependencias: modo byte, corrección M,
+   versiones 1 a 10 (hasta 213 bytes; el link de sincronización usa ~60).
+   Basado en el estándar ISO/IEC 18004 (mismo esquema que la implementación de Nayuki). */
+const QR_EC_M = [null, [10, 1, 16, 0, 0], [16, 1, 28, 0, 0], [26, 1, 44, 0, 0], [18, 2, 32, 0, 0], [24, 2, 43, 0, 0],
+  [16, 4, 27, 0, 0], [18, 4, 31, 0, 0], [22, 2, 38, 2, 39], [22, 3, 36, 2, 37], [26, 4, 43, 1, 44]];
+const QR_ALIGN = [null, [], [6, 18], [6, 22], [6, 26], [6, 30], [6, 34], [6, 22, 38], [6, 24, 42], [6, 26, 46], [6, 28, 50]];
+function qrMul(x, y) { let z = 0; for (let i = 7; i >= 0; i--) { z = (z << 1) ^ ((z >>> 7) * 0x11D); z ^= ((y >>> i) & 1) * x; } return z & 255; }
+function qrDivisor(deg) {
+  const r = new Array(deg).fill(0); r[deg - 1] = 1; let root = 1;
+  for (let i = 0; i < deg; i++) { for (let j = 0; j < deg; j++) { r[j] = qrMul(r[j], root); if (j + 1 < deg) r[j] ^= r[j + 1]; } root = qrMul(root, 2); }
+  return r;
+}
+function qrRemainder(data, div) {
+  const r = div.map(() => 0);
+  for (const b of data) { const f = b ^ r.shift(); r.push(0); div.forEach((c, i) => { r[i] ^= qrMul(c, f); }); }
+  return r;
+}
+function qrEncode(text) {
+  const bytes = [...new TextEncoder().encode(String(text))];
+  let ver = 0;
+  for (let v = 1; v <= 10; v++) { const e = QR_EC_M[v]; if (e[1] * e[2] + e[3] * e[4] >= bytes.length + (v < 10 ? 2 : 3)) { ver = v; break; } }
+  if (!ver) throw new Error("Texto demasiado largo para el QR");
+  const [ecLen, b1, d1, b2, d2] = QR_EC_M[ver], cap = b1 * d1 + b2 * d2;
+  // bits: modo byte (0100) + largo + datos + terminador, relleno a bytes y con 0xEC/0x11
+  const bits = [];
+  const put = (val, n) => { for (let i = n - 1; i >= 0; i--) bits.push((val >>> i) & 1); };
+  put(4, 4); put(bytes.length, ver < 10 ? 8 : 16); bytes.forEach(b => put(b, 8));
+  put(0, Math.min(4, cap * 8 - bits.length));
+  while (bits.length % 8) bits.push(0);
+  const data = [];
+  for (let i = 0; i < bits.length; i += 8) data.push(bits.slice(i, i + 8).reduce((a, b) => a * 2 + b, 0));
+  for (let p = 0; data.length < cap; p ^= 1) data.push(p ? 0x11 : 0xEC);
+  // bloques + corrección de errores, intercalados
+  const div = qrDivisor(ecLen), blocks = [];
+  let k = 0;
+  for (let i = 0; i < b1 + b2; i++) { const n = i < b1 ? d1 : d2; const d = data.slice(k, k + n); k += n; blocks.push({ d, e: qrRemainder(d, div) }); }
+  const cw = [];
+  for (let i = 0; i < Math.max(d1, d2); i++) blocks.forEach(b => { if (i < b.d.length) cw.push(b.d[i]); });
+  for (let i = 0; i < ecLen; i++) blocks.forEach(b => cw.push(b.e[i]));
+  // matriz
+  const size = ver * 4 + 17;
+  const M = Array.from({ length: size }, () => new Array(size).fill(false));
+  const F = Array.from({ length: size }, () => new Array(size).fill(false));
+  const set = (x, y, dark) => { M[y][x] = dark; F[y][x] = true; };
+  for (let i = 0; i < size; i++) { set(6, i, i % 2 === 0); set(i, 6, i % 2 === 0); }
+  const finder = (cx, cy) => { for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) { const x = cx + dx, y = cy + dy, d = Math.max(Math.abs(dx), Math.abs(dy)); if (x >= 0 && x < size && y >= 0 && y < size) set(x, y, d !== 2 && d !== 4); } };
+  finder(3, 3); finder(size - 4, 3); finder(3, size - 4);
+  const al = QR_ALIGN[ver], na = al.length;
+  for (let i = 0; i < na; i++) for (let j = 0; j < na; j++) {
+    if ((i === 0 && j === 0) || (i === 0 && j === na - 1) || (i === na - 1 && j === 0)) continue;
+    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) set(al[i] + dx, al[j] + dy, Math.max(Math.abs(dx), Math.abs(dy)) !== 1);
+  }
+  const drawFormat = mask => {
+    const d = (0 << 3) | mask; let rem = d; // nivel M = 00
+    for (let i = 0; i < 10; i++) rem = (rem << 1) ^ ((rem >>> 9) * 0x537);
+    const b = ((d << 10) | rem) ^ 0x5412, g = i => ((b >>> i) & 1) === 1;
+    for (let i = 0; i <= 5; i++) set(8, i, g(i));
+    set(8, 7, g(6)); set(8, 8, g(7)); set(7, 8, g(8));
+    for (let i = 9; i < 15; i++) set(14 - i, 8, g(i));
+    for (let i = 0; i < 8; i++) set(size - 1 - i, 8, g(i));
+    for (let i = 8; i < 15; i++) set(8, size - 15 + i, g(i));
+    set(8, size - 8, true);
+  };
+  drawFormat(0); // reserva el lugar
+  if (ver >= 7) {
+    let rem = ver; for (let i = 0; i < 12; i++) rem = (rem << 1) ^ ((rem >>> 11) * 0x1F25);
+    const b = (ver << 12) | rem;
+    for (let i = 0; i < 18; i++) { const c = ((b >>> i) & 1) === 1, a = size - 11 + i % 3, bb = Math.floor(i / 3); set(a, bb, c); set(bb, a, c); }
+  }
+  let bi = 0;
+  for (let right = size - 1; right >= 1; right -= 2) {
+    if (right === 6) right = 5;
+    for (let vert = 0; vert < size; vert++) for (let j = 0; j < 2; j++) {
+      const x = right - j, up = ((right + 1) & 2) === 0, y = up ? size - 1 - vert : vert;
+      if (!F[y][x] && bi < cw.length * 8) { M[y][x] = ((cw[bi >>> 3] >>> (7 - (bi & 7))) & 1) === 1; bi++; }
+    }
+  }
+  const maskFn = [(x, y) => (x + y) % 2 === 0, (x, y) => y % 2 === 0, x => x % 3 === 0, (x, y) => (x + y) % 3 === 0,
+    (x, y) => (Math.floor(x / 3) + Math.floor(y / 2)) % 2 === 0, (x, y) => x * y % 2 + x * y % 3 === 0,
+    (x, y) => (x * y % 2 + x * y % 3) % 2 === 0, (x, y) => ((x + y) % 2 + x * y % 3) % 2 === 0];
+  const applyMask = m => { for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) if (!F[y][x] && maskFn[m](x, y)) M[y][x] = !M[y][x]; };
+  const penalty = () => {
+    let p = 0, dark = 0;
+    const line = get => { let run = 1, s = ""; for (let i = 0; i < size; i++) { s += get(i) ? "1" : "0"; if (i && get(i) === get(i - 1)) { run++; if (run === 5) p += 3; else if (run > 5) p++; } else run = 1; }
+      for (const pat of ["10111010000", "00001011101"]) { let at = s.indexOf(pat); while (at >= 0) { p += 40; at = s.indexOf(pat, at + 1); } } };
+    for (let y = 0; y < size; y++) line(x => M[y][x]);
+    for (let x = 0; x < size; x++) line(y => M[y][x]);
+    for (let y = 0; y < size - 1; y++) for (let x = 0; x < size - 1; x++) { const c = M[y][x]; if (c === M[y][x + 1] && c === M[y + 1][x] && c === M[y + 1][x + 1]) p += 3; }
+    for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) if (M[y][x]) dark++;
+    p += Math.floor(Math.abs(dark * 20 - size * size * 10) / (size * size)) * 10;
+    return p;
+  };
+  let best = 0, bestP = Infinity;
+  for (let m = 0; m < 8; m++) { applyMask(m); drawFormat(m); const pe = penalty(); if (pe < bestP) { bestP = pe; best = m; } applyMask(m); }
+  applyMask(best); drawFormat(best);
+  return { size, modules: M, version: ver, mask: best };
+}
+/* SVG con zona de silencio de 4 módulos (siempre negro sobre blanco: los lectores lo necesitan) */
+function qrSVG(text, px) {
+  const q = qrEncode(text), n = q.size + 8;
+  let d = "";
+  for (let y = 0; y < q.size; y++) for (let x = 0; x < q.size; x++) if (q.modules[y][x]) d += `M${x + 4} ${y + 4}h1v1h-1z`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${n} ${n}" width="${px || 200}" height="${px || 200}" shape-rendering="crispEdges" role="img" aria-label="Código QR"><rect width="${n}" height="${n}" fill="#fff"/><path d="${d}" fill="#000"/></svg>`;
+}
+
+/* ===================== SINCRONIZACIÓN (S1c) — pantalla =====================
+   Tarjeta en Configuración. Sin cuentas: un código al azar (128 bits) que se pasa
+   al otro dispositivo con un QR (abre el link en el celu) o copiándolo. */
+function syncLink() { return location.origin + location.pathname + "#/sync?k=" + encodeURIComponent(syncCfg ? syncCfg.key : ""); }
+function syncPretty(k) { return String(k || "").replace(/(.{4})/g, "$1 ").trim(); }
+function syncAgo(ts) {
+  if (!ts) return "";
+  const m = Math.round((Date.now() - ts) / 60000);
+  return m < 1 ? "recién" : m < 60 ? "hace " + m + " min" : m < 1440 ? "hace " + Math.round(m / 60) + " h" : "el " + fmtD(iso(new Date(ts)));
+}
+const SYNC_STEPS = `<ol class="syncsteps">
+  <li>Entrá a <b>dash.cloudflare.com</b> → <b>Storage &amp; Databases → KV</b> → <b>Create namespace</b>. Nombre: <code>aula-sync</code> → <b>Create</b>.</li>
+  <li>Andá a <b>Workers &amp; Pages</b> → el proyecto de Aula → <b>Settings → Bindings</b> → <b>Add</b> → <b>KV namespace</b>. <b>Variable name: <code>AULA_KV</code></b> (exacto, en mayúsculas) y elegí <code>aula-sync</code> → <b>Save</b>.</li>
+  <li>En <b>Deployments</b>, en el último, tocá <b>⋯ → Retry deployment</b> (así toma el cambio).</li>
+  <li>Volvé acá en la compu y tocá <b>Activar</b>. Después, en el celu, escaneá el QR o pegá el código.</li>
+</ol>`;
+function syncCardHTML() {
+  const on = syncOn(), k = syncStat.kind;
+  let h = `<h3>Sincronizar compu y celu</h3>`;
+  if (ui.syncInvite && !(on && syncCfg.key === ui.syncInvite)) {
+    h += `<div class="syncinvite"><p><b>Abriste un link de sincronización.</b> ¿Conectar este dispositivo? Lo que tengas acá se suma a lo del otro (no se borra nada, y antes se guarda una copia).</p>
+      <div class="syncbtns"><button class="btn primary" onclick="syncAcceptInvite()">Conectar este dispositivo</button><button class="btn" onclick="ui.syncInvite=null;refreshSyncCard()">Ahora no</button></div></div>`;
+  }
+  if (!on) {
+    h += `<p class="tiny syncintro">Hoy cada dispositivo guarda sus datos por separado. Conectalos con un código y se mantienen iguales solos, sin cuentas ni contraseñas.</p>
+      <div class="syncbtns"><button class="btn primary" onclick="syncActivate()">Activar en este dispositivo</button>
+        <button class="btn" onclick="ui.syncPaste=!ui.syncPaste;refreshSyncCard()" aria-expanded="${!!ui.syncPaste}">Ya tengo un código</button></div>
+      ${ui.syncPaste ? `<div class="syncpaste"><label for="sync_code">Código del otro dispositivo</label>
+        <div class="syncrow"><input id="sync_code" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Pegalo acá" onkeydown="if(event.key==='Enter')syncPasteGo()">
+        <button class="btn primary" onclick="syncPasteGo()">Conectar</button></div></div>` : ""}
+      <details class="syncsetup"><summary>Antes, una sola vez: activarlo en Cloudflare (2 minutos)</summary>${SYNC_STEPS}</details>`;
+    return h;
+  }
+  const dot = { ok: "ok", busy: "busy", offline: "warn", nokv: "warn", newer: "warn", badkey: "bad", error: "bad" }[k] || "ok";
+  h += `<div class="syncstat"><span class="syncdot ${dot}"></span><div class="grow"><b id="sync_stattxt">${esc(k === "off" ? "Conectado" : capitalize(SYNC_TXT[k] || "conectado"))}</b>
+      <div class="tiny">${syncCfg.lastSync ? "Última sincronización: " + syncAgo(syncCfg.lastSync) : "Todavía no se sincronizó"}</div></div>
+      <button class="btn sm" onclick="syncNow()" ${k === "busy" ? "disabled" : ""}>Sincronizar ahora</button></div>`;
+  if (k === "nokv") h += `<div class="syncwarn"><b>Falta un paso en Cloudflare.</b> Mientras tanto la app anda igual que siempre; tus datos están guardados en este dispositivo.${SYNC_STEPS}</div>`;
+  if (k === "newer") h += `<div class="syncwarn">El otro dispositivo tiene una versión más nueva de Aula. Cerrá y abrí la app para actualizarla.</div>`;
+  h += `<div class="syncshare"><div class="syncqr">${qrSVG(syncLink(), 168)}</div>
+      <div class="grow"><b>Conectar otro dispositivo</b>
+        <p class="tiny">En el celu, escaneá el QR con la cámara. <b>Si usás Aula desde la pantalla de inicio</b>, el link abre Safari y no la app: en ese caso copiá el código y pegalo en la app, en Configuración → <i>Ya tengo un código</i>.</p>
+        <div class="synccode" aria-label="Código de sincronización">${esc(syncPretty(syncCfg.key))}</div>
+        <div class="syncbtns"><button class="btn sm" onclick="syncCopy(syncCfg.key,'Código copiado')">Copiar código</button><button class="btn sm" onclick="syncCopy(syncLink(),'Link copiado')">Copiar link</button></div>
+      </div></div>
+    <p class="tiny">Cualquiera con este código ve tus datos: no lo compartas. Si se filtró, cambialo.</p>
+    <div class="syncbtns end"><button class="btn sm ghost" onclick="syncAskChange()">Cambiar código</button><button class="btn sm danger" onclick="syncAskOff()">Desconectar este dispositivo</button></div>`;
+  return h;
+}
+function refreshSyncCard() { const c = byId("synccard"); if (c) c.innerHTML = syncCardHTML(); }
+function syncActivate() { syncConnect(syncNewKey()); refreshSyncCard(); toast("Sincronización activada en este dispositivo"); }
+function syncPasteGo() {
+  const v = (byId("sync_code") || {}).value || "";
+  const m = /[?&#]k=([A-Za-z0-9_-]+)/.exec(v); // también acepta el link entero
+  if (!syncConnect(m ? m[1] : v)) { toast("Ese código no parece válido: copialo de nuevo desde el otro dispositivo"); return; }
+  ui.syncPaste = false; refreshSyncCard(); toast("Conectado. Trayendo tus datos…");
+}
+function syncAcceptInvite() { const k = ui.syncInvite; ui.syncInvite = null; if (syncConnect(k)) toast("Conectado. Trayendo tus datos…"); refreshSyncCard(); }
+async function syncCopy(text, msg) {
+  try { await navigator.clipboard.writeText(text); toast(msg); }
+  catch (e) {
+    const t = document.createElement("textarea"); t.value = text; t.setAttribute("readonly", ""); t.style.position = "fixed"; t.style.opacity = "0";
+    document.body.appendChild(t); t.select(); let ok = false; try { ok = document.execCommand("copy"); } catch (e2) {}
+    t.remove(); toast(ok ? msg : "No se pudo copiar: mantené apretado el código para copiarlo");
+  }
+}
+function syncAskOff() {
+  askConfirm({ title: "Desconectar este dispositivo", body: "Tus datos se quedan acá, pero dejan de sincronizarse con el otro. Podés volver a conectarlo con el código cuando quieras.", okLabel: "Desconectar",
+    onOk: () => { syncDisconnect(); refreshSyncCard(); toast("Este dispositivo dejó de sincronizarse"); } });
+}
+function syncAskChange() {
+  askConfirm({ title: "Cambiar código", body: "Se crea un código nuevo y el viejo deja de servir. Después vas a tener que conectar el otro dispositivo de nuevo (QR o código).", okLabel: "Cambiar código",
+    onOk: () => { syncCfg = { key: syncNewKey(), version: 0, merged: true, since: Date.now() }; syncSaveCfg(); syncNow(); refreshSyncCard(); toast("Código nuevo listo: conectá el otro dispositivo"); } });
 }
 
 /* ===================== MIGRACIONES VERSIONADAS =====================
@@ -2484,6 +2665,11 @@ const VIEWS = [
 ];
 function go(view, id) { location.hash = "#/" + view + (id ? "/" + id : ""); }
 function parseHash() {
+  const inv = /^#\/sync\?(?:.*&)?k=([A-Za-z0-9_-]+)/.exec(location.hash || "");
+  if (inv) { // link del QR de sincronización: se ofrece conectar en Configuración
+    ui.syncInvite = inv[1];
+    try { history.replaceState(null, "", location.pathname + location.search + "#/config"); } catch (e) { location.hash = "#/config"; }
+  }
   const h = (location.hash || "").replace(/^#\/?/, "").split("/");
   route.view = h[0] || "home"; route.id = h[1] || null;
   if (!VIEWS.some(v => v[0] === route.view) && !["subject", "eval", "project", "list"].includes(route.view)) route.view = "home";
@@ -4170,6 +4356,7 @@ function viewConfig() {
   const st = state.settings;
   const chk = v => v ? "checked" : "";
   return `<div class="vhead"><h2>Configuración</h2></div>
+  <div class="card synccard" id="synccard">${syncCardHTML()}</div>
   <div class="grid2">
   <div class="card" style="margin:0"><h3>Apariencia</h3>
     <label class="tiny" style="font-weight:700">Tema</label>
