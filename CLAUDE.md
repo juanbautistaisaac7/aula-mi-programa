@@ -48,6 +48,8 @@ Cada corrida es una sesión nueva sin memoria de las anteriores. **La memoria so
 
 **Si el backlog está vacío (o solo quedan `[!]`), no pares: hacé una pasada de calidad.** Usá la app como Bauti desde el celular (Playwright mobile): creá materias, parciales y tareas, armá una serie, mové tareas, completalas tarde a la noche, etc. Buscá bugs, fricciones, cosas feas o confusas, casos borde sin test. Anotá lo que encuentres como ítems nuevos y arreglalos. Repetí hasta que no encuentres nada que valga la pena. **Si la app ya está realmente terminada** (backlog completo y la pasada de calidad no encuentra nada importante), no inventes trabajo: hacé el cierre de la noche (sección "Última corrida") aunque sea temprano, creá `.agente/TERMINADO` con el motivo, commiteá y pusheá. Las corridas siguientes van a salir enseguida.
 
+**Permiso permanente de Bauti (5/11):** *"si vos encontrás algo más también hacelo, siempre y cuando sea para mejor y esté testeado"*. O sea: si mientras trabajás ves un bug, algo confuso, feo o mejorable, **arreglalo** (con su test y su captura si se ve) sin esperar a que lo pida, y anotalo en la bitácora y en "Agregados por el agente". No cambies a tu gusto cosas que Bauti pidió explícitamente de una forma, y no metas funciones grandes nuevas sin anotarlas primero en el backlog.
+
 Podés agregar ítems nuevos al backlog si encontrás algo necesario (bugs, mejoras de UX, deuda técnica que frena). Ponelos en la sección "Agregados por el agente" con su porqué. No te desvíes a cosas cosméticas menores mientras queden pendientes ítems importantes.
 
 ## Bitácora (`docs/BITACORA.md`)

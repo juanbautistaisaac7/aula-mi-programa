@@ -154,6 +154,14 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
   - No choca con lo que ya existe: el scroll vertical (si el gesto empieza vertical, es scroll), el mantener apretado para arrastrar (C5), tocar para abrir y el pull-to-refresh (S2). Pista de iOS: en Apple deslizar a la izquierda es borrar; acá va a la **derecha porque lo pidió Bauti**. Evaluar y proponer en la bitácora usar el otro lado (izquierda) para "Mover a…" o completar, sin hacerlo si no aporta.
   - Tests con touch emulado (borra, cancela, deshacer, serie, scroll vertical no borra) y video en `docs/capturas/M1-*.webm`.
 
+- [ ] **Q1 · Hallazgos de la revisión del 5/11 por la tarde (celu, con el fixture)** — hacer después de M1. Capturas tomadas en mobile con datos de ejemplo:
+  - **Títulos de tareas que se cortan a la mitad del ancho** en Hoy y en Inicio ("Leer capítulo / 3", "Repasar / unidad 3", "Leer apunte de / límites") aunque sobra lugar a la derecha. Parece que volvió el problema de X2 en algunas filas (sobre todo las que tienen manija de arrastre o etiqueta de estado). Test: en mobile ningún título de 25 caracteres o menos ocupa más de una línea.
+  - **"atrasada" repetido en cada fila** dentro de la sección "Atrasadas": es ruido. Dentro de esa sección, sacar la etiqueta; la fecha (en rojo suave) alcanza.
+  - **Inicio en el celu es larguísimo y repite Hoy**: tres tarjetas grandes de un solo número (restante, 0/4, estudiado) ocupan una pantalla entera; "Estudio de hoy" con los bloques horarios; y Atrasadas + Para hoy repetidas tal cual están en la vista Hoy. Proponer un Inicio corto y útil en el celu: los tres números en **una sola fila compacta**, lo próximo (parciales y la siguiente tarea sugerida) y accesos; la lista completa vive en Hoy. Documentar la decisión.
+  - **"Flexibles próximas a vencer"**: el texto de ayuda ("botón 'Hoy' para asignarlas") está metido en el encabezado y lo rompe en dos columnas. Pasarlo abajo como texto chico, o reemplazarlo por un botón claro.
+  - **Nueva tarea en el celu**: Programación, Fecha y Hora van en **tres columnas** y la fecha se corta ("11/05/202…"). Encaja con M2: en el celu, Fecha + Hora en una fila y Programación arriba ocupando el ancho. Además, revisar si "Programación" (día fijo / fecha límite / sin fecha) y "Repetir" se pueden unificar en un solo control más simple.
+  - **El ícono de tema de arriba** (◖) es casi invisible y no se entiende: usar un ícono claro de sol/luna con área táctil de 44 px, o moverlo a Configuración.
+
 ## Noche 2 (pedidos del 4/11 al mediodía) — HACER PRIMERO, en este orden: C4, C5, S1, G1, G2; después E1, F1, F2
 
 - [x] **C4 · Tiempos de una serie por tramos, en segundos**
