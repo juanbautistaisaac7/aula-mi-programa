@@ -33,7 +33,7 @@ async function newYearUI(page, opts = {}) {
 test("migración: el estado de Bauti pasa al primer año sin cambiar ni una tarea, con copia previa e idempotente", async ({ page }) => {
   const { old, errors } = await openFixture(page, 4);
   const r = await page.evaluate(() => ({ schema: state.meta.schema, years: state.years, active: activeYearId() }));
-  expect(r.schema).toBe(5);
+  expect(r.schema).toBe(await page.evaluate(() => SCHEMA_VERSION)); // 5 cuando se escribió; E1a1 agregó el 6
   expect(r.years).toEqual([{ id: "y0", name: "3.º año · 2026", start: "2026-03-01", end: "2027-02-28" }]);
   expect(r.active).toBe("y0");
   // cada elemento quedó idéntico (no se agregó yearId a nada)

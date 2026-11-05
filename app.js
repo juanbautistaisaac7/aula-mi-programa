@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.39.0";
+const APP_VERSION = "2.40.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -60,7 +60,8 @@ function defaultSettings() {
     pomo: { f: 25, s: 5, l: 15, c: 4 },
     sounds: true, notif: false, hourFmt: 24, showDone: true,
     upcomingDays: 7, tags: ["repaso", "importante", "entrega"], dayEnd: "04:00",
-    doneKeepDays: 7 // B5: la Lista completa oculta las hechas hace más de N días (0 = nunca)
+    doneKeepDays: 7, // B5: la Lista completa oculta las hechas hace más de N días (0 = nunca)
+    reminderDefaults: defaultReminderDefaults() // E1: lo que trae un parcial que no tiene recordatorios propios
   };
 }
 function baseState() {
@@ -662,7 +663,7 @@ function syncAskChange() {
    - Antes de correr pasos, loadState guarda una copia del estado viejo en
      "Copias de seguridad" (clave premig-…) para poder volver atrás.
    - Cada paso agrega un test que carga tests/fixtures/estado-v2.6.json. */
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 const MIGRATIONS = [
   { to: 2, desc: "Esquema versionado (Aula 2.7)", run: () => {} },
   { to: 3, desc: "Series explícitas con seriesId (Aula 2.10)", run: s => inferSeriesIds(s.tasks) },
@@ -671,7 +672,18 @@ const MIGRATIONS = [
   { to: 4, desc: "Sincronización entre dispositivos (Aula 2.31)", run: s => { if (!s.sync || typeof s.sync !== "object") s.sync = syncBlank(); } },
   // G1: años de cursado. Agrega state.years con el primer año ("y0"). No toca ningún
   // elemento: lo que no tiene yearId es del primer año.
-  { to: 5, desc: "Años de cursado (Aula 2.34)", run: s => { ensureYears(s); } }
+  { to: 5, desc: "Años de cursado (Aula 2.34)", run: s => { ensureYears(s); } },
+  // E1: recordatorios. Solo agrega los valores por defecto en Configuración (si no
+  // estaban). No toca tareas ni parciales: "reminders" es opcional; un parcial sin él
+  // usa los de Configuración y una tarea sin él no avisa.
+  { to: 6, desc: "Recordatorios (Aula 2.40)", run: s => {
+    s.settings = s.settings || {};
+    const d = s.settings.reminderDefaults, base = defaultReminderDefaults();
+    s.settings.reminderDefaults = {
+      eval: d && Array.isArray(d.eval) ? normReminders(d.eval) : base.eval,
+      task: d && Array.isArray(d.task) ? normReminders(d.task) : base.task
+    };
+  } }
 ];
 /* A3 · Antes, cualquier par de tareas con el mismo título y materia se mostraba como
    "serie". Ahora una serie es explícita (t.seriesId). Para los datos viejos se
@@ -2066,6 +2078,47 @@ function logManualSession() {
   else if (link.startsWith("e:")) o.evalId = link.slice(2);
   addSession(min, o);
   closeModal(); render(); toast(fmtMin(min) + " registrados");
+}
+
+/* ===================== RECORDATORIOS (E1) — modelo =====================
+   Un recordatorio es {amount, unit}: "amount unidades antes" de la fecha y hora de
+   una tarea o de un parcial. Se guarda en x.reminders (lista). Si un parcial NO tiene
+   la lista, usa settings.reminderDefaults.eval; una lista vacía = sin avisos. Las
+   tareas sin la lista no avisan, y una tarea sin hora no tiene "antes". */
+const REMINDER_UNITS = { min: 1, h: 60, d: 1440 };
+function defaultReminderDefaults() { return { eval: [{ amount: 7, unit: "d" }, { amount: 1, unit: "d" }], task: [] }; }
+function reminderOffsetMin(r) { return r.amount * REMINDER_UNITS[r.unit]; }
+/* Limpia una lista: números enteros > 0, unidades conocidas, sin repetidos (mismo
+   minuto exacto), del más lejano al más cercano. */
+function normReminders(list) {
+  const out = [], seen = new Set();
+  for (const r of Array.isArray(list) ? list : []) {
+    if (!r || !REMINDER_UNITS[r.unit]) continue;
+    const amount = parseInt(r.amount, 10);
+    if (!(amount > 0) || amount > 999) continue;
+    const x = { amount, unit: r.unit }, k = reminderOffsetMin(x);
+    if (seen.has(k)) continue;
+    seen.add(k); out.push(x);
+  }
+  return out.sort((a, b) => reminderOffsetMin(b) - reminderOffsetMin(a));
+}
+function remindersOf(x, kind) {
+  if (x && Array.isArray(x.reminders)) return normReminders(x.reminders);
+  const d = state && state.settings && state.settings.reminderDefaults;
+  return normReminders(d && d[kind] || []);
+}
+function reminderLabel(r) {
+  if (r.unit === "d") return pl(r.amount, "día", "días") + " antes";
+  return r.amount + (r.unit === "h" ? " h" : " min") + " antes";
+}
+/* Cuándo suena cada recordatorio: [{at: ms, r}], ordenados. Los parciales sin hora
+   toman las 9:00 de ese día; las tareas sin hora o sin fecha no avisan. */
+function reminderTimes(x, kind) {
+  if (!x || !x.date) return [];
+  let hm = hmToMin(x.time);
+  if (hm == null) { if (kind !== "eval") return []; hm = 9 * 60; }
+  const base = dToDate(x.date); base.setHours(Math.floor(hm / 60), hm % 60, 0, 0);
+  return remindersOf(x, kind).map(r => ({ at: base.getTime() - reminderOffsetMin(r) * 60000, r })).sort((a, b) => a.at - b.at);
 }
 
 /* ======================== NOTIFICACIONES ======================== */

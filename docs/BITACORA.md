@@ -8,6 +8,21 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ## Corrida 03:05–03:25 (hora ARG) — L1b (recorrido pensado de Hoy, Semana, Calendario, Materias, Parciales y Series)
 
+### E1a1 · Recordatorios: el modelo (Aula 2.40.0, **esquema 6**)
+
+**Plan:** con el tiempo que quedaba no entraba E1a entero bien hecho (modelo + interfaz en dos editores + Configuración), así que lo partí: ahora el modelo y la migración, que son lo delicado con tus datos; la interfaz queda como E1a2 para la próxima corrida.
+**Decisiones:**
+- **No se toca ninguna tarea ni ningún parcial.** `reminders` es opcional: un parcial que no lo tiene usa los de Configuración (por defecto **7 días y 1 día antes**), una lista vacía significa "sin avisos", y una tarea sin la lista no avisa. Así tus parciales ya cargados quedan con los avisos por defecto sin reescribirlos, y la sincronización no ve "cambios" falsos.
+- La migración (esquema 5 → 6) solo agrega `settings.reminderDefaults`, respetando lo que ya hubiera. Como siempre, antes guarda la copia `premig-v5` en Copias de seguridad.
+- **Parcial sin hora:** avisa tomando las 9:00 de ese día ("1 día antes" = el día anterior a las 9). **Tarea sin hora:** no tiene "antes", no avisa.
+- Unidades: minutos, horas y días (hasta 999). La lista se limpia sola: sin repetidos (30 min y 0,5 h no se duplican), ordenada del más lejano al más cercano.
+**Salió mal / intentos fallidos:** nada. Los tests los escribí antes, pero no los corrí en rojo (sin las funciones fallaban seguro); lo aclaro para ser honesto con el método.
+**Tests:** +2 (×2) en `tests/recordatorios.spec.js`: migración del fixture en esquema 5 (todo idéntico, copia `premig-v5`, idempotente, respeta lo configurado, sin marcas de sync) y cuándo suena cada recordatorio. Actualicé 1 test viejo (`anios.spec.js` esperaba el esquema 5 fijo; ahora compara con `SCHEMA_VERSION`). `npm test`: **317 pasaron, 0 fallaron**.
+**Capturas:** no hay: no cambió nada visible.
+**Para Bauti:** todavía no se ve nada nuevo; es la base para que en E1a2/E1b te lleguen los avisos al celu.
+
+### L1b · Recorrido pensado
+
 **Plan:** lo siguiente del backlog era L1b. En vez de mirar código al azar, usé la app como vos desde el celu (Playwright mobile, 23:40, con el fixture) vista por vista, y probé a propósito los casos borde que pide el backlog: inicio de semana en domingo, fin de mes y día 31, materia borrada con parciales, parcial pasado sin nota. Todo lo encontrado fue primero a `docs/AUDITORIA.md` (#14–#20) y después se arregló con su test. Versión 2.38.0 → 2.39.0. **No cambia la forma de los datos.**
 **Decisiones:**
 - **"Cada mes" el día 31 ahora cae el último día de los meses cortos** (31/10 → 30/11 → 31/12; el 30 cae el 28/2), para tareas que se repiten, series y hábitos. Antes se salteaba el mes entero: una "Pagar cuota el 31" desaparecía en noviembre sin avisar. La corrida de C1 lo había dejado anotado como algo a decidir; lo decidí porque para un estudiante perderse un vencimiento es mucho peor que tenerlo un día antes. (El Calendario del iPhone hace lo contrario, saltea; si lo preferís así, es una línea.) Las series viejas creadas salteando noviembre se siguen reconociendo como "cada mes", y si les agregás más tareas siguen la regla nueva. **Actualicé 2 tests viejos** (`repetir.spec.js` y `series-editar.spec.js`) que verificaban justamente que se salteara: cambió la regla a propósito.
