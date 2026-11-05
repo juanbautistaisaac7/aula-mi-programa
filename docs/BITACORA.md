@@ -6,9 +6,9 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
-## Corrida 01:06–HORAFIN (hora ARG) — G1 (años de cursado)
+## Corrida 01:06–01:49 (hora ARG) — G1 (años de cursado) y L1a1 (parciales el mismo día)
 
-**Resumen de la corrida:** hice **G1 completo**: cada año de cursado es un espacio aparte, con selector en el menú, asistente para crear el año nuevo y aviso cuando estás mirando un año anterior. **Cambia la forma de los datos (esquema 5)**, con copia previa automática y tests con el fixture elemento por elemento. Versión 2.33.0 → 2.34.0. Tests: de 240 a 255 pasados, 0 fallados.
+**Resumen de la corrida:** hice **G1 completo**: cada año de cursado es un espacio aparte, con selector en el menú, asistente para crear el año nuevo y aviso cuando estás mirando un año anterior. **Cambia la forma de los datos (esquema 5)**, con copia previa automática y tests con el fixture elemento por elemento. Versión 2.33.0 → 2.35.0. Tests: de 240 a 261 pasados, 0 fallados (255 al cerrar G1). Además, **L1a1**: tu caso de los dos parciales el mismo día.
 
 **Plan:** G1 toca el modelo y todas las vistas, así que lo primero fue decidir **cómo** separar por año sin tocar los ~170 lugares del código que leen `state.tasks`, `state.subjects`, etc., y sin arriesgar tus datos ni la sincronización recién hecha (S1).
 
@@ -27,7 +27,19 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 **Salió mal / intentos fallidos:** (1) un test falló de a ratos: no era la app sino el test, que leía las marcas antes de que terminara el guardado del arranque (`persist()` encola si ya hay uno en curso). Lo mismo podía pasarle a `storedState()` del helper, así que lo arreglé ahí también (espera a que no haya un guardado en curso). (2) En la primera captura el aviso de año anterior ocupaba media pantalla del celu (texto en dos renglones + botón grande azul); lo achiqué a un renglón con "Volver al actual". (3) En "Tus años" las cantidades se partían en dos renglones; ahora fechas y cantidades van en renglones propios y un año vacío dice "Vacío por ahora".
 **Tests:** +8 en `tests/anios.spec.js` (×2 proyectos) y +1 en `tests/sync-app.spec.js`: migración del fixture (elementos idénticos, copia `premig-v4`, idempotente, sin marcas de sync); crear 4.º con el asistente → limpio, lo nuevo queda en 4.º, volver a 3.º intacto, recargar mantiene el año, volver con el aviso; traer materias y hábitos (copias con ids nuevos, sin historial) + deshacer; motor (sin lápidas al cambiar de año, mismo orden, la sincronización ve todo, fusión remota con otro año a la vista, dedupe por año); copias y exportación con todos los años; validaciones del asistente; red de seguridad; dos dispositivos con años distintos. Actualicé 1 test viejo (`sync-motor`: esperaba el esquema 4 fijo; ahora compara con `SCHEMA_VERSION`). `npm test`: **255 pasaron, 0 fallaron** (31 saltados a propósito).
 **Capturas:** [asistente, celu claro](capturas/G1-nuevo-mobile-light.png) · [asistente, desktop oscuro](capturas/G1-nuevo-desktop-dark.png) · [tus años, celu oscuro](capturas/G1-selector-mobile-dark.png) · [tus años, desktop claro](capturas/G1-selector-desktop-light.png) · [mirando 3.º, celu oscuro](capturas/G1-viejo-mobile-dark.png) · [mirando 3.º, desktop claro](capturas/G1-viejo-desktop-light.png) · [4.º recién creado, celu](capturas/G1-nuevo-inicio-mobile-light.png)
-**Commits:** ver abajo.
+**Commits:** `93c5758` G1 · el de L1a1 y cierre (`fix(logica): ...`).
+### L1a1 · Dos parciales el mismo día (Aula 2.35.0)
+
+**Plan:** tu caso exacto primero ("caen dos parciales el mismo día pero arriba dice 'próximo parcial Economía en 2 días'"), y abrir `docs/AUDITORIA.md` para anotar todo lo que vaya apareciendo. El revisor automático de textos (L1a2) lo dejé para la próxima corrida: preferí cerrar G1 y esto bien antes que empezar algo grande con poco tiempo.
+**Decisiones:**
+- "El próximo parcial" ahora son **todos los del mismo día**. Arriba: "Economía y ANP · en 2 días". Para que entre en la pastilla (máx. ~30 letras) se acortan a la sigla **primero los nombres más largos** ("Economía y Análisis Numérico — Práctica" → "Economía y ANP"); con 4 o más, "4 parciales"; si son dos de la misma materia (teoría y práctica), van sus nombres. Al pasar el mouse se ven los nombres completos y la fecha.
+- La sugerencia de Inicio dice "Economía y ANP **son** en 2 días: quedan N tareas de sus planes" (suma los planes de los dos).
+- Detalle de materia: "Próximas evaluaciones" con las dos, y "mañana" en vez de "en 1 días".
+- De paso: "Tenés 1 tareas atrasadas" → "1 tarea atrasada"; y una evaluación sin tipo mostraba "undefined" (lo vi en mi propia captura con datos de prueba; tus datos siempre tienen tipo, pero quedó a prueba de eso).
+**Salió mal:** mi primera captura mostró "undefined" en Próximas evaluaciones: eran mis datos de prueba (sin tipo), pero lo dejé arreglado igual. También vi que en el celu la pastilla de arriba **no se muestra** (está oculta por espacio desde antes): lo anoté en la auditoría para F1.
+**Tests:** +3 (×2) en `tests/logica.spec.js` (fallan sin el arreglo): arriba e Inicio con dos el mismo día; reglas del nombre (2, 3, 4, misma materia); detalle de materia y singular.
+**Capturas:** [Inicio desktop claro](capturas/L1a-home-desktop-light.png) · [desktop oscuro](capturas/L1a-home-desktop-dark.png)
+
 **Para Bauti:**
 - Al abrir la versión nueva no vas a notar nada distinto salvo el selector "Año de cursado · 3.º año · 2026" arriba del menú. Si no estás en 3.º, cambialo en Configuración → Años de cursado → Ver mis años → Editar.
 - **No crees 4.º "para probar" con tus datos reales** salvo que quieras: se puede deshacer en el momento (o desde Copias de seguridad), pero si sincronizás, el año llega al otro dispositivo.

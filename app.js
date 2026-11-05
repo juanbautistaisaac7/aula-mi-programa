@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.34.0";
+const APP_VERSION = "2.35.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -1432,6 +1432,27 @@ function upcomingEvals(days) {
     .sort((a, b) => a.date < b.date ? -1 : 1);
 }
 
+/* L1a · Si hay varios parciales el mismo día, "el próximo" son todos ellos. */
+function evalsSameDay(evs) { return evs.length ? evs.filter(e => e.date === evs[0].date) : []; }
+function evalGroupLabel(g) {
+  if (g.length <= 1) return g.length ? g[0].name : "";
+  if (g.length > 3) return g.length + " parciales";
+  const subj = e => subjById(e.subjectId);
+  let long = g.map(e => subj(e) ? subj(e).name : e.name);
+  if (new Set(long).size < long.length) long = g.map(e => e.name); // dos de la misma materia: sus nombres
+  if (listJoin(long).length <= 30) return listJoin(long);
+  // se acortan (a la sigla de la materia) primero los nombres más largos, hasta que entre
+  const cur = long.slice();
+  while (listJoin(cur).length > 30) {
+    let k = -1;
+    cur.forEach((x, i) => { const sj = subj(g[i]); if (sj && sj.short && x === sj.name && (k < 0 || x.length > cur[k].length)) k = i; });
+    if (k < 0) break;
+    cur[k] = subj(g[k]).short;
+  }
+  return listJoin(cur).length <= 30 ? listJoin(cur) : g.length + " parciales";
+}
+function whenTxt(n, cap) { return n === 0 ? (cap ? "HOY" : "hoy") : n === 1 ? "mañana" : "en " + n + " días"; }
+
 /* ==================== SESIONES Y ESTADÍSTICAS ==================== */
 function addSession(min, opts = {}) {
   const s = { id: uid(), date: opts.date || todayISO(), min: Math.round(min), pomos: opts.pomos || 0, taskId: opts.taskId || null, subjectId: opts.subjectId || null, projectId: opts.projectId || null, evalId: opts.evalId || null, manual: !!opts.manual, auto: !!opts.auto, ts: Date.now(), note: opts.note || "" };
@@ -2332,7 +2353,7 @@ function openDayPreview(date) {
   </div>`;
 
   if (evs.length) h += `<div style="margin-bottom:10px">${evs.map(e => `<div class="task" style="background:var(--bad-soft);border-radius:8px" onclick="closeModal();go('eval','${e.id}')">
-    <div class="tinfo"><div class="tt"><b>${esc(e.name)}</b> · ${EVAL_KINDS[e.kind] || e.kind}${e.time ? " · " + esc(e.time) + " hs" : ""}</div></div>
+    <div class="tinfo"><div class="tt"><b>${esc(e.name)}</b> · ${EVAL_KINDS[e.kind] || e.kind || "Evaluación"}${e.time ? " · " + esc(e.time) + " hs" : ""}</div></div>
     <span class="pill bad">evaluación</span></div>`).join("")}</div>`;
 
   if (rows.length) {
@@ -2947,7 +2968,11 @@ function renderTop() {
   const ne = byId("nextEv");
   if (ne) {
     const evs = upcomingEvals(60);
-    if (evs.length) { const e = evs[0]; const n = daysTo(e.date); ne.style.display = ""; ne.innerHTML = `${esc(e.name)} · <b>${n === 0 ? "HOY" : n === 1 ? "mañana" : "en " + n + " días"}</b>`; }
+    if (evs.length) {
+      const g = evalsSameDay(evs), n = daysTo(g[0].date);
+      ne.style.display = ""; ne.title = g.map(e => e.name).join(" · ") + " · " + fmtD(g[0].date);
+      ne.innerHTML = `${esc(evalGroupLabel(g))} · <b>${whenTxt(n, true)}</b>`;
+    }
     else ne.style.display = "none";
   }
 }
@@ -3048,7 +3073,7 @@ function viewHome() {
       return `<div class="task" onclick="go('eval','${e.id}')">
         <span class="pill ${n <= 2 ? "bad" : n <= 7 ? "warn" : "acc"}" style="min-width:74px;text-align:center">${n === 0 ? "HOY" : n === 1 ? "mañana" : "en " + n + " días"}</span>
         <div class="tinfo"><div class="tt"><b>${esc(e.name)}</b></div>
-        <div class="tmeta"><span class="tiny">${EVAL_KINDS[e.kind] || e.kind} · ${fmtD(e.date)}${e.time ? " · " + esc(e.time) : ""}</span>
+        <div class="tmeta"><span class="tiny">${EVAL_KINDS[e.kind] || e.kind || "Evaluación"} · ${fmtD(e.date)}${e.time ? " · " + esc(e.time) : ""}</span>
         ${o ? `<span class="tag" style="background:${o.color}1c;color:${o.color}">${esc(o.short)}</span>` : ""}${p ? `<span class="tiny">${esc(p.name)}</span>` : ""}
         ${prep !== null ? `<span class="tiny">preparación ${prep}%</span>` : ""}</div></div></div>`;
     }).join("") + "</div>";
@@ -3104,11 +3129,11 @@ function saludo() {
 }
 function suggestNow(dayTasks, od, flex, evs) {
   const items = [];
-  if (od.length) items.push(`Tenés <b>${od.length} tareas atrasadas</b>: conviene resolverlas o moverlas antes de seguir.`);
-  const next = evs[0];
-  if (next && daysTo(next.date) <= 3) {
-    const pend = evalPlanTasks(next.id).filter(t => t.status !== "done");
-    items.push(`<b>${esc(next.name)}</b> es ${daysTo(next.date) === 0 ? "hoy" : daysTo(next.date) === 1 ? "mañana" : "en " + daysTo(next.date) + " días"}${pend.length ? ": quedan " + pend.length + " tareas de su plan (" + fmtMin(pend.reduce((a, t) => a + (t.estMin || 0), 0)) + ")" : ""}.`);
+  if (od.length) items.push(`Tenés <b>${od.length === 1 ? "1 tarea atrasada" : od.length + " tareas atrasadas"}</b>: conviene resolverlas o moverlas antes de seguir.`);
+  const g = evalsSameDay(evs);
+  if (g.length && daysTo(g[0].date) <= 3) {
+    const pend = g.flatMap(e => evalPlanTasks(e.id)).filter(t => t.status !== "done"), many = g.length > 1;
+    items.push(`<b>${esc(evalGroupLabel(g))}</b> ${many ? "son" : "es"} ${whenTxt(daysTo(g[0].date))}${pend.length ? ": " + (pend.length === 1 ? "queda 1 tarea de " : "quedan " + pend.length + " tareas de ") + (many ? "sus planes" : "su plan") + " (" + fmtMin(pend.reduce((a, t) => a + (t.estMin || 0), 0)) + ")" : ""}.`);
   }
   const first = dayTasks.filter(t => !isDoneOn(t, todayISO())).sort((a, b) => b.prio - a.prio)[0];
   if (first) items.push(`Siguiente sugerida: <b>${esc(first.title)}</b>${first.estMin ? " (" + fmtMin(first.estMin) + ")" : ""}. <button class="btn sm" onclick="event.stopPropagation();openTaskEditor('${first.id}')">Abrir</button>`);
@@ -3349,9 +3374,10 @@ function viewSubjectDetail() {
   </div>`;
   if (nextEv) {
     const n = daysTo(nextEv.date);
-    h += `<div class="card" style="border-left:3px solid ${s.color}"><h3>Próxima evaluación</h3>
-      <div class="task" onclick="go('eval','${nextEv.id}')"><span class="pill ${n <= 3 ? "bad" : "acc"}">${n === 0 ? "HOY" : "en " + n + " días"}</span>
-      <div class="tinfo"><div class="tt"><b>${esc(nextEv.name)}</b> · ${fmtD(nextEv.date)}</div></div></div></div>`;
+    const same = evs.filter(e => e.date === nextEv.date && !["rendido", "aprob", "desaprob"].includes(e.status));
+    h += `<div class="card" style="border-left:3px solid ${s.color}"><h3>${same.length > 1 ? "Próximas evaluaciones" : "Próxima evaluación"}</h3>
+      ${same.map(e => `<div class="task" onclick="go('eval','${e.id}')"><span class="pill ${n <= 3 ? "bad" : "acc"}">${whenTxt(n, true)}</span>
+      <div class="tinfo"><div class="tt"><b>${esc(e.name)}</b> · ${fmtD(e.date)}</div></div></div>`).join("")}</div>`;
   }
   if (grades.length) h += `<div class="card"><h3>Evaluaciones rendidas</h3>${grades.map(e => `<div class="task" onclick="go('eval','${e.id}')"><div class="tinfo"><div class="tt">${esc(e.name)}</div></div><span class="pill ${e.status === "aprob" ? "ok" : e.status === "desaprob" ? "bad" : ""}">${esc(String(e.grade))}</span></div>`).join("")}</div>`;
   h += `<div class="card"><h3>Pendientes (${pend.length})</h3>${pend.length ? pend.sort((a, b) => ((a.date || a.due || "9999")).localeCompare(b.date || b.due || "9999")).map(t => taskRow(t, { showDate: true })).join("") : '<div class="empty">Sin pendientes.</div>'}</div>`;
@@ -3372,7 +3398,7 @@ function viewEvals() {
     return `<div class="task" onclick="go('eval','${e.id}')">
       <span class="pill ${n < 0 ? "" : n <= 2 ? "bad" : n <= 7 ? "warn" : "acc"}" style="min-width:80px;text-align:center">${n < 0 ? fmtD(e.date) : n === 0 ? "HOY" : n === 1 ? "mañana" : "en " + n + " días"}</span>
       <div class="tinfo"><div class="tt"><b>${esc(e.name)}</b></div>
-        <div class="tmeta"><span class="tiny">${EVAL_KINDS[e.kind] || e.kind} · ${fmtD(e.date)}${e.time ? " " + esc(e.time) : ""}</span>
+        <div class="tmeta"><span class="tiny">${EVAL_KINDS[e.kind] || e.kind || "Evaluación"} · ${fmtD(e.date)}${e.time ? " " + esc(e.time) : ""}</span>
         ${o ? `<span class="tag" style="background:${o.color}1c;color:${o.color}">${esc(o.short)}</span>` : ""}
         ${p ? `<span class="tiny">${esc(p.name)}</span>` : ""}
         <span class="pill ${stCls}">${EVAL_STATUS[e.status] || e.status}</span>
