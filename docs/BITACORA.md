@@ -6,7 +6,9 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
-## Corrida 03:05–03:25 (hora ARG) — L1b (recorrido pensado de Hoy, Semana, Calendario, Materias, Parciales y Series)
+## Corrida 03:05–03:33 (hora ARG) — L1b (recorrido pensado de Hoy, Semana, Calendario, Materias, Parciales y Series) y E1a1 (modelo de recordatorios)
+
+**Resumen de la corrida:** dos commits, los dos con `npm test` en verde: L1b (6 arreglos de lógica y textos) y E1a1 (modelo de recordatorios, esquema 6). Versión 2.38.0 → 2.40.0. Tests: de 299 a 317 pasados, 0 fallados. Cerré a los ~30 min en vez de seguir con E1a2: no entraba entero con su revisión visual, y la corrida de las 04:05 (la última) lo puede tomar con tiempo.
 
 ### E1a1 · Recordatorios: el modelo (Aula 2.40.0, **esquema 6**)
 
@@ -34,7 +36,7 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 **Salió mal / intentos fallidos:** (1) una captura de página completa de Hoy mostraba las filas apretadas a la mitad del ancho; perdí un rato hasta ver que era un efecto de la captura "fullPage", no de la app (en pantalla normal están bien). (2) Mi test de Materias fallaba porque "50 m estudiadas" contiene "0 m estudiadas": era el test. Todos los tests nuevos fallaron antes del arreglo.
 **Tests:** +7 (×2 proyectos) en `tests/logica-l1b.spec.js`, 2 viejos actualizados. `npm test`: **313 pasaron, 0 fallaron** (31 saltados a propósito, como antes).
 **Capturas:** [Series, celu oscuro](capturas/L1b-series-mobile-dark.png) · [Series, desktop claro](capturas/L1b-series-desktop-light.png) · [Estudio de hoy, celu](capturas/L1b-estudio-mobile-light.png) · [Materias, desktop claro](capturas/L1b-subjects-desktop-light.png) · [Materias, celu oscuro](capturas/L1b-subjects-mobile-dark.png)
-**Commits:** `fix(logica): L1b …` (este).
+**Commits:** `1417732` fix(logica): L1b · `0c7ab35` feat(recordatorios): E1a1.
 **Para Bauti:** si tenés alguna tarea "cada mes" el 29, 30 o 31, ahora te va a aparecer también en los meses cortos (el último día). Fijate que eso sea lo que querés.
 
 ---
