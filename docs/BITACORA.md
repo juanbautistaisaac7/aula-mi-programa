@@ -6,6 +6,24 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
+## Corrida 03:05–03:25 (hora ARG) — L1b (recorrido pensado de Hoy, Semana, Calendario, Materias, Parciales y Series)
+
+**Plan:** lo siguiente del backlog era L1b. En vez de mirar código al azar, usé la app como vos desde el celu (Playwright mobile, 23:40, con el fixture) vista por vista, y probé a propósito los casos borde que pide el backlog: inicio de semana en domingo, fin de mes y día 31, materia borrada con parciales, parcial pasado sin nota. Todo lo encontrado fue primero a `docs/AUDITORIA.md` (#14–#20) y después se arregló con su test. Versión 2.38.0 → 2.39.0. **No cambia la forma de los datos.**
+**Decisiones:**
+- **"Cada mes" el día 31 ahora cae el último día de los meses cortos** (31/10 → 30/11 → 31/12; el 30 cae el 28/2), para tareas que se repiten, series y hábitos. Antes se salteaba el mes entero: una "Pagar cuota el 31" desaparecía en noviembre sin avisar. La corrida de C1 lo había dejado anotado como algo a decidir; lo decidí porque para un estudiante perderse un vencimiento es mucho peor que tenerlo un día antes. (El Calendario del iPhone hace lo contrario, saltea; si lo preferís así, es una línea.) Las series viejas creadas salteando noviembre se siguen reconociendo como "cada mes", y si les agregás más tareas siguen la regla nueva. **Actualicé 2 tests viejos** (`repetir.spec.js` y `series-editar.spec.js`) que verificaban justamente que se salteara: cambió la regla a propósito.
+- **Series:** una tarea que se repite con fecha final decía "sin fin" (la "Clase de consulta" del fixture termina el 15/12). Ahora dice "hasta el mar 15 dic" (o "terminó el …"), en la lista y en el editor. "Cada semana" pasa a "todos los sábados" y "cada mes" a "el 10 de cada mes".
+- **Estudio de hoy:** después de agregar 14–17 el formulario proponía otra vez 14–17. Ahora propone el siguiente desde donde terminó el último (17–19) y avisa si un bloque se superpone. El "05:00 PM" de las capturas es del navegador de prueba (en inglés); en tu iPhone en español sale 24 h. No lo cambié: reemplazar el selector de hora nativo del celu sería peor.
+- **Materias:** "0 pendientes · 0 m estudiadas" → "al día · sin tiempo registrado". Al eliminar una materia, el aviso ahora dice qué pasa con sus tareas **y parciales** ("1 tarea y 1 evaluación quedan sin materia, no se borran"); antes decía "desvincular 1 tareas".
+- **Quedan para F1** (son de diseño, no de lógica): la fecha repetida en las filas de Parciales (#19) y los totales en mayúsculas de Semana (#20).
+**Salió bien:** Calendario, Semana con inicio en domingo y borrar una materia con parciales y sesiones aguantaron bien (ninguna vista mostró `undefined` ni se rompió).
+**Salió mal / intentos fallidos:** (1) una captura de página completa de Hoy mostraba las filas apretadas a la mitad del ancho; perdí un rato hasta ver que era un efecto de la captura "fullPage", no de la app (en pantalla normal están bien). (2) Mi test de Materias fallaba porque "50 m estudiadas" contiene "0 m estudiadas": era el test. Todos los tests nuevos fallaron antes del arreglo.
+**Tests:** +7 (×2 proyectos) en `tests/logica-l1b.spec.js`, 2 viejos actualizados. `npm test`: **313 pasaron, 0 fallaron** (31 saltados a propósito, como antes).
+**Capturas:** [Series, celu oscuro](capturas/L1b-series-mobile-dark.png) · [Series, desktop claro](capturas/L1b-series-desktop-light.png) · [Estudio de hoy, celu](capturas/L1b-estudio-mobile-light.png) · [Materias, desktop claro](capturas/L1b-subjects-desktop-light.png) · [Materias, celu oscuro](capturas/L1b-subjects-mobile-dark.png)
+**Commits:** `fix(logica): L1b …` (este).
+**Para Bauti:** si tenés alguna tarea "cada mes" el 29, 30 o 31, ahora te va a aparecer también en los meses cortos (el último día). Fijate que eso sea lo que querés.
+
+---
+
 ## Corrida 02:06–02:50 (hora ARG) — L1a2 (revisor automático de textos) y G2 completo (Tu año en Aula)
 
 **Resumen de la corrida:** tres commits, cada uno con `npm test` en verde: el revisor automático de textos (L1a2), "Tu año en Aula" (G2a) y compartir cada pantalla como imagen (G2b). Versión 2.35.0 → 2.38.0. Tests: de 261 a 299 pasados, 0 fallados. **No hubo cambios en la forma de los datos** (G2 solo lee).

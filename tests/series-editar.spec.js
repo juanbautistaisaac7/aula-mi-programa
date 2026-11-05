@@ -257,7 +257,7 @@ test("el patrón se deduce bien de las fechas", async ({ page }) => {
     diario: "todos los días → 2026-11-05,2026-11-06,2026-11-07",
     semanal: "cada semana → 2026-11-16,2026-11-23,2026-11-30",
     lmv: "los lun, mié y vie → 2026-11-13,2026-11-16,2026-11-18",
-    mensual31: "cada mes → 2027-01-31,2027-03-31,2027-05-31",
+    mensual31: "cada mes → 2027-01-31,2027-02-28,2027-03-31", // L1b #16: febrero cae el último día (antes se salteaba)
     movidaAMano: "cada 3 días → 2026-11-16,2026-11-19,2026-11-22"
   });
   expect(errors).toEqual([]);

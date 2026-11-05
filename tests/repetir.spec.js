@@ -72,7 +72,8 @@ test("todos los días, cada semana y cada mes", async ({ page }) => {
   expect(dates.daily).toEqual(["2026-11-10", "2026-11-11", "2026-11-12"]);
   expect(dates.weekly).toEqual(["2026-11-10", "2026-11-17", "2026-11-24", "2026-12-01"]);
   expect(dates.monthly).toEqual(["2026-11-10", "2026-12-10", "2027-01-10"]);
-  expect(dates.month31).toEqual(["2026-10-31", "2026-12-31", "2027-01-31"]); // noviembre no tiene 31: se saltea
+  // L1b #16: noviembre no tiene 31 → cae el último día (antes se salteaba el mes entero)
+  expect(dates.month31).toEqual(["2026-10-31", "2026-11-30", "2026-12-31"]);
   expect(errors).toEqual([]);
 });
 

@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.38.0";
+const APP_VERSION = "2.39.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -1125,13 +1125,19 @@ function occursOn(t, date) {
   if (k === "daily") return true;
   if (k === "days") return (t.recur.days || []).includes(d.getDay());
   if (k === "weekly") return d.getDay() === (t.recur.days && t.recur.days.length ? t.recur.days[0] : dToDate(t.recur.start || t.date || todayISO()).getDay());
-  if (k === "monthly") return d.getDate() === dToDate(t.recur.start || t.date || todayISO()).getDate();
+  if (k === "monthly") return isMonthDay(d, dToDate(t.recur.start || t.date || todayISO()).getDate());
   if (k === "interval") {
     const base = t.recur.start || t.date || todayISO();
     const diff = Math.round((d - dToDate(base)) / 864e5);
     return diff >= 0 && diff % Math.max(1, t.recur.n || 1) === 0;
   }
   return false;
+}
+/* L1b #16: "el día N de cada mes"; si el mes no tiene día N (31 en noviembre, 30 en
+   febrero), cae el último día del mes en vez de saltearse el mes entero. */
+function isMonthDay(d, n) {
+  const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  return d.getDate() === Math.min(n, last);
 }
 function isDoneOn(t, date) { return t.recur ? !!(t.recurDone && t.recurDone[date]) : t.status === "done"; }
 function tasksOn(date) {
@@ -1639,9 +1645,19 @@ function addStudyBlock() {
   if (f == null || t == null) { toast("Cargá hora de inicio y de fin"); return; }
   if (t <= f) { toast("La hora de fin debe ser posterior a la de inicio"); return; }
   const dp = state.dayPlan[todayISO()] = state.dayPlan[todayISO()] || { blocks: [] };
+  const choca = dp.blocks.find(b => f < hmToMin(b.to) && t > hmToMin(b.from));
+  if (choca) { toast("Ese horario se superpone con " + choca.from + " – " + choca.to); return; }
   dp.blocks.push({ id: uid(), from, to });
   dp.blocks.sort((a, b) => hmToMin(a.from) - hmToMin(b.from));
   change(); render(); toast("Bloque agregado");
+}
+/* L1b #7: el bloque que se propone arranca donde terminó el último (2 h, sin pasar la medianoche). */
+function nextBlockGuess(blocks) {
+  if (!blocks.length) return { from: "14:00", to: "17:00" };
+  const last = Math.max(...blocks.map(b => hmToMin(b.to) || 0));
+  const hm = m => pad(Math.floor(m / 60)) + ":" + pad(m % 60);
+  const from = Math.min(last, 23 * 60 + 58);
+  return { from: hm(from), to: hm(Math.min(from + 120, 23 * 60 + 59)) };
 }
 function delStudyBlock(id) {
   const dp = state.dayPlan[todayISO()]; if (!dp) return;
@@ -1680,6 +1696,7 @@ function studyTodayCard() {
       <button class="btn sm ghost" title="Quitar bloque" onclick="delStudyBlock('${b.id}')">×</button></div>`;
   }).join("");
   const totMin = dp.blocks.reduce((a, b) => a + blockMinutes(b), 0);
+  const nb = nextBlockGuess(dp.blocks);
   let dist = "";
   if (totMin > 0) {
     dist = `<div class="hr"></div>
@@ -1692,11 +1709,11 @@ function studyTodayCard() {
   }
   return `<div class="card"><h3>Estudio de hoy<div class="grow"></div>
     <span class="tiny">${totMin ? fmtMin(totMin) + " disponibles" : ""}</span></h3>
-    ${rows || '<p class="tiny" style="margin-bottom:6px">Cargá tus horarios de estudio de hoy. Podés agregar varios bloques (por ejemplo 14:00–17:00 y 20:00–22:00) .</p>'}
+    ${rows || '<p class="tiny" style="margin-bottom:6px">Cargá tus horarios de estudio de hoy. Podés agregar varios bloques (por ejemplo 14:00–17:00 y 20:00–22:00).</p>'}
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
-      <input type="time" id="sb_from" value="14:00" aria-label="Hora de inicio" style="background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:6px">
+      <input type="time" id="sb_from" value="${nb.from}" aria-label="Hora de inicio" style="background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:6px">
       <span class="tiny">a</span>
-      <input type="time" id="sb_to" value="17:00" aria-label="Hora de fin" style="background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:6px">
+      <input type="time" id="sb_to" value="${nb.to}" aria-label="Hora de fin" style="background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:6px">
       <button class="btn sm" onclick="addStudyBlock()">Agregar bloque</button>
     </div>${dist}</div>`;
 }
@@ -1717,8 +1734,9 @@ function archiveSubject(id) {
 }
 function deleteSubject(id) {
   const s = subjById(id); if (!s) return;
-  const n = state.tasks.filter(t => t.subjectId === id).length;
-  doubleDelete("la materia “" + s.name + "”" + (n ? " y desvincular " + n + " tareas" : ""), () => {
+  const n = state.tasks.filter(t => t.subjectId === id).length, ne = state.evals.filter(e => e.subjectId === id).length;
+  const what = [n ? pl(n, "tarea", "tareas") : "", ne ? pl(ne, "evaluación", "evaluaciones") : ""].filter(Boolean).join(" y ");
+  doubleDelete("la materia “" + s.name + "”" + (what ? " (" + what + (n + ne === 1 ? " queda" : " quedan") + " sin materia, no se borra" + (n + ne === 1 ? "" : "n") + ")" : ""), () => {
     const idx = state.subjects.indexOf(s); const snapshot = JSON.parse(JSON.stringify(state.tasks));
     state.subjects.splice(idx, 1);
     for (const t of state.tasks) if (t.subjectId === id) t.subjectId = null;
@@ -1926,7 +1944,7 @@ function habitDueOn(h, date) {
   if (k === "daily") return true;
   if (k === "days") return (h.freq.days || []).includes(d.getDay());
   if (k === "weekly") return d.getDay() === (h.freq.days && h.freq.days.length ? h.freq.days[0] : 1);
-  if (k === "monthly") return d.getDate() === (h.freq.n || 1);
+  if (k === "monthly") return isMonthDay(d, h.freq.n || 1);
   if (k === "interval") { const base = h.start || todayISO(); const diff = Math.round((d - dToDate(base)) / 864e5); return diff >= 0 && diff % Math.max(1, h.freq.n || 2) === 0; }
   return false;
 }
@@ -2434,7 +2452,7 @@ function viewSeries() {
   const act = all.filter(s => s.active), old = all.filter(s => !s.active);
   const row = s => {
     const lb = seriesLabel(s), recur = s.kind === "recur";
-    const how = recur ? recurLabel(s.tasks[0].recur) + ", sin fin" : seriesPattern(s.tasks.map(t => t.date)).label;
+    const how = recur ? recurLabel(s.tasks[0].recur) + ", " + recurEndText(s.tasks[0].recur) : seriesPattern(s.tasks.map(t => t.date)).label;
     const prog = recur ? "" : ` · ${s.doneN}/${s.tasks.length} hechas`;
     const next = recur ? "" : s.next ? ` · próxima ${fmtD(s.next.date)}` : s.active ? "" : ` · terminó ${fmtD(s.to)}`;
     return `<button type="button" class="serrow" onclick="openSeriesModal('${escA(s.key)}')">
@@ -2454,14 +2472,26 @@ function viewSeries() {
 function recurLabel(r) {
   r = r || {};
   if (r.kind === "daily") return "todos los días";
-  if (r.kind === "weekly") return "cada semana";
-  if (r.kind === "monthly") return "cada mes";
+  if (r.kind === "weekly") { // L1b #15: qué día (la misma regla que occursOn)
+    const wd = r.days && r.days.length ? r.days[0] : r.start ? dToDate(r.start).getDay() : null;
+    return wd == null ? "cada semana" : "todos los " + DAYSL[wd] + (wd === 0 || wd === 6 ? "s" : "");
+  }
+  if (r.kind === "monthly") {
+    if (!r.start) return "cada mes";
+    const dd = dToDate(r.start).getDate();
+    return "el " + dd + " de cada mes" + (dd >= 29 ? " (o el último día)" : "");
+  }
   if (r.kind === "interval") return "cada " + (r.n || 2) + " días";
   if (r.kind === "days" && r.days && r.days.length) {
     const o = [1, 2, 3, 4, 5, 6, 0].filter(d => r.days.includes(d)).map(d => DAYS[d]);
     return o.length === 1 ? "los " + o[0] : "los " + o.slice(0, -1).join(", ") + " y " + o[o.length - 1];
   }
   return "se repite";
+}
+/* L1b #14: hasta cuándo se repite (antes decía "sin fin" aunque tuviera fecha final). */
+function recurEndText(r) {
+  if (!r || !r.end) return "sin fin";
+  return (r.end < todayISO() ? "terminó el " : "hasta el ") + fmtD(r.end);
 }
 /* C3 · "3 de 5": posición de una tarea dentro de su serie. */
 function seriesPos(t) {
@@ -2514,7 +2544,7 @@ function refreshSeriesModal() {
 function seriesModalHTML(s) {
   const lb = seriesLabel(s), recur = s.kind === "recur", today = todayISO();
   let h = `<h3>${esc(s.title)}</h3>
-    <p class="tiny">${lb ? esc(lb.full) + " · " : ""}${recur ? esc(recurLabel(s.tasks[0].recur)) + ", sin fin · " + fmtMin(s.tasks[0].estMin) + " cada vez" : `${pl(s.tasks.length, "tarea", "tareas")} · ${pl(s.doneN, "hecha", "hechas")} · ${fmtMin(s.totMin)} en total`}</p>`;
+    <p class="tiny">${lb ? esc(lb.full) + " · " : ""}${recur ? esc(recurLabel(s.tasks[0].recur) + ", " + recurEndText(s.tasks[0].recur)) + " · " + fmtMin(s.tasks[0].estMin) + " cada vez" : `${pl(s.tasks.length, "tarea", "tareas")} · ${pl(s.doneN, "hecha", "hechas")} · ${fmtMin(s.totMin)} en total`}</p>`;
   if (!recur) {
     const ids = new Set(s.tasks.map(t => t.id));
     ui.srSel = new Set([...ui.srSel].filter(id => ids.has(id))); // las borradas ya no cuentan
@@ -2797,7 +2827,10 @@ function seriesPattern(dates) {
   const pos = gaps.filter(g => g > 0);
   if (!pos.length) return { kind: "gap", n: 1, label: "todos los días" };
   const dom = new Set(ds.map(d => d.slice(8)));
-  if (dom.size === 1 && pos.every(g => g >= 28)) return { kind: "month", label: "cada mes" }; // el 31 se saltea los meses cortos (C1)
+  // "cada mes": mismo día, o el último día en los meses cortos (L1b #16; las series viejas que salteaban el mes también cuentan)
+  const D = Math.max(...ds.map(d => +d.slice(8)));
+  const mesCorto = pos.every(g => g >= 28 && g <= 31) && ds.every(d => isMonthDay(dToDate(d), D));
+  if ((dom.size === 1 && pos.every(g => g >= 28)) || mesCorto) return { kind: "month", day: D, label: "cada mes" };
   const gapLabel = n => n === 1 ? "todos los días" : n === 7 ? "cada semana" : n === 14 ? "cada 2 semanas" : "cada " + n + " días";
   if (new Set(pos).size === 1) return { kind: "gap", n: pos[0], label: gapLabel(pos[0]) };
   const wd = [...new Set(ds.map(d => dToDate(d).getDay()))];
@@ -2815,8 +2848,9 @@ function seriesPattern(dates) {
 }
 function patternNext(pat, d) {
   if (pat.kind === "month") {
-    const x = dToDate(d), day = x.getDate();
-    for (let k = 1; k < 13; k++) { const y = new Date(x.getFullYear(), x.getMonth() + k, day); if (y.getDate() === day) return iso(y); }
+    const x = dToDate(d), day = pat.day || x.getDate();
+    const last = new Date(x.getFullYear(), x.getMonth() + 2, 0).getDate();
+    return iso(new Date(x.getFullYear(), x.getMonth() + 1, Math.min(day, last)));
   }
   if (pat.kind === "wd") { let y = addDays(d, 1); while (!pat.days.includes(dToDate(y).getDay())) y = addDays(y, 1); return y; }
   return addDays(d, pat.n || 1);
@@ -3333,7 +3367,7 @@ function viewSubjects() {
       <span class="iconchip" style="background:${s.color}">${esc(s.icon || s.short)}</span>
       <div style="flex:1;min-width:0;cursor:pointer" onclick="go('subject','${s.id}')">
         <div style="font-weight:600;font-size:.86rem">${esc(s.name)}</div>
-        <div class="tiny">${esc(s.short)} · ${pl(pend, "pendiente", "pendientes")} · ${fmtMin(min)} estudiadas</div></div>
+        <div class="tiny">${esc(s.short)} · ${pend ? pl(pend, "pendiente", "pendientes") : "al día"} · ${min ? fmtMin(min) + " estudiadas" : "sin tiempo registrado"}</div></div>
       <div class="subacts">
         <button class="btn sm ghost" title="Subir" aria-label="Subir" onclick="moveSubject('${s.id}',-1)" ${i === 0 ? "disabled" : ""}>↑</button>
         <button class="btn sm ghost" title="Bajar" aria-label="Bajar" onclick="moveSubject('${s.id}',1)" ${i === act.length - 1 ? "disabled" : ""}>↓</button>
