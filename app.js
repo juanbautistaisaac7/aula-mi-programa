@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.30.0";
+const APP_VERSION = "2.31.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -67,7 +67,8 @@ function baseState() {
     subjects: [], projects: [], evals: [], tasks: [], notes: [], habits: [], sessions: [],
     dayLog: {}, dayPlan: {},
     timer: { phase: "focus", left: 25 * 60, total: 25 * 60, run: false, ends: null, taskId: null, subjectId: null, projectId: null, cycle: 0 },
-    meta: { created: todayISO(), migratedV1: false, notified: {}, lastBackup: null }
+    meta: { created: todayISO(), migratedV1: false, notified: {}, lastBackup: null },
+    sync: syncBlank()
   };
 }
 const SUBJ_COLORS = ["#4338ca", "#0e7490", "#b54708", "#067647", "#9f1239", "#175cd3", "#b42318", "#6d28d9", "#0f766e", "#a16207", "#be185d", "#374151"];
@@ -145,6 +146,7 @@ async function persist() {
   if (saving) { savePending = true; return; }
   saving = true;
   state.meta.lastSave = Date.now();
+  syncTrack();
   const json = JSON.stringify(state);
   try {
     if (db) await idbPut("kv", "state", json);
@@ -168,6 +170,7 @@ function flushNow() {
   if (!state) return;
   try {
     state.meta.lastSave = Date.now();
+    syncTrack();
     const j = JSON.stringify(state);
     try { if (typeof localStorage !== "undefined") localStorage.setItem(EMERGENCY_KEY, j); } catch (e) {}
     if (db) db.transaction("kv", "readwrite").objectStore("kv").put(j, "state");
@@ -209,6 +212,115 @@ function normalizeState(s) {
   return s;
 }
 
+/* ===================== SINCRONIZACIÓN (S1) — motor =====================
+   Cada "elemento" sincronizable tiene una clave:
+   - arreglos con id (tasks, evals, subjects…): "tasks:<id>"
+   - objetos (settings, dayLog, dayPlan…): "settings.theme", "dayLog.2026-11-04"
+   - otros valores sueltos: el nombre del campo.
+   state.sync.stamps[clave] = cuándo cambió por última vez; state.sync.tombs[clave] =
+   cuándo se borró (la "lápida": así un borrado no revive desde el otro dispositivo).
+   No hace falta tocar cada lugar que edita o borra: al guardar, syncTrack() compara
+   cada elemento con cómo estaba (un hash en memoria) y marca lo que cambió.
+   Lo que es de cada dispositivo (meta, timer, la propia marca de sync) no viaja. */
+const SYNC_LOCAL = new Set(["meta", "sync", "timer", "v"]);
+let syncHashes = null;
+function syncBlank() { return { stamps: {}, tombs: {} }; }
+function syncHash(str) { let h = 0x811c9dc5; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); } return (h >>> 0).toString(36) + ":" + str.length; }
+function syncIsIdArray(v) { return Array.isArray(v) && v.every(x => x && typeof x === "object" && typeof x.id === "string"); }
+/* Recorre el estado y llama fn(clave, valor) por cada elemento sincronizable. */
+function syncEach(s, fn) {
+  for (const c of Object.keys(s)) {
+    if (SYNC_LOCAL.has(c)) continue;
+    const v = s[c];
+    if (syncIsIdArray(v)) v.forEach(x => fn(c + ":" + x.id, x));
+    else if (v && typeof v === "object" && !Array.isArray(v)) for (const k of Object.keys(v)) fn(c + "." + k, v[k]);
+    else fn(c, v);
+  }
+}
+function syncHashesOf(s) { const m = new Map(); syncEach(s, (k, v) => m.set(k, syncHash(JSON.stringify(v === undefined ? null : v)))); return m; }
+/* Marca lo que cambió desde la última vez. Devuelve cuántas claves cambiaron. */
+function syncTrack(now) {
+  if (!state) return 0;
+  if (!state.sync || typeof state.sync !== "object") state.sync = syncBlank();
+  const sy = state.sync; sy.stamps = sy.stamps || {}; sy.tombs = sy.tombs || {};
+  const cur = syncHashesOf(state);
+  if (!syncHashes) { syncHashes = cur; return 0; }
+  now = now || Date.now();
+  let n = 0;
+  for (const [k, h] of cur) if (syncHashes.get(k) !== h) { sy.stamps[k] = now; delete sy.tombs[k]; n++; }
+  for (const k of syncHashes.keys()) if (!cur.has(k)) { sy.tombs[k] = now; delete sy.stamps[k]; n++; }
+  syncHashes = cur;
+  return n;
+}
+function syncResetHashes() { syncHashes = state ? syncHashesOf(state) : null; }
+/* Fusiona dos copias {data, stamps, tombs}. Por clave gana la marca más nueva; un
+   borrado gana si es más nuevo que la última edición. Sin marcas (datos de antes de
+   la sincronización) cuentan como 0: si los dos lados tienen la misma clave con
+   distinto contenido y ninguno tiene marca, se elige siempre el mismo (el de JSON
+   mayor) para que los dos dispositivos terminen iguales.
+   Devuelve { data, stamps, tombs } nuevos (no toca las entradas). */
+function syncMerge(L, R) {
+  const clone = x => x === undefined ? undefined : JSON.parse(JSON.stringify(x));
+  const out = clone(L.data), stamps = Object.assign({}, R.stamps || {}, L.stamps || {}), tombs = {};
+  const ver = (side, k, alive, val) => {
+    if (alive) return { t: (side.stamps || {})[k] || 0, alive: true, val };
+    const tb = (side.tombs || {})[k];
+    return tb != null ? { t: tb, alive: false } : null;
+  };
+  const pick = (k, l, r) => {
+    if (!l) return r; if (!r) return l;
+    if (l.t !== r.t) return l.t > r.t ? l : r;
+    if (l.alive !== r.alive) return l.alive ? r : l; // empate: gana el borrado
+    if (!l.alive) return l;
+    const a = JSON.stringify(l.val), b = JSON.stringify(r.val);
+    return a >= b ? l : r;
+  };
+  const settle = (k, w) => {
+    delete stamps[k];
+    if (!w) return;
+    if (w.alive) { if (w.t) stamps[k] = w.t; } else tombs[k] = w.t;
+  };
+  const keys = new Set([...Object.keys(L.data || {}), ...Object.keys(R.data || {})]);
+  for (const c of keys) {
+    if (SYNC_LOCAL.has(c)) continue;
+    const lv = (L.data || {})[c], rv = (R.data || {})[c];
+    if (syncIsIdArray(lv === undefined ? [] : lv) && syncIsIdArray(rv === undefined ? [] : rv) && (Array.isArray(lv) || Array.isArray(rv))) {
+      const la = lv || [], ra = rv || [], lm = new Map(la.map(x => [x.id, x])), rm = new Map(ra.map(x => [x.id, x]));
+      const res = [], seen = new Set();
+      const consider = id => {
+        if (seen.has(id)) return; seen.add(id);
+        const k = c + ":" + id;
+        const w = pick(k, ver(L, k, lm.has(id), lm.get(id)), ver(R, k, rm.has(id), rm.get(id)));
+        settle(k, w);
+        if (w && w.alive) res.push(clone(w.val));
+      };
+      la.forEach(x => consider(x.id)); ra.forEach(x => consider(x.id));
+      // lápidas de elementos que ya no están en ninguno de los dos lados
+      for (const side of [L, R]) for (const k of Object.keys(side.tombs || {})) if (k.startsWith(c + ":") && !(k in tombs) && !seen.has(k.slice(c.length + 1))) {
+        const o = side === L ? R : L, t2 = (o.tombs || {})[k];
+        tombs[k] = Math.max(side.tombs[k], t2 || 0);
+      }
+      out[c] = res;
+    } else if ((lv && typeof lv === "object" && !Array.isArray(lv)) || (rv && typeof rv === "object" && !Array.isArray(rv))) {
+      const lo = lv && typeof lv === "object" && !Array.isArray(lv) ? lv : {}, ro = rv && typeof rv === "object" && !Array.isArray(rv) ? rv : {};
+      const res = {}, sub = new Set([...Object.keys(lo), ...Object.keys(ro)]);
+      for (const side of [L, R]) for (const k of Object.keys(side.tombs || {})) if (k.startsWith(c + ".")) sub.add(k.slice(c.length + 1));
+      for (const s of sub) {
+        const k = c + "." + s;
+        const w = pick(k, ver(L, k, s in lo, lo[s]), ver(R, k, s in ro, ro[s]));
+        settle(k, w);
+        if (w && w.alive) res[s] = clone(w.val);
+      }
+      out[c] = res;
+    } else {
+      const w = pick(c, ver(L, c, lv !== undefined, lv), ver(R, c, rv !== undefined, rv));
+      settle(c, w);
+      if (w && w.alive) out[c] = clone(w.val); else delete out[c];
+    }
+  }
+  return { data: out, stamps, tombs };
+}
+
 /* ===================== MIGRACIONES VERSIONADAS =====================
    state.meta.schema dice qué forma tienen los datos. Los guardados por la 2.6
    o antes no lo tienen: cuentan como esquema 1.
@@ -217,10 +329,13 @@ function normalizeState(s) {
    - Antes de correr pasos, loadState guarda una copia del estado viejo en
      "Copias de seguridad" (clave premig-…) para poder volver atrás.
    - Cada paso agrega un test que carga tests/fixtures/estado-v2.6.json. */
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 const MIGRATIONS = [
   { to: 2, desc: "Esquema versionado (Aula 2.7)", run: () => {} },
-  { to: 3, desc: "Series explícitas con seriesId (Aula 2.10)", run: s => inferSeriesIds(s.tasks) }
+  { to: 3, desc: "Series explícitas con seriesId (Aula 2.10)", run: s => inferSeriesIds(s.tasks) },
+  // S1: lugar para las marcas de sincronización. No toca ningún dato: lo existente
+  // queda "sin marca" (cuenta como lo más viejo) y se fusiona sin perder nada.
+  { to: 4, desc: "Sincronización entre dispositivos (Aula 2.31)", run: s => { if (!s.sync || typeof s.sync !== "object") s.sync = syncBlank(); } }
 ];
 /* A3 · Antes, cualquier par de tareas con el mismo título y materia se mostraba como
    "serie". Ahora una serie es explícita (t.seriesId). Para los datos viejos se
@@ -4842,6 +4957,7 @@ function trapFocus(e) {
 /* ============================ INIT ============================ */
 async function init() {
   await loadState();
+  syncResetHashes();
   applyTheme();
   try { localStorage.setItem("aula-theme", state.settings.theme); localStorage.setItem("aula-accent", state.settings.accent); } catch (e) {}
   document.documentElement.style.setProperty("--acc", state.settings.accent);
