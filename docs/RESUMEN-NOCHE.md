@@ -58,7 +58,7 @@ La primera vez se **suman** los datos de los dos lados (no se borra nada) y ante
 - **Corridas:** 5 (00:06, 01:06, 02:06, 03:05 y 04:07).
 - **Commits:** 26 en `agente/mejoras` desde lo publicado ayer (14 de código, el resto de bitácora, backlog y candado).
 - **Versión:** 2.28.0 → 2.41.0. Forma de los datos: esquema 3 → 6, siempre con copia previa y migración probada con tus datos de ejemplo.
-- **Tests:** de **196** a **324** que pasan, 0 fallan (31 saltados a propósito: son de un solo dispositivo, compu o celu).
+- **Tests:** de **196** a **325** que pasan, 0 fallan (31 saltados a propósito: son de un solo dispositivo, compu o celu).
 
 ## Las 3 capturas
 
