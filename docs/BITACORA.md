@@ -6,6 +6,29 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
+## Corrida 04:07–04:50 (hora ARG) — E1a2 («Avisarme») y cierre de la noche
+
+**Resumen de la corrida:** era la última de la noche (la hora de cierre de hoy eran las 04:00). Hice un ítem (E1a2), con tiempo reservado para publicar en `main`, escribir `RESUMEN-NOCHE.md` y crear `TERMINADO`. Versión 2.40.0 → 2.41.0. Sin cambios en la forma de los datos (el esquema 6 ya lo había puesto E1a1).
+
+### E1a2 · «Avisarme» en tareas y parciales
+
+**Plan:** la corrida anterior dejó el modelo de recordatorios listo pero invisible. Faltaba la interfaz: el campo en los dos editores y los valores por defecto en Configuración.
+**Decisiones:**
+- **Un solo control, el mismo en los tres lugares:** los avisos son "pastillas" (`7 días antes ×`) y abajo hay atajos punteados (`+ 2 h`, `+ 3 días`…) y **Otro…** para un número y unidad a mano. Descarté un `<select>` por aviso: con dos o tres avisos se vuelve una planilla, y las pastillas se leen de un vistazo y se tocan bien con el dedo (44 px en el celu).
+- **Atajos distintos según qué es:** para tareas, 10 min · 30 min · 1 h · 1 día; para parciales, 2 h · 1 día · 3 días · 7 días. Son los que tienen sentido en cada caso.
+- **Si no tocás nada, no se escribe nada.** Un parcial que usa los avisos de Configuración muestra "Como en Configuración" y, si guardás sin tocar los avisos, sigue sin lista propia: si mañana cambiás los de Configuración, lo sigue. Además la sincronización no ve cambios falsos. Sacar todos = "Sin avisos" (lista vacía), que es distinto de "los de Configuración".
+- **Tarea sin hora:** en vez de los atajos dice "Poné una hora para que te pueda avisar." y se actualiza apenas ponés la hora.
+- **Series:** "avisos" entra en la pregunta de siempre ("¿solo esta / esta y las siguientes / todas?") si lo cambiás en una tarea de una serie.
+- **Que no sea un botón que no hace nada:** la noche pasada se decidió no mostrar "Avisarme" hasta que avisara algo. Para no caer en eso, `checkReminders` (las notificaciones locales que ya existían) ahora usa estos avisos: con Aula abierta y "Notificaciones locales" activadas, cada aviso suena **una sola vez** a su hora (si la app estaba cerrada, suena al abrirla, hasta 12 h después). Reemplaza al aviso viejo de parciales ("en N días", uno por día): los nuevos por defecto (7 y 1 día antes) cubren lo mismo sin repetir todos los días. El "Vence hoy" de las tareas queda igual. En Configuración lo digo tal cual: que lleguen con la app cerrada (ntfy) es E1b.
+**Salió bien:** los tres editores comparten el mismo código (`remFieldHTML`), y Configuración guarda al instante sin redibujar la pantalla entera.
+**Salió mal / intentos fallidos:** (1) Escribí los tests antes pero, otra vez, no los corrí en rojo antes de implementar (sin las funciones fallaban seguro). (2) El primer intento del test de tarea falló: el aviso "Poné una hora" no salía porque el control se dibujaba antes de que existiera el campo de hora en la pantalla; lo arreglé redibujándolo al abrir el editor. (3) Las primeras capturas "claras" salieron oscuras porque el fixture trae tu tema guardado; las volví a sacar forzando el tema. (4) En una de las dos corridas completas de `npm test` falló 1 test viejo (`anios.spec.js`, desktop) por un error de consola "404" que no es de este cambio: lo corrí 4 veces más y pasó siempre, y no lo pude reproducir cargando la app 20 veces a mano. Lo dejo anotado como posible test inestable (sospecho de un pedido del navegador a un archivo que no existe, como `favicon.ico`, pero no lo confirmé, así que no toqué nada).
+**Tests:** +4 (×2 proyectos) en `tests/recordatorios-ui.spec.js`: parcial (por defecto, guardar sin tocar no escribe, quitar/agregar/Otro, sin avisos), tarea (sin hora no deja, con hora agrega y persiste, otra tarea no gana la lista), Configuración (cambia los por defecto y se ve en un parcial sin propios) y notificación local una sola vez a su hora. `npm test`: **324 pasaron, 0 fallaron** en la corrida final (31 saltados a propósito, como antes).
+**Capturas:** [parcial celu](capturas/E1a2-parcial-mobile-light.png) · [parcial compu](capturas/E1a2-parcial-desktop-light.png) · [tarea celu oscuro](capturas/E1a2-tarea-mobile-dark.png) · [Configuración](capturas/E1a2-config-desktop-light.png) (y las demás `E1a2-*` en claro y oscuro).
+**Commits:** `e686041` feat(recordatorios): E1a2.
+**Para Bauti:** abrí un parcial → "Avisarme": tienen que estar 7 días y 1 día antes. Si querés que suenen hoy con la app abierta, activá "Notificaciones locales" en Configuración. En el iPhone, las notificaciones web solo andan con Aula **instalada en la pantalla de inicio** (iOS 16.4+).
+
+---
+
 ## Corrida 03:05–03:33 (hora ARG) — L1b (recorrido pensado de Hoy, Semana, Calendario, Materias, Parciales y Series) y E1a1 (modelo de recordatorios)
 
 **Resumen de la corrida:** dos commits, los dos con `npm test` en verde: L1b (6 arreglos de lógica y textos) y E1a1 (modelo de recordatorios, esquema 6). Versión 2.38.0 → 2.40.0. Tests: de 299 a 317 pasados, 0 fallados. Cerré a los ~30 min en vez de seguir con E1a2: no entraba entero con su revisión visual, y la corrida de las 04:05 (la última) lo puede tomar con tiempo.
