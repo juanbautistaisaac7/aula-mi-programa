@@ -50,7 +50,7 @@ La primera vez se **suman** los datos de los dos lados (no se borra nada) y ante
 ## ¿Se publicó? ¿Cómo vuelvo atrás?
 
 - **Publicado en `main`** (se mergeó `agente/mejoras` con todos los tests en verde), así que Cloudflare Pages ya tiene la versión nueva.
-- **Si algo no te gusta:** el tag **`antes-del-agente`** marca cómo estaba `main` antes de esta noche. Para volver el código: `git checkout main && git reset --hard antes-del-agente && git push --force-with-lease origin main` (o pedímelo y lo hago).
+- **Si algo no te gusta:** la rama **`antes-del-agente-2026-11-05`** marca cómo estaba `main` antes de esta noche (es una rama y no un tag porque esta sesión no tenía permiso para subir tags; `antes-del-agente`, de anoche, sigue apuntando a antes de la primera noche). Para volver el código: `git checkout main && git reset --hard origin/antes-del-agente-2026-11-05 && git push --force-with-lease origin main` (o pedímelo y lo hago).
 - **Tus datos:** antes de cada cambio de forma de los datos, la app guardó sola una copia en **Configuración → Copias de seguridad**. Desde ahí se restaura con un toque.
 
 ## Estadísticas de la noche
