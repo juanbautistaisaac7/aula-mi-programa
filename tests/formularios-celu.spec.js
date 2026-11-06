@@ -1,7 +1,7 @@
 // M2 · Formularios en el celu: ningún campo se encima con otro ni se sale del modal,
 // en 390, 375 y 320 px de ancho. Recorre todos los modales con el fixture cargado.
 const { test, expect } = require("@playwright/test");
-const { openApp, seedState, fixture } = require("./helpers");
+const { abrirEstudio, openApp, seedState, fixture } = require("./helpers");
 
 // [nombre, JS que abre el modal (y lo deja en el estado a revisar)]
 const MODALES = [
@@ -77,6 +77,7 @@ for (const width of [390, 375, 320]) {
     for (const [nombre, v] of VISTAS) {
       await page.evaluate(v => go(v), v);
       await page.waitForTimeout(80);
+      await abrirEstudio(page); // Q1: en el celu viene plegado
       todos.push(...(await problemas(page, "#view")).map(x => nombre + ": " + x));
     }
     expect(todos).toEqual([]);

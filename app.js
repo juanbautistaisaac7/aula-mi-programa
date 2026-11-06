@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.44.0";
+const APP_VERSION = "2.45.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -1919,7 +1919,7 @@ function createDistTasks() {
   if (!created) { toast("Asigná minutos al menos a una materia"); return; }
   render(); toast(created + " tarea" + (created > 1 ? "s" : "") + " creada" + (created > 1 ? "s" : "") + " para hoy");
 }
-function studyTodayCard() {
+function studyTodayCard(opts = {}) {
   const today = todayISO();
   pruneDayPlan();
   const dp = state.dayPlan[today] = state.dayPlan[today] || { blocks: [] };
@@ -1942,15 +1942,21 @@ function studyTodayCard() {
       <input type="number" class="dist-inp" data-sid="${s.id}" value="0" min="0" step="15" max="${totMin}" oninput="updateDistLeft(${totMin})" aria-label="Minutos para ${escA(s.name)}" style="width:76px;background:var(--card2);border:1px solid var(--line);border-radius:7px;padding:5px 7px"></div>`).join("") +
     `<div style="display:flex;justify-content:flex-end;margin-top:8px"><button class="btn sm primary" onclick="createDistTasks()">Crear tareas para hoy</button></div>`;
   }
-  return `<div class="card"><h3>Estudio de hoy<div class="grow"></div>
-    <span class="tiny">${totMin ? fmtMin(totMin) + " disponibles" : ""}</span></h3>
-    ${rows || '<p class="tiny" style="margin-bottom:6px">Cargá tus horarios de estudio de hoy. Podés agregar varios bloques (por ejemplo 14:00–17:00 y 20:00–22:00).</p>'}
+  const body = `${rows || '<p class="tiny" style="margin-bottom:6px">Cargá tus horarios de estudio de hoy. Podés agregar varios bloques (por ejemplo 14:00–17:00 y 20:00–22:00).</p>'}
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
       <input type="time" id="sb_from" value="${nb.from}" aria-label="Hora de inicio" style="background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:6px">
       <span class="tiny">a</span>
       <input type="time" id="sb_to" value="${nb.to}" aria-label="Hora de fin" style="background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:6px">
       <button class="btn sm" onclick="addStudyBlock()">Agregar bloque</button>
-    </div>${dist}</div>`;
+    </div>${dist}`;
+  const side = totMin ? fmtMin(totMin) + " disponibles" : "";
+  // Q1 · en el Inicio del celu va plegado: a mano, pero sin ocupar media pantalla. Recuerda si lo abriste
+  // (agregar un bloque redibuja la vista y no tiene que cerrarse solo).
+  if (opts.fold) return `<details class="card studyfold"${ui.studyOpen ? " open" : ""} ontoggle="ui.studyOpen=this.open">
+    <summary><b>Estudio de hoy</b><span class="tiny">${side || "cargá tus horarios"}</span></summary>${body}</details>`;
+  return `<div class="card"><h3>Estudio de hoy<div class="grow"></div>
+    <span class="tiny">${side}</span></h3>
+    ${body}</div>`;
 }
 
 /* ======================== ACCIONES: MATERIAS ======================== */
@@ -3393,9 +3399,11 @@ function taskRow(t, opts = {}) {
   const o = ownerOf(t);
   const ev = t.evalId && evalById(t.evalId);
   const sub = t.subtasks && t.subtasks.length ? `<span class="tiny">${t.subtasks.filter(s => s.done).length}/${t.subtasks.length} sub</span>` : "";
-  const dateBit = opts.showDate ? (t.recur ? '<span class="tiny">recurrente</span>' : t.date ? `<span class="mins">${fmtD(t.date)}</span>` : t.due ? `<span class="mins">vence ${fmtD(t.due)}</span>` : "") :
-    (t.due && !t.date ? `<span class="mins">vence ${fmtD(t.due)}</span>` : "");
   const late = !t.recur && t.status !== "done" && ((t.date && t.date < todayISO()) || (!t.date && t.due && t.due < todayISO()));
+  // Q1 · dentro de "Atrasadas" no repetimos la etiqueta en cada fila: la fecha en rojo suave alcanza
+  const lateDate = late && opts.inOverdue ? " late" : "";
+  const dateBit = opts.showDate ? (t.recur ? '<span class="tiny">recurrente</span>' : t.date ? `<span class="mins${lateDate}">${fmtD(t.date)}</span>` : t.due ? `<span class="mins${lateDate}">vence ${fmtD(t.due)}</span>` : "") :
+    (t.due && !t.date ? `<span class="mins${lateDate}">vence ${fmtD(t.due)}</span>` : "");
   const canToday = !t.recur && !done && t.date !== todayISO();
   const srt = !!opts.sortable && !t.time; // las que tienen hora no se reordenan a mano
   const dd = opts.sortable || opts.date ? ` data-date="${date}"` : !t.recur && t.date ? ` data-date="${t.date}"` : "";
@@ -3406,7 +3414,7 @@ function taskRow(t, opts = {}) {
       onclick="event.stopPropagation();toggleTask('${t.id}','${date}')"
       onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();toggleTask('${t.id}','${date}')}">${done ? "✓" : ""}</div>
     <div class="tinfo">
-      <div class="tt">${t.time ? `<span class="ttime">${esc(fmtTime(t.time))}</span>` : ""}${esc(t.title)}${late ? ' <span class="pill bad">atrasada</span>' : ""}${t.status === "prog" ? ' <span class="pill acc">en progreso</span>' : ""}${t.status === "post" ? ' <span class="pill warn">pospuesta</span>' : ""}</div>
+      <div class="tt">${t.time ? `<span class="ttime">${esc(fmtTime(t.time))}</span>` : ""}${esc(t.title)}${late && !opts.inOverdue ? ' <span class="pill bad">atrasada</span>' : ""}${t.status === "prog" ? ' <span class="pill acc">en progreso</span>' : ""}${t.status === "post" ? ' <span class="pill warn">pospuesta</span>' : ""}</div>
       <div class="tmeta">
         ${o ? `<span class="tag" style="background:${o.color}1c;color:${o.color};border:1px solid ${o.color}40">${esc(o.name)}</span>` : ""}
         ${t.estMin ? `<span class="mins">${fmtMin(t.estMin)}</span>` : ""}
@@ -3446,14 +3454,18 @@ function viewHome() {
     <button class="btn" onclick="openManualSession()">Registrar tiempo</button>
     <button class="btn primary" onclick="openQuick()">Agregar</button></div>`;
 
-  h += `<div class="grid3" style="margin-bottom:12px">
-    <div class="card" style="margin:0"><div class="statnum">${fmtMin(est)}</div><div class="statlab">restante estimado para hoy${est > 420 ? ' · <span style="color:var(--warn)">día muy cargado</span>' : ""}</div></div>
-    <div class="card" style="margin:0"><div class="statnum">${done.length}/${dayTasks.length}</div><div class="statlab">tareas de hoy (${donePct}%)</div>
-      <div class="pbar" style="margin-top:6px"><i style="width:${donePct}%"></i></div></div>
-    <div class="card" style="margin:0"><div class="statnum">${fmtMin(focusToday)}</div><div class="statlab">estudiado hoy</div></div>
+  // Q1 · los tres números en una sola tarjeta de una fila (antes: tres tarjetas grandes que en el celu
+  // ocupaban una pantalla entera para decir tres números)
+  h += `<div class="card homestats">
+    <div class="hs"><div class="statnum">${fmtMin(est)}</div><div class="statlab">restante${est > 420 ? ' · <span style="color:var(--warn)">día cargado</span>' : ""}</div></div>
+    <div class="hs"><div class="statnum">${done.length}/${dayTasks.length}</div><div class="statlab">hechas</div></div>
+    <div class="hs"><div class="statnum">${fmtMin(focusToday)}</div><div class="statlab">estudiado</div></div>
+    <div class="pbar hsbar" title="${donePct}% de las tareas de hoy"><i style="width:${donePct}%"></i></div>
   </div>`;
 
-  h += studyTodayCard();
+  // Q1 · en el celu Inicio es un resumen: lo próximo y accesos. Las listas completas viven en Hoy.
+  const phone = homeIsPhone();
+  if (!phone) h += studyTodayCard();
 
   if (evs.length) {
     h += `<div class="card"><h3>Próximas evaluaciones<div class="grow"></div><button class="btn sm ghost" onclick="go('evals')">Ver todas</button></h3>`;
@@ -3472,17 +3484,29 @@ function viewHome() {
   const sug = suggestNow(dayTasks, od, flex, evs);
   if (sug) h += `<div class="card" style="border-left:3px solid var(--acc)"><h3>Qué conviene hacer ahora</h3>${sug}</div>`;
 
-  if (od.length) {
+  if (phone) {
+    const pend = dayTasks.filter(t => !isDoneOn(t, today));
+    const shown = pend.slice(0, 3);
+    const rest = [dayTasks.length ? pl(dayTasks.length, "para hoy", "para hoy") : "", od.length ? pl(od.length, "atrasada", "atrasadas") : ""].filter(Boolean).join(" · ");
+    h += `<div class="card"><h3>Para hoy<div class="grow"></div>${od.length ? `<span class="pill bad">${pl(od.length, "atrasada", "atrasadas")}</span>` : ""}</h3>`;
+    h += shown.length ? shown.map(t => taskRow(t)).join("") : `<div class="empty">${dayTasks.length ? "Terminaste todo lo de hoy." : "Nada programado para hoy."}</div>`;
+    h += `<button class="btn homemore" onclick="go('today')">Ver todo en Hoy${rest ? ` <span class="tiny">${rest}</span>` : ""}</button></div>`;
+    h += studyTodayCard({ fold: true });
+  }
+
+  if (!phone && od.length) {
     h += `<div class="card" style="border-left:3px solid var(--bad)"><h3>Atrasadas (${od.length})
       <div class="grow"></div><button class="btn sm" onclick="postponeAllOverdue()">Mover todas a hoy</button></h3>`;
-    h += od.slice(0, 8).map(t => taskRow(t, { showDate: true })).join("");
+    h += od.slice(0, 8).map(t => taskRow(t, { showDate: true, inOverdue: true })).join("");
     if (od.length > 8) h += `<p class="tiny" style="padding:6px">y ${od.length - 8} más — <a href="#/list">ver lista completa</a></p>`;
     h += "</div>";
   }
 
-  h += `<div class="card dropzone" data-dropdate="${today}"><h3>Para hoy<div class="grow"></div><span class="tiny">${dayTasks.length ? fmtMin(dayTasks.reduce((a, t) => a + (t.estMin || 0), 0)) + " en total" : ""}</span></h3>`;
-  h += dayTasks.length ? dayTasks.map(t => taskRow(t, { sortable: true })).join("") : `<div class="empty">Nada programado para hoy. Agregá una tarea o revisá las flexibles.</div>`;
-  h += "</div>";
+  if (!phone) {
+    h += `<div class="card dropzone" data-dropdate="${today}"><h3>Para hoy<div class="grow"></div><span class="tiny">${dayTasks.length ? fmtMin(dayTasks.reduce((a, t) => a + (t.estMin || 0), 0)) + " en total" : ""}</span></h3>`;
+    h += dayTasks.length ? dayTasks.map(t => taskRow(t, { sortable: true })).join("") : `<div class="empty">Nada programado para hoy. Agregá una tarea o revisá las flexibles.</div>`;
+    h += "</div>";
+  }
 
   if (habitsToday.length) {
     h += `<div class="card"><h3>Hábitos de hoy<div class="grow"></div><button class="btn sm ghost" onclick="go('habits')">Administrar</button></h3>`;
@@ -3493,8 +3517,10 @@ function viewHome() {
     h += "</div>";
   }
 
-  if (flex.length) {
-    h += `<div class="card"><h3>Flexibles próximas a vencer<div class="grow"></div><span class="tiny">botón “Hoy” para asignarlas</span></h3>` + flex.slice(0, 6).map(t => taskRow(t, { showDate: true })).join("") + "</div>";
+  if (flex.length && !phone) {
+    // Q1 · la ayuda iba metida en el encabezado y lo partía en dos columnas: ahora va abajo, chiquita,
+    // y solo donde existe el botón "Hoy" (con mouse); con el dedo se abre la tarea o se arrastra.
+    h += `<div class="card"><h3>Flexibles próximas a vencer</h3>${touchUI() ? "" : '<p class="tiny zonehint">pasá el mouse por una tarea y tocá “Hoy” para hacerla hoy</p>'}` + flex.slice(0, 6).map(t => taskRow(t, { showDate: true })).join("") + "</div>";
   }
 
   const subs = activeSubjects().map(s => {
@@ -3502,7 +3528,7 @@ function viewHome() {
     return { s, pend };
   }).filter(x => x.pend.length);
   if (subs.length) {
-    h += `<div class="card"><h3>Materias con pendientes</h3><div class="grid3">`;
+    h += `<div class="card"><h3>Materias con pendientes</h3><div class="grid3 homesubs">`;
     h += subs.map(({ s, pend }) => {
       const min = pend.reduce((a, t) => a + (t.estMin || 0), 0);
       return `<div class="subrow" style="cursor:pointer;border:1px solid var(--line2);border-radius:9px" onclick="go('subject','${s.id}')">
@@ -3513,6 +3539,8 @@ function viewHome() {
   }
   return h;
 }
+/** Q1 · Inicio en formato celu (resumen) o completo. Mismo corte que el calendario. */
+function homeIsPhone() { try { return matchMedia("(max-width:720px)").matches; } catch (e) { return false; } }
 function saludo() {
   const h = new Date().getHours();
   return h < 12 ? "Buen día" : h < 19 ? "Buenas tardes" : "Buenas noches";
@@ -3532,8 +3560,15 @@ function suggestNow(dayTasks, od, flex, evs) {
 }
 function postponeAllOverdue() {
   const od = overdueTasks(); const today = todayISO();
+  if (!od.length) return;
+  // Q1 · acción masiva: se puede deshacer (guardamos fecha y vencimiento de cada una)
+  const before = od.map(t => ({ id: t.id, date: t.date, due: t.due }));
   od.forEach(t => { if (t.date) t.date = today; else if (t.due) t.due = today; });
-  change(); render(); toast(od.length + " tareas movidas a hoy");
+  change(); render();
+  toast(od.length === 1 ? "1 tarea movida a hoy" : od.length + " tareas movidas a hoy", () => {
+    before.forEach(b => { const t = taskById(b.id); if (t) { t.date = b.date; t.due = b.due; } });
+    change(); render(); toast("Listo, volvieron a su fecha");
+  });
 }
 
 /* ============================ VISTA: HOY ============================ */
@@ -3545,7 +3580,7 @@ function viewToday() {
   let h = `<div class="vhead"><h2>Hoy</h2><span class="sub">${fmtDFull(today)}</span><div class="grow"></div>
     <button class="btn ${ui.selMode ? "primary" : ""}" onclick="toggleSelMode()" title="Elegir varias tareas (o usá Ctrl+clic y Shift+clic)">Seleccionar</button>
     <button class="btn primary" onclick="openQuickTask('${today}')">Nueva tarea para hoy</button></div>`;
-  if (od.length) h += `<div class="card"><h3>Atrasadas</h3>${od.map(t => taskRow(t, { showDate: true })).join("")}</div>`;
+  if (od.length) h += `<div class="card"><h3>Atrasadas<div class="grow"></div><button class="btn sm" onclick="postponeAllOverdue()">Mover todas a hoy</button></h3>${od.map(t => taskRow(t, { showDate: true, inOverdue: true })).join("")}</div>`;
   const hint = touchUI() ? "mantené apretada una tarea para moverla" : "arrastrá ⣿ para ordenar o pasar a mañana";
   h += `<div class="card dropzone" data-dropdate="${today}"><h3>Programadas para hoy</h3><p class="tiny zonehint">${hint}</p>${dayTasks.length ? dayTasks.map(t => taskRow(t, { sortable: true })).join("") : '<div class="empty">Sin tareas programadas.</div>'}</div>`;
   if (flex.length) h += `<div class="card"><h3>Flexibles (vencen pronto)</h3>${flex.map(t => taskRow(t, { showDate: true })).join("")}</div>`;
@@ -5301,7 +5336,22 @@ function applyTheme() {
   const dark = pref === "dark" || (pref === "auto" && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
   document.documentElement.dataset.theme = dark ? "dark" : "light";
   document.documentElement.dataset.themePref = pref;
-  const btn = byId("btnTheme"); if (btn) btn.title = "Tema: " + (pref === "auto" ? "automático" : pref === "dark" ? "oscuro" : "claro");
+  const btn = byId("btnTheme");
+  if (btn) {
+    // Q1 · el ◐ de antes casi no se veía y no se entendía: sol o luna según cómo se ve la app ahora,
+    // con una "A" chiquita si sigue al sistema.
+    const name = pref === "auto" ? "automático" : pref === "dark" ? "oscuro" : "claro";
+    btn.title = "Tema: " + name;
+    btn.setAttribute("aria-label", "Tema: " + name + ". Tocá para cambiar");
+    const icon = dark ? "moon" : "sun";
+    if (btn.dataset.icon !== icon || btn.dataset.auto !== String(pref === "auto")) {
+      btn.dataset.icon = icon; btn.dataset.auto = String(pref === "auto");
+      btn.innerHTML = (dark
+        ? '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.5 14.2A8.5 8.5 0 1 1 9.8 3.5a7 7 0 0 0 10.7 10.7z"/></svg>'
+        : '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4L6 18M18 6l1.4-1.4"/></svg>')
+        + (pref === "auto" ? '<span class="autob" aria-hidden="true">A</span>' : "");
+    }
+  }
 }
 function cycleTheme() {
   const order = ["light", "dark", "auto"];
@@ -6167,6 +6217,8 @@ async function init() {
   byId("btnMenu").onclick = () => toggleSidebar();
   byId("btnTheme").onclick = cycleTheme;
   if (window.matchMedia) { try { window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyTheme); } catch (e) {} }
+  // Q1 · Inicio cambia de formato (resumen en el celu / completo) al cruzar el ancho: girar el teléfono o achicar la ventana
+  if (window.matchMedia) { try { window.matchMedia("(max-width:720px)").addEventListener("change", () => { if (/^#\/(home)?$/.test(location.hash || "#/") && !document.querySelector("#modalbg.open")) render(); }); } catch (e) {} }
   window.addEventListener("hashchange", () => { render(); if (window.innerWidth < 980) toggleSidebar(false); });
   document.addEventListener("keydown", onKeydown);
   document.addEventListener("keydown", trapFocus);

@@ -6,6 +6,35 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
+## Corrida 01:07–01:40 (hora ARG) — Q1 (hallazgos de la revisión en el celu)
+
+**Resumen de la corrida:** Q1 completo, en un commit, con `npm test` en verde. Versión 2.44.0 → 2.45.0. **No cambia la forma de los datos** (sin migración; nada nuevo viaja por la sync). Lo siguiente es E1b.
+
+**Plan:** reproducir cada hallazgo con el fixture en el celu antes de tocar nada, escribir los tests (fallaron 4 de 5 al principio) y arreglar de a uno.
+
+**Lo que encontré:**
+- **Títulos cortados a la mitad:** con capturas normales del celu no pasaba; con capturas de **página completa** sí. La causa: esas capturas (y algunos teléfonos, como Android con mouse o ciertos Samsung) dicen "tengo hover", y entonces las acciones invisibles de la fila (↑ ↓ Hoy Mover… Editar ×, ~200 px) volvían a ocupar lugar. El arreglo de X2 dependía solo de `hover:none`. Ahora también se esconden en pantallas de **600 px o menos**. El test lo reproduce en desktop con la ventana a 412 px (no pude simular hover en el proyecto mobile: Chrome ignora esa emulación).
+
+**Decisiones:**
+- **"atrasada" repetido:** dentro de las secciones Atrasadas (Hoy e Inicio) ya no va la etiqueta; la fecha va en **rojo suave**. En la lista completa y en otras vistas la etiqueta sigue, porque ahí sí informa.
+- **Inicio en el celu (≤ 720 px) ahora es un resumen**, y la lista completa vive en Hoy:
+  - Los tres números en **una sola tarjeta de una fila** (restante · hechas · estudiado) con la barrita de progreso abajo. Esto lo dejé igual en la compu: queda más prolijo que tres tarjetas.
+  - Orden: números → próximas evaluaciones → qué conviene hacer → **Para hoy con las 3 primeras pendientes** + botón "Ver todo en Hoy · 5 para hoy · 3 atrasadas" → Estudio de hoy **plegado** (se abre tocando; si lo abrís y agregás un bloque, queda abierto) → hábitos → materias como lista compacta.
+  - Se fueron del Inicio del celu: Atrasadas, la lista entera de Para hoy y Flexibles (están tal cual en Hoy). Con el fixture, de ~2.700 px de alto a ~1.500.
+  - Si girás el celu o achicás la ventana, Inicio cambia de formato solo.
+- **"Mover todas a hoy"** quedaba solo en el Inicio, que en el celu ya no muestra Atrasadas: lo sumé al encabezado de **Atrasadas en Hoy**, y ahora tiene **Deshacer** (antes no tenía, y es una acción masiva).
+- **Flexibles:** la ayuda ya no va dentro del encabezado. En la compu queda abajo, chiquita ("pasá el mouse por una tarea y tocá 'Hoy'…"); con el dedo no se muestra, porque ese botón no existe en el celu.
+- **Botón de tema:** el ◐ pasó a **sol o luna** según cómo se ve la app en ese momento, con una "A" chiquita si sigue al sistema. En pantallas táctiles los botones de arriba miden **44 px**; a 320 px se esconde la palabra "Aula" (queda el logo) para que entre todo.
+- **Unificar "Programación" y "Repetir": lo evalué y no lo hice.** Después de M2 el formulario ya se ve bien (Programación a lo ancho, Fecha + Hora juntas, Repetir abajo y solo con "Día fijo"). Juntar los dos en un control daría un select de 5–6 opciones con subformularios distintos, y Recordatorios de Apple también los tiene separados (fecha por un lado, repetir por otro). Además cambiaría cómo creás tareas todos los días. Si igual lo querés, es un ítem chico para F1.
+
+**Salió mal / intentos fallidos:** primero intenté simular "teléfono con hover" en el test con CDP (`Emulation.setEmulatedMedia`) y no anduvo: Chrome ignora `hover` ahí. Lo resolví probando en desktop con ventana angosta, que es el mismo caso. A 320 px los botones de 44 px empujaban el "+" fuera de la pantalla; lo vi con una prueba y lo arreglé. La etiqueta "tareas de hoy" se cortaba a 320 px: pasó a "hechas".
+**Tests:** +9 en `tests/q1-celu.spec.js` (títulos en un renglón en Hoy e Inicio con y sin hover, sin "atrasada" repetido, Inicio corto y en una fila, Flexibles, botón de tema, cambio de formato al angostar, Mover todas a hoy con Deshacer). Actualicé 3 tests viejos que usaban "Estudio de hoy" en el Inicio del celu (`formularios-celu`, `logica-l1b` #7 y `sin-pomodoro`): ahora viene plegado a propósito, así que lo abren primero (helper `abrirEstudio`). `npm test`: **350 pasaron, 0 fallaron** (52 saltados a propósito).
+**Capturas:** [Inicio celu](capturas/Q1-home-mobile-light.png) · [Inicio celu oscuro](capturas/Q1-home-mobile-dark.png) · [Hoy celu oscuro](capturas/Q1-today-mobile-dark.png) · [Inicio compu](capturas/Q1-home-desktop-light.png) · [Hoy compu](capturas/Q1-today-desktop-dark.png)
+**Commits:** ver abajo.
+**Para Bauti:** abrí Inicio en el iPhone: tendría que entrar casi en una pantalla y media. Decime si extrañás algo que se fue de ahí (está todo en Hoy). Probá el botón de tema arriba: sol → luna → automático (con la "A").
+
+---
+
 ## Corrida 00:06–00:54 (hora ARG) — S2 (los cambios llegan solos + actualizar a mano), M2 (formularios en el celu) y M1 (deslizar para borrar)
 
 **Resumen de la corrida:** tres ítems de la Noche 3, en orden: S2, M2 y M1, cada uno con su commit y `npm test` en verde. Versión 2.41.0 → 2.44.0. Tests: de 325 a 341 pasados, 0 fallados. **No cambió la forma de los datos** (sin migración; lo que viaja por la sync es igual). Lo siguiente es Q1.

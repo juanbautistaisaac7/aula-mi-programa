@@ -217,6 +217,29 @@ body.sb-open #sidebar{transform:translateX(0)}
 .grid3{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(240px,100%),1fr));gap:12px}
 .statnum{font-size:1.55rem;font-weight:800;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
 .statlab{font-size:.7rem;color:var(--tx3)}
+/* Q1 · Inicio: los tres números en una sola tarjeta de una fila */
+.homestats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px 12px;padding:14px 16px 12px}
+.homestats .hs{min-width:0}
+.homestats .hs+.hs{border-left:1px solid var(--line2);padding-left:12px}
+.homestats .statnum{font-size:1.35rem;white-space:nowrap}
+.homestats .statlab{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.homestats .hsbar{grid-column:1/-1;margin-top:8px}
+@media(max-width:400px){.homestats{padding:12px;gap:4px 8px}.homestats .hs+.hs{padding-left:8px}.homestats .statnum{font-size:1.15rem}}
+/* en el celu, las materias como lista compacta (una fila de 44 px cada una) en vez de cajas */
+@media(max-width:720px){.homesubs{grid-template-columns:minmax(0,1fr);gap:0}.homesubs .subrow{border:0!important;border-radius:0!important;min-height:44px;padding:6px 2px}.homesubs .subrow+.subrow{border-top:1px solid var(--line2)!important}.homesubs .iconchip{width:28px;height:28px;font-size:.66rem}}
+.homemore{width:100%;justify-content:center;margin-top:8px;min-height:44px;gap:6px}
+.homemore .tiny{font-weight:400}
+.studyfold>summary{list-style:none;display:flex;align-items:center;gap:8px;cursor:pointer;min-height:28px;font-size:.92rem}
+.studyfold>summary::-webkit-details-marker{display:none}
+.studyfold>summary .tiny{margin-left:auto}
+.studyfold>summary::after{content:"";width:7px;height:7px;border-right:2px solid var(--tx3);border-bottom:2px solid var(--tx3);transform:rotate(45deg);margin:0 4px 3px 2px;transition:transform .2s}
+.studyfold[open]>summary{margin-bottom:10px}
+.studyfold[open]>summary::after{transform:rotate(225deg);margin-bottom:-3px}
+@media (prefers-reduced-motion:reduce){.studyfold>summary::after{transition:none}}
+#btnTheme{position:relative}
+#btnTheme .autob{position:absolute;right:calc(50% - 14px);bottom:calc(50% - 14px);font-size:.5rem;font-weight:800;line-height:1;background:var(--card);color:var(--tx2);border-radius:3px;padding:0 1px}
+@media (pointer:coarse){#topbar .iconbtn{width:44px;height:44px;flex-shrink:0}}
+@media (max-width:360px){#topbar{gap:2px;padding:0 6px}#topbar .logo>span:not(.mark){display:none}}
 .empty{padding:26px;text-align:center;color:var(--tx3);font-size:.8rem}
 .hr{border:none;border-top:1px solid var(--line2);margin:10px 0}
 /* tareas */
@@ -238,7 +261,10 @@ body.sb-open #sidebar{transform:translateX(0)}
 .tactions button:hover{color:var(--acc);border-color:var(--acc)}
 /* X2 · En pantallas táctiles no hay hover: estas acciones nunca se veían pero
    ocupaban la mitad del ancho de la fila. Tocar la tarea abre su detalle. */
-@media (hover:none){.tactions{display:none}}
+/* Q1 · también en pantallas angostas: un teléfono que dice tener hover (Android con mouse, algunos
+   Samsung) volvía a partir los títulos a la mitad. Ahí se abre la tarea o se desliza/arrastra. */
+@media (hover:none),(max-width:600px){.tactions{display:none}}
+.mins.late{color:var(--bad);opacity:.8}
 /* arrastrar para ordenar el día */
 .drag{cursor:grab;color:var(--tx3);font-size:.72rem;line-height:1;padding:3px 2px;margin-top:2px;flex-shrink:0;opacity:.35;transition:opacity .12s,color .12s;letter-spacing:-2px;user-select:none;touch-action:none}
 .task:hover .drag{opacity:.9;color:var(--acc)}
@@ -684,7 +710,7 @@ body:has(#wrapped.open) #toast{z-index:310}
   <button id="nextEv" title="Próximo evento importante" onclick="go('evals')"></button>
   <div id="searchbox"><input id="topSearch" placeholder="Buscar…  ( / )" readonly onclick="openSearch()" aria-label="Buscar"></div>
   <button type="button" id="saveInd" title="Tocá para actualizar" aria-live="polite" onclick="if(syncOn())syncNow(true)"><span class="dot"></span><span id="saveTxt">guardado</span></button>
-  <button class="iconbtn" id="btnTheme" title="Cambiar tema" aria-label="Cambiar tema">◐</button>
+  <button class="iconbtn" id="btnTheme" title="Cambiar tema" aria-label="Cambiar tema"></button>
   <button class="iconbtn" title="Agregado rápido (N)" aria-label="Agregado rápido" onclick="openQuick()" style="font-size:1.25rem;font-weight:600">+</button>
 </header>
 
