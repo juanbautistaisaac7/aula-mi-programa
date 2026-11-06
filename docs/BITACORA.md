@@ -6,7 +6,9 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
-## Corrida 00:06–00:54 (hora ARG) — S2 (los cambios llegan solos + actualizar a mano) M2 (formularios en el celu) y M1 (deslizar para borrar)
+## Corrida 00:06–00:54 (hora ARG) — S2 (los cambios llegan solos + actualizar a mano), M2 (formularios en el celu) y M1 (deslizar para borrar)
+
+**Resumen de la corrida:** tres ítems de la Noche 3, en orden: S2, M2 y M1, cada uno con su commit y `npm test` en verde. Versión 2.41.0 → 2.44.0. Tests: de 325 a 341 pasados, 0 fallados. **No cambió la forma de los datos** (sin migración; lo que viaja por la sync es igual). Lo siguiente es Q1.
 
 ### M1 · Deslizar una tarea a la derecha para borrarla (Aula 2.44.0)
 
