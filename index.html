@@ -227,6 +227,16 @@ body.sb-open #sidebar{transform:translateX(0)}
 @media(max-width:400px){.homestats{padding:12px;gap:4px 8px}.homestats .hs+.hs{padding-left:8px}.homestats .statnum{font-size:1.15rem}}
 /* en el celu, las materias como lista compacta (una fila de 44 px cada una) en vez de cajas */
 @media(max-width:720px){.homesubs{grid-template-columns:minmax(0,1fr);gap:0}.homesubs .subrow{border:0!important;border-radius:0!important;min-height:44px;padding:6px 2px}.homesubs .subrow+.subrow{border-top:1px solid var(--line2)!important}.homesubs .iconchip{width:28px;height:28px;font-size:.66rem}}
+/* E1b · avisos con ntfy (Configuración) */
+.ntfysteps{margin:0 0 6px 18px;padding:0;font-size:.8rem;line-height:1.5}
+.ntfysteps li{margin:0 0 10px}
+.ntfytopic{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0 4px}
+.ntfytopic code{font-size:.74rem;background:var(--card2);border:1px solid var(--line);border-radius:7px;padding:6px 8px;word-break:break-all;min-width:0;flex:1 1 180px}
+.ntfysoon{margin:0 0 10px;padding:8px 10px;background:var(--card2);border-radius:8px}
+.ntfygen{display:flex;gap:8px;align-items:flex-start;font-size:.8rem;cursor:pointer;line-height:1.4}
+.ntfygen input{width:18px;height:18px;flex:none;margin-top:1px;accent-color:var(--acc);-webkit-appearance:checkbox;appearance:checkbox}
+.ntfygen>span{flex:1;min-width:0}
+@media (pointer:coarse){.ntfycard .btn{min-height:44px}.ntfygen{min-height:44px}}
 .homemore{width:100%;justify-content:center;margin-top:8px;min-height:44px;gap:6px}
 .homemore .tiny{font-weight:400}
 .studyfold>summary{list-style:none;display:flex;align-items:center;gap:8px;cursor:pointer;min-height:28px;font-size:.92rem}

@@ -6,9 +6,28 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
-## Corrida 01:07–01:40 (hora ARG) — Q1 (hallazgos de la revisión en el celu)
+## Corrida 01:07–01:50 (hora ARG) — Q1 (hallazgos de la revisión en el celu) y E1b1 (conectar ntfy)
 
-**Resumen de la corrida:** Q1 completo, en un commit, con `npm test` en verde. Versión 2.44.0 → 2.45.0. **No cambia la forma de los datos** (sin migración; nada nuevo viaja por la sync). Lo siguiente es E1b.
+**Resumen de la corrida:** dos ítems, cada uno con su commit y `npm test` en verde. Versión 2.44.0 → 2.46.0. Q1 no toca los datos; **E1b1 sí: esquema 6 → 7** (agrega `settings.ntfy` apagado, con copia previa automática, idempotente y probado con el fixture). Lo siguiente es E1b2 (programar los avisos), que dejé planificado con dos problemas que encontré.
+
+### E1b1 · Conectar el celu con ntfy (Aula 2.46.0)
+
+**Plan:** E1b era grande (configuración + programar + cancelar + dos dispositivos), así que lo partí: E1b1 es conectar y probar; E1b2, programar. Primero leí la documentación de ntfy.
+**Lo que averigüé de ntfy.sh:** gratis y sin cuenta; un mensaje programado puede ir de **10 s a 3 días** adelante; límite de **250 mensajes por día**. La página de la doc es muy larga y no pude confirmar si un mensaje programado **se puede cancelar**; lo dejo como pregunta abierta para E1b2.
+**Decisiones:**
+- **Modelo:** `settings.ntfy = { on, server, topic, generic }`. Viaja por la sync como cualquier ajuste, así los dos dispositivos usan el mismo tema. La migración solo lo agrega si no estaba y nunca pisa uno existente (por si llega primero desde el otro dispositivo); conserva cualquier campo extra.
+- **Tema al azar:** `aula-` + 128 bits al azar (22 caracteres). Es la única llave: quien lo sepa puede leer tus avisos, por eso la pantalla dice que es secreto.
+- **Pantalla en Configuración**, tarjeta "Avisos con la app cerrada": "Empezar" → 3 pasos (instalar ntfy con links a App Store y Google Play, suscribirse con el nombre del tema y un botón Copiar, y "Mandar notificación de prueba"). Recién cuando la prueba sale bien queda **activo**. Opción **Mensaje genérico** ("Tenés un aviso de Aula", sin el nombre de la tarea) por privacidad. "Desconectar" pide confirmación.
+- **Cómo se manda:** con los datos en la **URL** (`?title=…&at=…`) y no en headers. Lo descubrí con el test: los headers HTTP no aceptan acentos (llegaba "gebra" en vez de "Álgebra"). Así además el navegador no tiene que hacer el pedido previo de CORS.
+- **Honestidad en la pantalla:** como todavía no programa los avisos, la tarjeta lo dice ("por ahora llega la prueba… no hace falta que vuelvas a configurar nada").
+**Problemas para E1b2 (anotados en el backlog):** (1) con la sync hay **dos dispositivos**: si los dos programan, cada aviso llega dos veces; hay que decidir quién programa. (2) Si ntfy no deja cancelar, una tarea que cambiás de hora avisaría igual a la hora vieja; una salida es programar solo lo de las próximas ~24 h.
+**Salió mal / intentos fallidos:** lo de los acentos en headers (arriba). Leer la doc de ntfy por partes con la herramienta web no encontró las secciones de cancelar y límites; los límites salieron de una copia de la doc.
+**Tests:** +3 en `tests/ntfy.spec.js` × 2 dispositivos (migración 6 → 7 con el fixture, copia previa, idempotente y sin marcas de sync en tareas; la pantalla completa con ntfy mockeado; sin red no queda activo; `at` y acentos). Nunca se llama a ntfy.sh real: hay un `page.route` de red de seguridad. `npm test`: **356 pasaron, 0 fallaron** (52 saltados a propósito).
+**Capturas:** [ntfy, celu claro](capturas/E1b1-ntfy-mobile-light.png) · [ntfy, celu oscuro](capturas/E1b1-ntfy-mobile-dark.png)
+**Commits:** ver abajo.
+**Para Bauti:** si querés adelantarte: Configuración → "Avisos con la app cerrada" → Empezar, instalá ntfy, suscribite y tocá la prueba. Debería llegarte "¡Listo! Así te van a llegar los avisos." Si no llega, avisame (puede ser el iPhone: ntfy en iOS a veces tarda la primera vez).
+
+### Q1 · Hallazgos de la revisión en el celu (Aula 2.45.0)
 
 **Plan:** reproducir cada hallazgo con el fixture en el celu antes de tocar nada, escribir los tests (fallaron 4 de 5 al principio) y arreglar de a uno.
 

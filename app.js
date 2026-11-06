@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.45.0";
+const APP_VERSION = "2.46.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -61,7 +61,8 @@ function defaultSettings() {
     sounds: true, notif: false, hourFmt: 24, showDone: true,
     upcomingDays: 7, tags: ["repaso", "importante", "entrega"], dayEnd: "04:00",
     doneKeepDays: 7, // B5: la Lista completa oculta las hechas hace más de N días (0 = nunca)
-    reminderDefaults: defaultReminderDefaults() // E1: lo que trae un parcial que no tiene recordatorios propios
+    reminderDefaults: defaultReminderDefaults(), // E1: lo que trae un parcial que no tiene recordatorios propios
+    ntfy: defaultNtfy() // E1b: avisos al celu con la app cerrada (ntfy)
   };
 }
 function baseState() {
@@ -769,7 +770,7 @@ function syncAskChange() {
    - Antes de correr pasos, loadState guarda una copia del estado viejo en
      "Copias de seguridad" (clave premig-…) para poder volver atrás.
    - Cada paso agrega un test que carga tests/fixtures/estado-v2.6.json. */
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 const MIGRATIONS = [
   { to: 2, desc: "Esquema versionado (Aula 2.7)", run: () => {} },
   { to: 3, desc: "Series explícitas con seriesId (Aula 2.10)", run: s => inferSeriesIds(s.tasks) },
@@ -789,6 +790,12 @@ const MIGRATIONS = [
       eval: d && Array.isArray(d.eval) ? normReminders(d.eval) : base.eval,
       task: d && Array.isArray(d.task) ? normReminders(d.task) : base.task
     };
+  } },
+  // E1b: avisos con la app cerrada vía ntfy. Solo agrega settings.ntfy apagado si no
+  // estaba (si ya estaba, lo deja tal cual: puede venir de otro dispositivo por la sync).
+  { to: 7, desc: "Avisos al celu con ntfy (Aula 2.46)", run: s => {
+    s.settings = s.settings || {};
+    s.settings.ntfy = normNtfy(s.settings.ntfy);
   } }
 ];
 /* A3 · Antes, cualquier par de tareas con el mismo título y materia se mostraba como
@@ -2416,6 +2423,88 @@ function remAddOther(id) {
 }
 /* Lo que hay que guardar: la lista si la tocaste; si no, lo que tenía (puede ser undefined). */
 function remValue(id) { const st = ui.rem && ui.rem[id]; return !st ? undefined : st.touched ? st.list.map(r => ({ ...r })) : st.orig; }
+
+/* ===================== AVISOS AL CELU CON NTFY (E1b) =====================
+   ntfy (https://ntfy.sh) es gratis y sin cuenta: instalás la app ntfy, te suscribís a un
+   "tema" secreto y todo lo que se publique en ese tema te llega como notificación,
+   aunque Aula esté cerrada. El tema es la única llave: por eso es largo y al azar.
+   Límites de ntfy.sh (docs.ntfy.sh/publish, consultado 6/11/2026): 250 mensajes por día,
+   y un envío programado puede ir de 10 s a 3 días adelante. */
+function defaultNtfy() { return { on: false, server: "https://ntfy.sh", topic: "", generic: false }; }
+function normNtfy(n) {
+  const d = defaultNtfy();
+  if (!n || typeof n !== "object") return d;
+  // conserva cualquier campo que ya tuviera (nunca borramos datos) y completa lo que falte
+  const out = Object.assign({}, n);
+  out.on = !!n.on && ntfyValidTopic(n.topic);
+  out.server = typeof n.server === "string" && /^https:\/\/[^\s/]+/.test(n.server) ? n.server.replace(/\/+$/, "") : d.server;
+  out.topic = ntfyValidTopic(n.topic) ? n.topic : "";
+  out.generic = !!n.generic;
+  return out;
+}
+function ntfyValidTopic(t) { return /^[A-Za-z0-9_-]{16,64}$/.test(String(t || "")); }
+function ntfyNewTopic() {
+  const b = new Uint8Array(16); crypto.getRandomValues(b);
+  return "aula-" + btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function ntfyCfg() { return normNtfy(state.settings.ntfy); }
+function ntfyUrl(n) { n = n || ntfyCfg(); return n.server + "/" + n.topic; }
+/* Publica un mensaje. opts.at (ms) lo programa para más tarde ("at", en segundos Unix).
+   Los parámetros van en la URL y no como headers: así los acentos llegan bien (los headers
+   HTTP no aceptan UTF-8) y el pedido es "simple" para el navegador (sin preflight de CORS).
+   Devuelve true si ntfy lo aceptó. Nunca tira error: sin red, devuelve false. */
+async function ntfySend(title, body, opts = {}) {
+  const n = ntfyCfg();
+  if (!n.topic) return false;
+  const q = new URLSearchParams({ title: String(title || "Aula").slice(0, 120), tags: "books" });
+  if (opts.at) q.set("at", String(Math.round(opts.at / 1000)));
+  try {
+    const r = await fetch(ntfyUrl(n) + "?" + q.toString(), { method: "POST", body: String(body || ""), cache: "no-store" });
+    return r.ok;
+  } catch (e) { return false; }
+}
+function ntfySetup() {
+  const n = ntfyCfg();
+  if (!n.topic) n.topic = ntfyNewTopic();
+  state.settings.ntfy = n; change(); render();
+}
+async function ntfyTest() {
+  const n = ntfyCfg(); if (!n.topic) return;
+  const b = byId("ntfyTestBtn"); if (b) { b.disabled = true; b.textContent = "Mandando…"; }
+  const ok = await ntfySend("Aula", "¡Listo! Así te van a llegar los avisos.");
+  if (ok) {
+    if (!n.on) { n.on = true; state.settings.ntfy = n; change(); }
+    toast("Notificación de prueba enviada: fijate en el celu");
+  } else toast("No se pudo mandar. ¿Tenés conexión?");
+  render();
+}
+function ntfySetGeneric(v) { const n = ntfyCfg(); n.generic = !!v; state.settings.ntfy = n; change(); render(); }
+function ntfyCopy() {
+  const t = ntfyCfg().topic;
+  try { navigator.clipboard.writeText(t).then(() => toast("Copiado: pegalo en ntfy"), () => toast(t)); } catch (e) { toast(t); }
+}
+function ntfyOff() {
+  askConfirm({ title: "Dejar de mandar avisos al celu", body: "Aula deja de mandar avisos a ntfy. Lo que ya estaba programado puede llegar igual. En la app ntfy podés borrar la suscripción.", okLabel: "Desconectar", danger: true,
+    onOk: () => { const n = ntfyCfg(); n.on = false; n.topic = ""; state.settings.ntfy = n; change(); render(); toast("Avisos al celu desconectados"); } });
+}
+function ntfyCardHTML() {
+  const n = ntfyCfg();
+  if (!n.topic) return `<h3>Avisos con la app cerrada</h3>
+    <p class="tiny" style="margin-bottom:10px">Para que los avisos te lleguen al celu aunque Aula esté cerrada, usamos <b>ntfy</b>: una app gratis y sin cuenta.</p>
+    <button class="btn primary" onclick="ntfySetup()">Empezar</button>`;
+  const url = ntfyUrl(n);
+  return `<h3>Avisos con la app cerrada<div class="grow"></div>${n.on ? '<span class="pill ok">activo</span>' : ""}</h3>
+    <ol class="ntfysteps">
+      <li><b>Instalá ntfy</b> en el celu: <a href="https://apps.apple.com/app/ntfy/id1625396347" target="_blank" rel="noopener">App Store</a> · <a href="https://play.google.com/store/apps/details?id=io.heckel.ntfy" target="_blank" rel="noopener">Google Play</a>.</li>
+      <li><b>Suscribite a tu tema.</b> En ntfy tocá “+” y pegá este nombre (es secreto: no lo compartas):
+        <div class="ntfytopic"><code id="ntfyTopic">${esc(n.topic)}</code><button class="btn sm" onclick="ntfyCopy()">Copiar</button></div>
+        <span class="tiny">O abrí <a href="${escA(url)}" target="_blank" rel="noopener">este link</a> desde el celu.</span></li>
+      <li><b>Probá:</b> <button class="btn sm primary" id="ntfyTestBtn" onclick="ntfyTest()">Mandar notificación de prueba</button></li>
+    </ol>
+    <p class="tiny ntfysoon">Por ahora llega la prueba. Que los avisos de tareas y parciales lleguen por acá con Aula cerrada es lo próximo que se suma; no hace falta que vuelvas a configurar nada.</p>
+    <label class="ntfygen"><input type="checkbox" ${n.generic ? "checked" : ""} onchange="ntfySetGeneric(this.checked)"><span><b>Mensaje genérico</b><span class="tiny" style="display:block">Dice “Tenés un aviso de Aula” sin el nombre de la tarea. Útil porque los mensajes pasan por los servidores de ntfy.</span></span></label>
+    <button class="btn sm ghost" style="margin-top:8px;color:var(--bad)" onclick="ntfyOff()">Desconectar</button>`;
+}
 
 /* ======================== NOTIFICACIONES ======================== */
 function checkReminders() {
@@ -5269,6 +5358,7 @@ function viewConfig() {
     <label class="tiny" style="font-weight:700">Días considerados “próximos”</label>
     <input type="number" min="1" max="30" value="${st.upcomingDays}" onchange="state.settings.upcomingDays=parseInt(this.value)||7;change();render()" style="width:90px;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:7px;margin-top:4px" aria-label="Días próximos">
   </div>
+  <div class="card ntfycard" style="margin:0">${ntfyCardHTML()}</div>
   <div class="card" style="margin:0"><h3>Avisos por defecto</h3>
     <label class="tiny" style="font-weight:700;display:block">Parciales y finales</label>
     ${remFieldHTML("cfg_rem_eval", "eval", null, { cfg: true, list: (st.reminderDefaults || {}).eval })}
