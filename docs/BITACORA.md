@@ -6,7 +6,7 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
-## Corrida 00:06– (hora ARG) — S2 (los cambios llegan solos + actualizar a mano) M2 (formularios en el celu) y M1 (deslizar para borrar)
+## Corrida 00:06–00:54 (hora ARG) — S2 (los cambios llegan solos + actualizar a mano) M2 (formularios en el celu) y M1 (deslizar para borrar)
 
 ### M1 · Deslizar una tarea a la derecha para borrarla (Aula 2.44.0)
 
@@ -20,6 +20,7 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 **Salió mal / intentos fallidos:** con la fecha fija de los tests, la tarea tenía la manija de arrastre a la izquierda y el toque caía justo en el círculo de completar, que yo había excluido: el gesto no arrancaba. Lo cambié para que también se pueda empezar ahí (en el celu, el círculo ocupa buena parte del borde izquierdo de la fila). También me faltaba cortar el deslizamiento si la tarea ya estaba levantada para arrastrar; lo vi revisando el diff.
 **Tests:** +5 en `tests/deslizar.spec.js` con toques reales (CDP): corto vuelve y largo borra con Deshacer (y sin scroll de costado), rápido borra, vertical e izquierda no borran y tocar sigue abriendo, serie (cancelar / todas con deshacer / solo esta), tarea que se repite. `npm test`: **341 pasaron, 0 fallaron** (47 saltados a propósito).
 **Capturas:** [deslizando](capturas/M1-deslizando-mobile-light.png) · [pasado el umbral, oscuro](capturas/M1-listo-mobile-dark.png) · [Deshacer](capturas/M1-deshacer-mobile-dark.png) · video: [M1-deslizar.webm](capturas/M1-deslizar.webm)
+**Commits:** `1de5808` feat(tareas): M1.
 **Para Bauti:** en el iPhone probá deslizar una tarea de Hoy despacio (tiene que volver si no llegás) y rápido (se borra). Ojo con scrollear la lista: no debería borrar nada.
 
 ### M2 · Formularios en el celu sin campos encimados (Aula 2.43.0)
