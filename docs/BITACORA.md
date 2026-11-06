@@ -6,6 +6,29 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
+## Corrida 04:05–04:35 (hora ARG) — H1a (datos confiables) y cierre de la noche
+
+**Plan:** era la última corrida (cierre 04:00), así que un solo ítem bien hecho y después publicar. Siguiente en el orden: H1a, la base de todas las estadísticas nuevas. Sin datos confiables, ningún gráfico de H1b–H1f sirve.
+
+**Qué cambió (Aula 2.51.0):**
+- **Al completar una tarea ya no salta una ventana que tapa todo.** Se registra lo estimado en el momento y abajo aparece una barrita con chips: `−30 m · = 45 m · +30 m · +1 h · Otro`. Un toque corrige; si no tocás nada, se va sola a los 9 s y queda lo estimado. Sin estimado, los chips son 15 m / 30 m / 1 h / 2 h y, si no elegís, no se inventa nada.
+- **Configuración → Preferencias:** "Al completar una tarea, preguntar cuánto te llevó". Si lo apagás, usa el estimado sin preguntar.
+- **Cada cambio de día de una tarea queda anotado** en `t.moves` (`{from, to, at}`) y la primera vez en `t.origDate` (el día para el que estaba planificada). Con esto H1b va a poder medir "cumplido en su día" y "postergaciones".
+
+**Decisiones:**
+- *Default = lo estimado, acreditado enseguida.* Antes, saltear el diálogo dejaba la tarea sin tiempo y las estadísticas mentían (diagnóstico #1 de H1). Descarté acreditar recién al cerrar la barra: si cerrás la app con la barra abierta se perdía.
+- *Registrar los movimientos en un solo lugar* (`trackMoves()`, dentro de `change()`): compara el día de cada tarea con el que tenía la última vez. Hay como diez caminos que cambian la fecha (arrastrar, "Mover a…", editor, mover en bloque, planes, series, "Mover todas a hoy"…); tocarlos uno por uno era seguro que se escapaba alguno. Reglas: ponerle día a una tarea que no tenía no es mover; si vuelve al día del que venía (Deshacer o la devolviste) se borra ese movimiento; las que se repiten no cuentan.
+- *Sync:* lo que llega del otro dispositivo **no se anota acá** (`trackMovesReset()` después de aplicar lo remoto, de restaurar, importar y fusionar). Así no hay movimientos duplicados ni de ida y vuelta entre los dos dispositivos. Si el otro todavía tiene la 2.50, sus movimientos simplemente no quedan anotados hasta que se actualice.
+- *Sin migración ni cambio de esquema (sigue el 8).* Los campos son opcionales y solo se agregan: una tarea sin `moves` nunca se movió y su día original es `date`. Subir el esquema a 9 habría hecho que el otro dispositivo, con la 2.50, dejara de sincronizar ("versión más nueva") hasta actualizarse; no valía la pena por dos campos opcionales. Tampoco inventé `origDate` para las tareas viejas: no hay forma de saber si ya se habían movido.
+
+**Salió bien:** las capturas muestran la barra limpia en celu y compu, claro y oscuro; no tapa la lista.
+**Salió mal / intentos fallidos:** el test de Configuración fallaba porque usé `go("settings")` y la vista se llama `config`. Los 4 tests de `dia.spec.js` cerraban el diálogo viejo con "Guardar"; cambié el ayudante para que toque "Listo" en la barra (cambio de interfaz a propósito). No llegué a correr los tests nuevos contra el código viejo antes de implementar (lo hice en el orden inverso por tiempo); fallarían seguro porque `#donebar` no existía.
+**Tests:** +6 en `tests/h1a-datos.spec.js` × 2 (10 tareas con un toque suman todo; chips sin estimado, "Otro" y desmarcar; tiempo a mano y las que se repiten; la opción de Configuración; mover 2 veces + Deshacer + recargar; fixture viejo + sync sin duplicar). `npm test`: **400 pasaron, 0 fallaron** (54 saltados a propósito).
+**Capturas:** [barra, celu claro](capturas/H1a-barra-mobile-light.png) · [celu oscuro](capturas/H1a-barra-mobile-dark.png) · [compu oscuro](capturas/H1a-barra-desktop-dark.png)
+**Para Bauti:** completá un par de tareas en el celu y fijate si la barra te molesta o te sirve. Si preferís que ni aparezca, apagala en Configuración → Preferencias.
+
+---
+
 ## Corrida 03:06–03:35 (hora ARG) — L1c1 (búsqueda y copias), L1c2 (configuración y sincronización) y L1c3 (años)
 
 **Resumen de la corrida:** L1c era un recorrido de varias pantallas, así que lo partí en L1c1, L1c2 y L1c3. Con esto **L1 queda cerrado**: no hay hallazgos "rompe" ni "confunde" abiertos; los "detalle" se repasan en F1. L1c3 (años: "Tus años" y "Nuevo año" en el celu) no encontró nada; Progreso a fondo lo dejé para H1, que lo rehace entero ([captura](capturas/L1c3-anio-nuevo-mobile-dark.png)). Dos commits, `npm test` en verde en cada uno. Versión 2.48.0 → 2.50.0. **No cambia la forma de los datos** (sigue esquema 8): no hizo falta migración.

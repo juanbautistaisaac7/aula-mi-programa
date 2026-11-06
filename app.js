@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.50.0";
+const APP_VERSION = "2.51.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -166,7 +166,40 @@ async function persist() {
   saving = false;
   if (savePending) { savePending = false; persist(); }
 }
-function change() { markDirty(); syncSoon(); ntfyPlanSoon(); }
+function change() { trackMoves(); markDirty(); syncSoon(); ntfyPlanSoon(); }
+/* H1a · Historial de cambios de día. Cada vez que se guarda, se compara el día de cada
+   tarea con el que tenía la última vez; si cambió, se anota en t.moves [{from, to, at}] y,
+   la primera vez, t.origDate (el día para el que estaba planificada). Así cualquier forma
+   de mover (arrastrar, "Mover a…", editor, mover en bloque, planes) queda registrada sin
+   tocar cada lugar. Reglas:
+   - Asignar un día a una tarea que no tenía no es mover (no hay plan previo).
+   - Si vuelve al día del que venía en su último movimiento (Deshacer, o la devolviste),
+     se borra ese movimiento: no fue una postergación.
+   - Las que se repiten no tienen "día" propio: no se registran.
+   - Lo que llega por la sincronización no se registra acá (lo anota el dispositivo que
+     movió): trackMovesReset() se llama después de aplicar lo remoto.
+   Campos opcionales y solo agregados: una tarea sin moves nunca se movió y su día
+   original es t.date. No hace falta migración ni cambia el esquema (ver bitácora H1a). */
+let moveDates = null;
+function trackMovesReset() { moveDates = state ? new Map(state.tasks.map(t => [t.id, t.date || null])) : null; }
+function trackMoves(now) {
+  if (!state || !Array.isArray(state.tasks)) return;
+  if (!moveDates) { trackMovesReset(); return; }
+  now = now || Date.now();
+  for (const t of state.tasks) {
+    const nd = t.date || null;
+    if (!moveDates.has(t.id)) { moveDates.set(t.id, nd); continue; }
+    const od = moveDates.get(t.id);
+    if (od === nd) continue;
+    moveDates.set(t.id, nd);
+    if (t.recur || !od) continue;
+    const mv = Array.isArray(t.moves) ? t.moves : null, last = mv && mv[mv.length - 1];
+    if (last && last.to === nd) continue; // ya estaba anotado (p. ej. vino así)
+    if (last && last.from === nd && last.to === od) { mv.pop(); if (!mv.length) { delete t.moves; if (t.origDate === nd) delete t.origDate; } continue; }
+    if (!t.origDate) t.origDate = od;
+    (t.moves = mv || []).push({ from: od, to: nd, at: now });
+  }
+}
 /* Guardado sincrónico de último momento (al cerrar, recargar o mandar la app al fondo).
    IndexedDB es asíncrono y el navegador puede cortar la transacción cuando mata la
    página; localStorage es sincrónico y siempre llega. loadState usa la copia de
@@ -397,6 +430,7 @@ function syncApply(m) {
   normalizeState(state);
   yearSplit();
   syncResetHashes();
+  trackMovesReset();
   if (canon(syncLocal().data) === before) return false;
   markDirty();
   try { applyTheme(); document.documentElement.style.setProperty("--acc", state.settings.accent); } catch (e) {}
@@ -1071,7 +1105,7 @@ function yearJoin() {
   yearHidden = null;
 }
 /* Reemplaza el estado entero (restaurar, importar, reiniciar…) y vuelve a separar por año. */
-function setWholeState(s) { yearHidden = null; state = s; yearSplit(); }
+function setWholeState(s) { yearHidden = null; state = s; yearSplit(); trackMovesReset(); }
 function setActiveYear(id) {
   if (!yearById(id) || id === activeYearId()) return;
   yearJoin();
@@ -1772,10 +1806,10 @@ function toggleTask(id, date) {
   if (t.recur) {
     const d = date || todayISO();
     t.recurDone = t.recurDone || {};
-    if (t.recurDone[d]) { delete t.recurDone[d]; uncreditTaskDone(t, d); }
+    if (t.recurDone[d]) { delete t.recurDone[d]; uncreditTaskDone(t, d); if (ui.doneSel && ui.doneSel.id === id) hideDoneBar(); }
     else { t.recurDone[d] = 1; bumpDayDone(d); askDoneTime(id, d); }
   } else if (t.status === "done") {
-    t.status = "pend"; t.doneAt = null; uncreditTaskDone(t);
+    t.status = "pend"; t.doneAt = null; uncreditTaskDone(t); if (ui.doneSel && ui.doneSel.id === id) hideDoneBar();
   } else {
     t.status = "done"; t.doneAt = todayISO(); bumpDayDone(todayISO()); askDoneTime(id);
   }
@@ -1793,38 +1827,77 @@ function moveDoneDate(t, nd) {
   change();
 }
 function bumpDayDone(d) { state.dayLog[d] = state.dayLog[d] || {}; state.dayLog[d].tasksDone = (state.dayLog[d].tasksDone || 0) + 1; }
-/* Al completar una tarea se pregunta cuánto llevó realmente: ese tiempo (no el estimado)
-   es el que suma a las estadísticas de la materia. Se descuenta lo ya registrado
-   (a mano, o con el pomodoro en versiones viejas) para no contar doble, y todo se revierte al desmarcar. */
+/* H1a · Al completar una tarea se registra su tiempo con UN toque. Por defecto cuenta lo
+   estimado (se acredita en el momento, así saltear la pregunta no deja la estadística
+   vacía) y aparece abajo una barrita que NO bloquea, con chips para corregir
+   (-30 m · = · +30 m · +1 h · Otro). Si no tocás nada, se va sola y queda lo estimado.
+   Sin estimado, los chips son tiempos fijos y si no elegís, no se registra nada.
+   Se descuenta lo ya registrado a mano (o con el pomodoro de versiones viejas) para no
+   contar doble, y todo se revierte al desmarcar. Opción en Configuración:
+   settings.doneAsk === false → no preguntar, usar el estimado. */
+const DONEBAR_MS = 9000;
+let doneBarTimer = null;
 function askDoneTime(taskId, date) {
   const t = taskById(taskId); if (!t) return;
-  const already = t.recur ? 0 : (t.realMin || 0);
-  const box = byId("confirmbox"), bg = byId("confirmbg");
-  bg.classList.add("open");
-  box.innerHTML = `<h3>Tarea completada</h3>
-    <p class="muted">¿Cuánto tiempo te llevó “${esc(t.title.slice(0, 55))}”?${already ? " Ya tenés " + fmtMin(already) + " cronometrados: se suma solo la diferencia." : ""}</p>
-    <label style="display:block;font-size:.66rem;color:var(--tx2);margin:12px 0 4px;text-transform:uppercase;letter-spacing:.06em;font-weight:700" for="dt_min">Tiempo real (minutos)</label>
-    <input id="dt_min" type="number" min="0" step="5" value="${t.estMin || 60}" style="width:130px;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:8px"
-      onkeydown="if(event.key==='Enter')resolveDoneTime('${t.id}','${date || ""}','input')">
-    <div class="mfoot">
-      <button class="btn" onclick="resolveDoneTime('${t.id}','${date || ""}',null)">Sin tiempo</button>
-      <div class="grow"></div>
-      ${t.estMin ? `<button class="btn" onclick="resolveDoneTime('${t.id}','${date || ""}','est')">Usar estimado (${fmtMin(t.estMin)})</button>` : ""}
-      <button class="btn primary" onclick="resolveDoneTime('${t.id}','${date || ""}','input')">Guardar</button>
-    </div>`;
-  setTimeout(() => { const i = byId("dt_min"); if (i && i.focus) i.focus(); }, 40);
+  const est = t.estMin || 0;
+  if (est) creditDone(t, date, est, true);
+  if (state.settings.doneAsk === false) { toast(est ? "Hecha · registré " + fmtMin(Math.max(est, t.recur ? 0 : t.realMin || 0)) : "Tarea completada"); return; }
+  ui.doneSel = { id: t.id, date: date || "", min: est || null };
+  paintDoneBar();
 }
-function resolveDoneTime(taskId, date, mode) {
-  closeConfirm();
-  const t = taskById(taskId); if (!t) { render(); return; }
-  if (mode !== null) {
-    const min = mode === "est" ? (t.estMin || 0) : Math.max(0, parseInt((byId("dt_min") || {}).value) || 0);
-    const already = t.recur ? 0 : (t.realMin || 0);
-    const credit = Math.max(0, min - already);
-    if (credit > 0) addSession(credit, { taskId: t.id, date: t.recur ? (date || todayISO()) : (t.doneAt || todayISO()), auto: true, note: "Tarea completada (tiempo real)" });
-    if (credit > 0 || already) toast("Registradas " + fmtMin(Math.max(min, already)) + " en la tarea");
-    else toast("Tarea completada");
-  } else toast("Tarea completada (sin tiempo registrado)");
+/* Deja registrado `min` como el tiempo de la tarea (reemplaza lo que se había acreditado al completarla). */
+function creditDone(t, date, min, quiet) {
+  uncreditTaskDone(t, t.recur ? (date || todayISO()) : undefined);
+  const already = t.recur ? 0 : (t.realMin || 0);
+  const credit = Math.max(0, Math.round(min) - already);
+  if (credit > 0) addSession(credit, { taskId: t.id, date: t.recur ? (date || todayISO()) : (t.doneAt || todayISO()), auto: true, note: "Tarea completada (tiempo real)" });
+  if (!quiet) change();
+}
+function doneChips(est) {
+  if (!est) return [[15, "15 m"], [30, "30 m"], [60, "1 h"], [120, "2 h"]];
+  const c = [];
+  if (est > 30) c.push([est - 30, "−30 m"]);
+  c.push([est, "= " + fmtMin(est)], [est + 30, "+30 m"], [est + 60, "+1 h"]);
+  return c;
+}
+function paintDoneBar(msg) {
+  const bar = byId("donebar"), d = ui.doneSel; if (!bar) return;
+  const t = d && taskById(d.id);
+  if (!t) { hideDoneBar(); return; }
+  const est = t.estMin || 0;
+  bar.innerHTML = `<div class="db-top"><span class="db-ok" aria-hidden="true">✓</span>
+      <div class="db-txt"><div class="db-t">${esc(t.title.slice(0, 60))}</div>
+      <div class="db-s" id="db_msg">${msg ? esc(msg) : d.min ? "Registré " + fmtMin(d.min) + ". ¿Te llevó otro tiempo?" : "¿Cuánto te llevó?"}</div></div>
+      <button class="db-x" onclick="hideDoneBar()" aria-label="Listo">${d.min ? "Listo" : "Ahora no"}</button></div>
+    <div class="db-chips" role="group" aria-label="Tiempo que te llevó">
+      ${doneChips(est).map(([m, l]) => `<button class="db-chip${d.min === m ? " on" : ""}" aria-pressed="${d.min === m}" onclick="pickDoneTime(${m})">${l}</button>`).join("")}
+      <button class="db-chip" id="db_other" onclick="doneOther()">Otro</button>
+    </div>
+    <div class="db-other" id="db_otherrow" hidden><input id="db_min" type="number" inputmode="numeric" min="0" step="5" value="${d.min || est || 30}" aria-label="Minutos"
+      onkeydown="if(event.key==='Enter')pickDoneTime(this.value)"><span class="tiny">min</span><button class="btn primary sm" onclick="pickDoneTime(byId('db_min').value)">Guardar</button></div>`;
+  bar.classList.add("open");
+  document.body.classList.add("has-donebar");
+  armDoneBar();
+}
+function armDoneBar(ms) { clearTimeout(doneBarTimer); doneBarTimer = setTimeout(hideDoneBar, ms || DONEBAR_MS); }
+function hideDoneBar() {
+  clearTimeout(doneBarTimer); ui.doneSel = null;
+  const bar = byId("donebar"); if (bar) bar.classList.remove("open");
+  document.body.classList.remove("has-donebar");
+}
+function doneOther() {
+  const r = byId("db_otherrow"); if (!r) return;
+  r.hidden = false; byId("db_other").hidden = true;
+  clearTimeout(doneBarTimer); // escribiendo: no se va sola
+  const i = byId("db_min"); if (i) { i.focus(); i.select && i.select(); }
+}
+function pickDoneTime(v) {
+  const d = ui.doneSel, t = d && taskById(d.id); if (!t) { hideDoneBar(); return; }
+  const min = Math.max(0, Math.min(24 * 60, parseInt(v) || 0));
+  creditDone(t, d.date || null, min);
+  d.min = min || null;
+  paintDoneBar(min ? "Registré " + fmtMin(Math.max(min, t.recur ? 0 : t.realMin || 0)) + " ✓" : "Sin tiempo registrado");
+  armDoneBar(1600);
   render();
 }
 function uncreditTaskDone(t, recurDate) {
@@ -5207,7 +5280,7 @@ function importJSON(ev) {
     if (isV1) {
       askConfirm({
         title: "Archivo de la versión anterior", body: "Este archivo es de la app anterior. Se migrará su contenido y se agregará al estado actual.", okLabel: "Migrar e importar",
-        onOk: () => { try { localStorage.setItem(OLD_LS_KEY, JSON.stringify(s)); } catch (e) {} yearJoin(); const tmp = normalizeState(baseState()); tmp.subjects = state.subjects.length ? JSON.parse(JSON.stringify(state.subjects)) : initialSubjects(); if (migrateV1(tmp)) { migrateState(tmp); mergeStates(state, tmp); yearSplit(); change(); render(); toast("Datos de la versión anterior importados"); } else { yearSplit(); toast("No se pudo migrar el archivo"); } }
+        onOk: () => { try { localStorage.setItem(OLD_LS_KEY, JSON.stringify(s)); } catch (e) {} yearJoin(); const tmp = normalizeState(baseState()); tmp.subjects = state.subjects.length ? JSON.parse(JSON.stringify(state.subjects)) : initialSubjects(); if (migrateV1(tmp)) { migrateState(tmp); mergeStates(state, tmp); yearSplit(); trackMovesReset(); change(); render(); toast("Datos de la versión anterior importados"); } else { yearSplit(); toast("No se pudo migrar el archivo"); } }
       });
       ev.target.value = ""; return;
     }
@@ -5220,7 +5293,7 @@ function importJSON(ev) {
       <div class="mfoot"><button class="btn" onclick="closeConfirm()">Cancelar</button>
       <button class="btn" id="impMerge">Fusionar</button>
       <button class="btn danger" id="impReplace">Reemplazar todo</button></div>`;
-    byId("impMerge").onclick = () => { const src = normalizeState(s); migrateState(src); yearJoin(); mergeStates(state, src); yearSplit(); closeConfirm(); change(); render(); toast("Datos fusionados"); };
+    byId("impMerge").onclick = () => { const src = normalizeState(s); migrateState(src); yearJoin(); mergeStates(state, src); yearSplit(); trackMovesReset(); closeConfirm(); change(); render(); toast("Datos fusionados"); };
     byId("impReplace").onclick = () => {
       closeConfirm();
       askConfirm({
@@ -5483,6 +5556,8 @@ function viewConfig() {
     <p class="tiny" style="margin-top:6px">Lo que marques antes de esa hora cuenta para el día anterior. Ideal si estudiás hasta tarde.</p>
     <div class="hr"></div>
     <label style="display:flex;gap:8px;align-items:center;font-size:.8rem;cursor:pointer"><input type="checkbox" style="width:auto" ${chk(st.showDone)} onchange="state.settings.showDone=this.checked;change();render()">Mostrar tareas completadas en la lista</label>
+    <label style="display:flex;gap:8px;align-items:center;font-size:.8rem;cursor:pointer;min-height:44px"><input type="checkbox" id="cfg_doneask" style="width:auto" ${chk(st.doneAsk !== false)} onchange="state.settings.doneAsk=this.checked;change();render()">Al completar una tarea, preguntar cuánto te llevó</label>
+    <p class="tiny" style="margin-top:2px">Si lo apagás, se registra lo estimado sin preguntar.</p>
     <label class="tiny" style="font-weight:700;display:block;margin-top:12px" for="cfg_donekeep">Sacar de la lista las hechas hace más de</label>
     <select id="cfg_donekeep" style="margin-top:6px;width:100%;max-width:220px;min-height:40px;background:var(--card2);color:var(--tx);border:1px solid var(--line);border-radius:8px;padding:7px" onchange="state.settings.doneKeepDays=parseInt(this.value)||0;change();render()">
       ${[3, 5, 7, 10, 14, 30, 0].map(n => `<option value="${n}" ${(st.doneKeepDays | 0) === n ? "selected" : ""}>${n ? n + " días" : "Nunca"}</option>`).join("")}</select>
@@ -6435,6 +6510,7 @@ async function init() {
   await loadState();
   yearSplit();
   syncResetHashes();
+  trackMovesReset();
   applyTheme();
   try { localStorage.setItem("aula-theme", state.settings.theme); localStorage.setItem("aula-accent", state.settings.accent); } catch (e) {}
   document.documentElement.style.setProperty("--acc", state.settings.accent);

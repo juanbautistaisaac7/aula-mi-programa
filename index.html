@@ -622,6 +622,25 @@ input[type=date],input[type=time]{min-width:0}
 .mfoot{display:flex;gap:8px;margin-top:18px;justify-content:flex-end;align-items:center;flex-wrap:wrap}
 .mfoot .grow{flex:1}
 /* toast + undo */
+/* H1a · barrita "¿cuánto te llevó?" al completar: abajo, no bloquea */
+#donebar{position:fixed;left:50%;bottom:calc(14px + env(safe-area-inset-bottom));transform:translate(-50%,24px);width:min(440px,calc(100vw - 24px));background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow-lg);padding:12px 12px 12px 14px;z-index:115;opacity:0;pointer-events:none;transition:opacity .2s ease,transform .22s cubic-bezier(.2,.8,.2,1)}
+#donebar.open{opacity:1;transform:translate(-50%,0);pointer-events:auto}
+#donebar .db-top{display:flex;align-items:center;gap:10px}
+#donebar .db-ok{flex:none;width:26px;height:26px;border-radius:13px;background:var(--ok,#34c759);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.8rem;font-weight:800}
+#donebar .db-txt{flex:1;min-width:0}
+#donebar .db-t{font-size:.86rem;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#donebar .db-s{font-size:.76rem;color:var(--tx2);margin-top:1px}
+#donebar .db-x{flex:none;min-height:44px;min-width:44px;padding:0 10px;background:transparent;border:0;color:var(--acc);font-weight:650;font-size:.84rem;cursor:pointer;font-family:inherit;border-radius:10px}
+#donebar .db-chips{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+#donebar .db-chip{flex:1 1 0;min-width:56px;min-height:44px;padding:0 8px;border-radius:12px;border:1px solid var(--line);background:var(--card2);color:var(--tx);font-size:.82rem;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap;transition:background .15s,border-color .15s}
+#donebar .db-chip.on{background:var(--acc);border-color:var(--acc);color:#fff}
+#donebar .db-chip:active{transform:scale(.97)}
+#donebar .db-other{display:flex;gap:8px;align-items:center;margin-top:10px}
+#donebar .db-other[hidden]{display:none}
+#donebar .db-other input{width:96px;min-height:44px;font-size:16px;background:var(--card2);color:var(--tx);border:1px solid var(--line);border-radius:10px;padding:0 10px}
+#donebar .db-other .btn{margin-left:auto;min-height:44px}
+body.has-donebar #toast{bottom:calc(150px + env(safe-area-inset-bottom))}
+@media (prefers-reduced-motion:reduce){#donebar{transition:none}}
 #toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(16px);background:var(--tx);color:var(--bg);padding:9px 16px;border-radius:9px;font-size:.79rem;font-weight:600;opacity:0;transition:.22s;z-index:120;display:flex;gap:14px;align-items:center;box-shadow:var(--shadow-lg);pointer-events:none;max-width:92vw}
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0);pointer-events:auto}
 #toast button{background:transparent;border:none;color:var(--acc);font-weight:700;cursor:pointer;font-size:.79rem;filter:brightness(1.4)}
@@ -746,6 +765,7 @@ body:has(#wrapped.open) #toast{z-index:310}
 <div class="mbg" id="searchbg"><div class="modal" id="searchbox2" role="dialog" aria-modal="true"></div></div>
 <div class="mbg" id="sheetbg"><div id="sheet" role="dialog" aria-modal="true" aria-label="Mover a otro día"></div></div>
 <div id="selbar" role="toolbar" aria-label="Acciones sobre las tareas seleccionadas"></div>
+<div id="donebar" role="region" aria-label="Tiempo de la tarea completada" aria-live="polite"></div>
 <div id="toast" role="status"></div>
 
 <script src="app.js"></script>

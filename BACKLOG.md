@@ -253,7 +253,7 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
 
   **Principio:** cada pantalla responde una pregunta y, si se puede, termina en una acción ("mové 2 tareas del jueves", "empezá a preparar AN"). Modelo Apple Salud: **Resumen** con tarjetas → tocás una → **detalle con historial** y selector `S · M · Cuatri · Año · Todo` + flechas para ir al período anterior. Un solo estilo de gráfico para toda la app.
 
-  - [ ] **H1a · Datos confiables (sin fricción)**
+  - [x] **H1a · Datos confiables (sin fricción)** *(hecho 6/11 04:05, Aula 2.51.0: barrita de un toque al completar, opción "no preguntar", `moves`/`origDate` sin cambiar el esquema; ver bitácora)*
     - Al completar una tarea: un toque. Por defecto "lo estimado" con chips rápidos (`-30 m · = · +30 m · +1 h · otro`) en una hoja que no bloquea. Opción en Configuración: "no preguntar, usar el estimado".
     - Registrar **cuándo** se movió una tarea (`moves: [{from, to, at}]`) y su fecha original (`origDate`), para medir "cumplido en el día" y "postergaciones". Migración con copia y test con el fixture.
     - Test: completar 10 tareas con un toque cada una y que todas sumen tiempo; mover una tarea 2 veces y que quede registrado.
