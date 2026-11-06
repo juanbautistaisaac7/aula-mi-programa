@@ -30,7 +30,7 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 **Salió mal / intentos fallidos:** primero intenté simular "teléfono con hover" en el test con CDP (`Emulation.setEmulatedMedia`) y no anduvo: Chrome ignora `hover` ahí. Lo resolví probando en desktop con ventana angosta, que es el mismo caso. A 320 px los botones de 44 px empujaban el "+" fuera de la pantalla; lo vi con una prueba y lo arreglé. La etiqueta "tareas de hoy" se cortaba a 320 px: pasó a "hechas".
 **Tests:** +9 en `tests/q1-celu.spec.js` (títulos en un renglón en Hoy e Inicio con y sin hover, sin "atrasada" repetido, Inicio corto y en una fila, Flexibles, botón de tema, cambio de formato al angostar, Mover todas a hoy con Deshacer). Actualicé 3 tests viejos que usaban "Estudio de hoy" en el Inicio del celu (`formularios-celu`, `logica-l1b` #7 y `sin-pomodoro`): ahora viene plegado a propósito, así que lo abren primero (helper `abrirEstudio`). `npm test`: **350 pasaron, 0 fallaron** (52 saltados a propósito).
 **Capturas:** [Inicio celu](capturas/Q1-home-mobile-light.png) · [Inicio celu oscuro](capturas/Q1-home-mobile-dark.png) · [Hoy celu oscuro](capturas/Q1-today-mobile-dark.png) · [Inicio compu](capturas/Q1-home-desktop-light.png) · [Hoy compu](capturas/Q1-today-desktop-dark.png)
-**Commits:** ver abajo.
+**Commits:** `be1ccad` feat(inicio): Q1.
 **Para Bauti:** abrí Inicio en el iPhone: tendría que entrar casi en una pantalla y media. Decime si extrañás algo que se fue de ahí (está todo en Hoy). Probá el botón de tema arriba: sol → luna → automático (con la "A").
 
 ---
