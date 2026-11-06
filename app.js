@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.41.0";
+const APP_VERSION = "2.42.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -361,7 +361,7 @@ let syncCfg = null, syncBusy = false, syncAgain = false, syncSoonT = null, syncS
 function syncLoadCfg() { try { syncCfg = JSON.parse(localStorage.getItem(SYNC_CFG_KEY) || "null"); } catch (e) { syncCfg = null; } }
 function syncSaveCfg() { try { if (syncCfg) localStorage.setItem(SYNC_CFG_KEY, JSON.stringify(syncCfg)); else localStorage.removeItem(SYNC_CFG_KEY); } catch (e) {} }
 function syncOn() { return !!(syncCfg && syncCfg.key); }
-const SYNC_TXT = { busy: "sincronizando…", ok: "sincronizado", offline: "sin conexión · se sube después", nokv: "falta activar la sincronización", badkey: "código de sincronización inválido", newer: "actualizá Aula en este dispositivo", error: "no se pudo sincronizar" };
+const SYNC_TXT = { busy: "actualizando…", ok: "al día", offline: "sin conexión · se sube después", nokv: "falta activar la sincronización", badkey: "código de sincronización inválido", newer: "actualizá Aula en este dispositivo", error: "no se pudo sincronizar" };
 function syncSetStatus(kind) {
   syncStat = { kind, at: Date.now() };
   syncPaint();
@@ -370,8 +370,10 @@ function syncSetStatus(kind) {
 function syncPaint() {
   const el = byId("saveInd"), t = byId("saveTxt"); if (!el || !t || el.classList.contains("saving")) return;
   if (!syncOn()) { t.textContent = "todo guardado"; el.className = ""; return; }
-  t.textContent = SYNC_TXT[syncStat.kind] || "todo guardado";
+  const recien = syncStat.kind === "ok" && syncStat.manualAt && Date.now() - syncStat.manualAt < 4000;
+  t.textContent = (SYNC_TXT[syncStat.kind] || "todo guardado") + (recien ? " · recién" : "");
   el.className = "sync-" + syncStat.kind;
+  if (recien) { clearTimeout(syncPaint.t); syncPaint.t = setTimeout(syncPaint, 4100 - (Date.now() - syncStat.manualAt)); }
 }
 function canon(x) {
   if (Array.isArray(x)) return "[" + x.map(canon).join(",") + "]";
@@ -400,30 +402,53 @@ function syncApply(m) {
   render();
   return true;
 }
-async function syncFetch(method, body) {
+async function syncFetch(method, body, have) {
   const ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
   const tm = setTimeout(() => { if (ctl) ctl.abort(); }, 20000);
+  const headers = { authorization: "Bearer " + syncCfg.key, "content-type": "application/json" };
+  if (have != null) headers["x-aula-have"] = String(have);
   try {
-    const r = await fetch(SYNC_URL, { method, cache: "no-store", signal: ctl ? ctl.signal : undefined,
-      headers: { authorization: "Bearer " + syncCfg.key, "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+    const r = await fetch(SYNC_URL, { method, cache: "no-store", signal: ctl ? ctl.signal : undefined, headers, body: body ? JSON.stringify(body) : undefined });
     let j = null; try { j = await r.json(); } catch (e) {}
+    if (r.ok && (!j || typeof j !== "object")) throw new Error("respuesta incompleta"); // cortada a la mitad: como sin conexión, nunca "no hay nada"
     return { status: r.status, body: j };
   } finally { clearTimeout(tm); }
 }
 async function syncBackup() {
   try { if (db) await idbPut("backups", "presync-" + Date.now(), { ts: Date.now(), label: "Antes de sincronizar por primera vez", version: APP_VERSION, data: JSON.stringify(fullState()) }); } catch (e) {}
 }
-async function syncNow() {
+/* S2 · Lo último que quedó acordado con el servidor (en memoria). Si lo tengo, las
+   pasadas siguientes solo preguntan "¿hay algo más nuevo que la versión N?" y el
+   servidor contesta { same: true } sin mandar el documento: barato cada 10 s. */
+let syncAgreed = null, syncLastPass = 0, syncDeferred = false, syncManual = false;
+const SYNC_POLL_MS = 10000;
+/* Si estás escribiendo (un formulario abierto o un campo con foco), las pasadas
+   automáticas esperan: lo de otro dispositivo se aplica cuando terminás. */
+function syncEditing() {
+  for (const id of ["modalbg", "confirmbg", "searchbg", "sheetbg"]) { const el = byId(id); if (el && el.classList.contains("open")) return true; }
+  const a = document.activeElement;
+  return !!(a && a !== document.body && (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || a.isContentEditable) && !a.readOnly);
+}
+function syncResume() { if (syncDeferred && !syncEditing()) { syncDeferred = false; syncSoon(300); } }
+/* manual: lo pidió Bauti (tocar el indicador, tirar hacia abajo): muestra "actualizando…"
+   y no espera aunque haya un campo con foco. Las automáticas no muestran nada si no hay novedades. */
+async function syncNow(manual) {
   if (!syncOn() || !state) return;
+  manual = manual === true;
+  if (!manual && syncEditing()) { syncDeferred = true; return; }
+  if (manual) syncManual = true;
   if (syncBusy) { syncAgain = true; return; }
-  syncBusy = true; clearTimeout(syncSoonT); syncSetStatus("busy");
+  syncBusy = true; clearTimeout(syncSoonT);
+  if (manual || syncStat.kind === "off") syncSetStatus("busy"); // las automáticas no titilan "actualizando…" cada 10 s (tampoco sin conexión)
   try {
-    let doc = await syncFetch("GET");
+    const known = syncAgreed != null && Number.isInteger(syncCfg.version) && syncCfg.version > 0;
+    let doc = await syncFetch("GET", null, known ? syncCfg.version : null);
     for (let attempt = 0; attempt < 4; attempt++) {
       if (doc.status === 503) return syncSetStatus("nokv");
       if (doc.status === 401) return syncSetStatus("badkey");
       if (![200, 404, 409].includes(doc.status)) return syncSetStatus("error");
-      const remote = doc.body && doc.body.data && typeof doc.body.data === "object" ? doc.body : null;
+      const unchanged = !!(doc.body && doc.body.same === true && doc.status === 200);
+      const remote = !unchanged && doc.body && doc.body.data && typeof doc.body.data === "object" ? doc.body : null;
       const baseVersion = (doc.body && Number.isInteger(doc.body.version)) ? doc.body.version : 0;
       if (remote && Number(remote.data.schema) > SCHEMA_VERSION) return syncSetStatus("newer");
       if (remote && !syncCfg.merged) await syncBackup();
@@ -434,7 +459,9 @@ async function syncNow() {
       }
       const mine = syncLocal();
       const payload = { app: APP_VERSION, schema: SCHEMA_VERSION, state: mine.data, stamps: mine.stamps, tombs: mine.tombs };
-      const same = remote && canon({ s: payload.state, a: payload.stamps, b: payload.tombs }) === canon({ s: remote.data.state, a: remote.data.stamps || {}, b: remote.data.tombs || {} });
+      const mineCanon = canon({ s: payload.state, a: payload.stamps, b: payload.tombs });
+      const same = unchanged ? mineCanon === syncAgreed
+        : !!remote && mineCanon === canon({ s: remote.data.state, a: remote.data.stamps || {}, b: remote.data.tombs || {} });
       let version = baseVersion;
       if (!same) {
         const put = await syncFetch("PUT", { baseVersion, data: payload });
@@ -442,16 +469,22 @@ async function syncNow() {
         if (put.status !== 200) return syncSetStatus(put.status === 503 ? "nokv" : put.status === 401 ? "badkey" : "error");
         version = put.body.version;
       }
+      syncAgreed = mineCanon;
       syncCfg.version = version; syncCfg.merged = true; syncCfg.lastSync = Date.now(); syncSaveCfg();
-      return syncSetStatus("ok");
+      if (syncStat.kind !== "ok" || manual || syncManual) { syncSetStatus("ok"); if (syncManual) syncStat.manualAt = Date.now(); syncManual = false; syncPaint(); }
+      else syncStat.at = Date.now();
+      return;
     }
     syncSetStatus("error");
   } catch (e) { syncSetStatus("offline"); }
   finally {
-    syncBusy = false;
-    if (syncAgain) { syncAgain = false; syncSoon(1000); }
+    syncBusy = false; syncLastPass = Date.now();
+    if (syncAgain) { syncAgain = false; syncSoon(syncManual ? 0 : 1000); }
   }
 }
+/* Disparadores "volví a la app" (visibilitychange, focus, pageshow, online): pueden
+   llegar dos o tres juntos; con uno alcanza. */
+function syncWake() { if (syncOn() && Date.now() - syncLastPass > 2000) syncNow(); }
 function syncSoon(ms) { if (!syncOn()) return; clearTimeout(syncSoonT); syncSoonT = setTimeout(syncNow, ms == null ? 4000 : ms); }
 function syncNewKey() {
   const b = new Uint8Array(16); crypto.getRandomValues(b);
@@ -469,9 +502,78 @@ function syncConnect(key) {
 function syncDisconnect() { syncCfg = null; syncSaveCfg(); clearTimeout(syncSoonT); syncSetStatus("off"); }
 function syncInit() {
   syncLoadCfg();
-  if (!syncOn()) return;
-  setTimeout(syncNow, 800);
-  setInterval(() => { if (document.visibilityState === "visible") syncNow(); }, 60000);
+  if (syncOn()) setTimeout(syncNow, 800);
+  // S2 · con la app a la vista, cada ~10 s pregunta si hay algo nuevo (la respuesta "nada" pesa ~25 bytes)
+  setInterval(() => {
+    if (!syncOn() || document.visibilityState !== "visible" || (typeof navigator !== "undefined" && navigator.onLine === false)) return;
+    if (Date.now() - syncLastPass >= SYNC_POLL_MS - 1500) syncNow(); else syncResume();
+  }, SYNC_POLL_MS);
+  window.addEventListener("focus", syncWake);
+  window.addEventListener("pageshow", syncWake);
+  window.addEventListener("online", syncWake);
+  document.addEventListener("focusout", () => setTimeout(syncResume, 50));
+  document.addEventListener("touchstart", ptrStart, { passive: true });
+  document.addEventListener("touchmove", ptrMove, { passive: true });
+  document.addEventListener("touchend", ptrEnd, { passive: true });
+  document.addEventListener("touchcancel", ptrCancel, { passive: true });
+}
+
+/* S2 · Tirar hacia abajo para actualizar (celu). Solo con la página arriba de todo,
+   un dedo, gesto claramente vertical y sin un arrastre de tarea en curso (C5).
+   Resistencia 0,5: hay que tirar ~130 px para que se active. */
+const PTR_GO = 64, PTR_MAX = 92;
+let ptr = null;
+function ptrEl() {
+  let el = byId("ptr");
+  if (!el) { el = document.createElement("div"); el.id = "ptr"; el.setAttribute("aria-hidden", "true"); el.innerHTML = '<span class="ptrarrow">↓</span><span class="ptrspin"></span>'; document.body.appendChild(el); }
+  return el;
+}
+function ptrPaint(d) {
+  const el = ptrEl();
+  el.style.transform = "translate(-50%," + Math.round(d) + "px)";
+  el.style.opacity = String(Math.min(1, d / PTR_GO));
+  const ready = d >= PTR_GO;
+  if (ready && !el.classList.contains("ready") && navigator.vibrate) { try { navigator.vibrate(8); } catch (e) {} }
+  el.classList.toggle("ready", ready);
+}
+function ptrStart(e) {
+  ptr = null;
+  if (!syncOn() || e.touches.length !== 1 || window.scrollY > 0 || syncEditing() || (drag && drag.state !== "press")) return;
+  const tg = e.target;
+  if (tg && tg.closest && tg.closest("#sidebar,#topbar,#selbar,.wstory,.cal")) return;
+  if (byId("ptr") && byId("ptr").classList.contains("on")) return;
+  ptr = { x: e.touches[0].clientX, y: e.touches[0].clientY, d: 0, axis: null };
+}
+function ptrMove(e) {
+  if (!ptr) return;
+  const t = e.touches[0], dx = t.clientX - ptr.x, dy = t.clientY - ptr.y;
+  if (!ptr.axis) {
+    if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+    ptr.axis = dy > 0 && Math.abs(dy) > Math.abs(dx) * 1.5 ? "y" : "x";
+    if (ptr.axis === "y") ptrEl().classList.add("pull");
+  }
+  if (ptr.axis !== "y" || window.scrollY > 0 || (drag && drag.state !== "press")) { ptrCancel(); return; }
+  ptr.d = Math.min(PTR_MAX, Math.max(0, dy) * 0.5);
+  ptrPaint(ptr.d);
+}
+function ptrCancel() {
+  const el = byId("ptr"); ptr = null;
+  if (el && !el.classList.contains("on")) { el.classList.remove("pull", "ready"); el.style.transform = ""; el.style.opacity = ""; }
+}
+async function ptrEnd() {
+  if (!ptr) return;
+  const go = ptr.axis === "y" && ptr.d >= PTR_GO;
+  if (!go) return ptrCancel();
+  ptr = null;
+  const el = ptrEl();
+  el.classList.remove("pull", "ready"); el.classList.add("on");
+  el.style.transform = ""; el.style.opacity = "";
+  const t0 = Date.now();
+  try { await syncNow(true); } catch (e) {}
+  while (syncBusy) await new Promise(r => setTimeout(r, 100));
+  const wait = 450 - (Date.now() - t0); // que se llegue a ver el "actualizando"
+  if (wait > 0) await new Promise(r => setTimeout(r, wait));
+  el.classList.remove("on");
 }
 
 /* ============================ QR (S1c) ============================
@@ -616,7 +718,7 @@ function syncCardHTML() {
   const dot = { ok: "ok", busy: "busy", offline: "warn", nokv: "warn", newer: "warn", badkey: "bad", error: "bad" }[k] || "ok";
   h += `<div class="syncstat"><span class="syncdot ${dot}"></span><div class="grow"><b id="sync_stattxt">${esc(k === "off" ? "Conectado" : capitalize(SYNC_TXT[k] || "conectado"))}</b>
       <div class="tiny">${syncCfg.lastSync ? "Última sincronización: " + syncAgo(syncCfg.lastSync) : "Todavía no se sincronizó"}</div></div>
-      <button class="btn sm" onclick="syncNow()" ${k === "busy" ? "disabled" : ""}>Sincronizar ahora</button></div>`;
+      <button class="btn sm" onclick="syncNow(true)" ${k === "busy" ? "disabled" : ""}>Sincronizar ahora</button></div>`;
   if (k === "nokv") h += `<div class="syncwarn"><b>Falta un paso en Cloudflare.</b> Mientras tanto la app anda igual que siempre; tus datos están guardados en este dispositivo.${SYNC_STEPS}</div>`;
   if (k === "newer") h += `<div class="syncwarn">El otro dispositivo tiene una versión más nueva de Aula. Cerrá y abrí la app para actualizarla.</div>`;
   h += `<div class="syncshare"><div class="syncqr">${qrSVG(syncLink(), 168)}</div>
@@ -1423,7 +1525,7 @@ function moveSheetPick() {
   r.hidden = false; byId("mv_pick").hidden = true;
   const i = byId("mv_date"); if (i) i.focus();
 }
-function closeMoveSheet() { const bg = byId("sheetbg"); if (bg) bg.classList.remove("open"); }
+function closeMoveSheet() { const bg = byId("sheetbg"); if (bg) bg.classList.remove("open");  syncResume(); }
 function moveTaskOrder(id, dir, date) {
   const mt = taskById(id); if (mt && mt.time) { toast("Las tareas con hora se ordenan solas por hora"); return; }
   const ids = tasksOn(date).map(t => t.id);
@@ -1518,7 +1620,7 @@ function askConfirm(opts) {
   bg.classList.add("open");
   step(opts);
 }
-function closeConfirm() { byId("confirmbg").classList.remove("open"); }
+function closeConfirm() { byId("confirmbg").classList.remove("open");  syncResume(); }
 function doubleDelete(what, onOk) {
   askConfirm({
     title: "Eliminar " + what,
@@ -5114,7 +5216,7 @@ function openModal(html, wide, noFocus) {
   // si mientras tanto ya tocaste otro campo del modal, no robarle el foco (lo que escribías iba a parar al título)
   if (f) setTimeout(() => { if (!box.contains(document.activeElement)) f.focus(); }, 30);
 }
-function closeModal() { byId("modalbg").classList.remove("open"); }
+function closeModal() { byId("modalbg").classList.remove("open"); syncResume(); }
 /* B3 · En los selectores no aparecen parciales cerrados (rendido / aprobado /
    desaprobado) ni proyectos terminados o archivados, salvo el que ya está
    elegido: una tarea vinculada a algo cerrado sigue mostrando su vínculo. */
@@ -5829,7 +5931,7 @@ function openSearch(mode) {
   ui.searchSel = 0;
   setTimeout(() => { const i = byId("sinput"); if (i) { i.focus(); renderSearchResults(); } }, 20);
 }
-function closeSearch() { byId("searchbg").classList.remove("open"); }
+function closeSearch() { byId("searchbg").classList.remove("open");  syncResume(); }
 function searchItems(q) {
   q = q.toLowerCase().trim();
   const out = [];
@@ -5965,8 +6067,7 @@ async function init() {
   setInterval(checkPastEvals, 5 * 60 * 1000);
   window.addEventListener("beforeunload", flushNow);
   window.addEventListener("pagehide", flushNow); // en iOS/Android beforeunload no siempre llega
-  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") { flushNow(); persist(); } else syncNow(); });
-  window.addEventListener("online", () => syncNow());
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") { flushNow(); persist(); } else syncWake(); });
   syncInit();
   if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
     navigator.serviceWorker.register("sw.js").catch(() => {});

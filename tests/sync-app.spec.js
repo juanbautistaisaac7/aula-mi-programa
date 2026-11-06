@@ -35,7 +35,7 @@ test.describe("sincronización entre dos dispositivos", () => {
     const A = await device(browser, server), B = await device(browser, server);
     await A.page.evaluate(() => { ["Leer apunte", "Hacer TP", "Repasar"].forEach(t => quickAddTask({ title: t, date: todayISO(), estMin: 30 })); change(); });
     await A.page.evaluate(k => syncConnect(k), KEY); await expect.poll(() => status(A.page)).toBe("ok");
-    await expect(A.page.locator("#saveTxt")).toHaveText("sincronizado");
+    await expect(A.page.locator("#saveTxt")).toHaveText("al día");
     await B.page.evaluate(k => syncConnect(k), KEY); await expect.poll(() => status(B.page)).toBe("ok");
     expect(await titles(B.page)).toEqual(["Hacer TP", "Leer apunte", "Repasar"]);
     await expect(B.page.locator("#view")).toContainText("Leer apunte"); // se redibujó

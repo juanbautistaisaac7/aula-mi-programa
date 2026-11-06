@@ -6,6 +6,32 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
+## Corrida 00:06–00:40 (hora ARG) — S2 (los cambios llegan solos + actualizar a mano)
+
+**Plan:** S2 es lo primero de la Noche 3. Antes de tocar nada busqué por qué en el iPhone no ves los cambios de la compu hasta cerrar y abrir. Versión 2.41.0 → 2.42.0. **No cambia la forma de los datos** (ni el esquema ni lo que viaja por la sync), así que no hizo falta migración.
+
+**Lo que encontré (causa probable, sumando cosas):**
+- La app solo preguntaba **cada 60 s**, y cada vez **bajaba el documento entero** (con tus datos, cientos de KB): por eso no se podía preguntar más seguido sin gastar datos del celu.
+- Cloudflare KV, además, guarda cada lectura en caché ~60 s en el lugar de Cloudflare que te atiende. Sumado a los 60 s de la app, un cambio podía tardar **hasta 2 minutos**: en la práctica, "no llega nunca", y cerrar/abrir parecía lo que lo arreglaba.
+- Si iOS despertaba la app y el primer pedido fallaba (la red tarda un segundo en volver), quedaba "sin conexión" hasta la próxima vuelta, 60 s después.
+- El SW **no** cachea `/api/` (ya estaba bien) y `syncApply` sí redibuja: eso lo descarté.
+
+**Decisiones:**
+- **Preguntar cada 10 s con la app a la vista, pero barato:** la app manda la versión que ya tiene (`X-Aula-Have`) y, si no hay nada nuevo, la función contesta `{ version, same: true }` (~25 bytes) sin mandar ni parsear el documento (lee la versión del principio del texto). Usé un 200 con `same` en vez de un 304: con `cache: "no-store"` y Safari, un 304 "a mano" es terreno raro; así es lo mismo y más predecible. Si cambiaste algo acá y el otro lado no, sube directo sin bajar nada.
+- Para saber si cambió algo acá sin bajar el documento, la app recuerda en memoria lo último acordado con el servidor. Al abrir la app la primera pasada siempre es completa.
+- **Disparadores al volver a la app:** `visibilitychange`, `focus`, `pageshow` y `online`, con una pausa mínima de 2 s para que tres eventos juntos no hagan tres pasadas.
+- **Actualizar a mano:** tocar el indicador de arriba (ahora es un botón de 44 px) → "actualizando…" → "al día · recién". En el celu, **tirar hacia abajo** desde arriba de todo: aparece una flechita que gira cuando pasaste el umbral (con vibración corta en Android; el iPhone no deja vibrar desde la web) y un círculo girando mientras actualiza. Solo arranca si el gesto es claramente vertical, con la página arriba y sin estar arrastrando una tarea (C5). Desactivé el "tirar para recargar" propio de Chrome en Android (`overscroll-behavior`), que recargaba la página entera.
+- **"sincronizado" pasó a decir "al día"**, más humano y lo que pedía el backlog. Las pasadas automáticas no muestran "actualizando…" (si no, titilaría cada 10 s); solo la que pedís vos.
+- **Si estás escribiendo** (un modal, la hoja de Mover, la búsqueda o un campo con foco), las pasadas automáticas esperan; al cerrar o salir del campo se aplica todo en ~0,3 s. Lo que tocás a mano sí actualiza siempre.
+
+**Salió bien:** el test de "sin cambios" confirma que en 30 s de app abierta no se sube nada, no se baja el documento y no se redibuja la pantalla.
+**Salió mal / intentos fallidos:** el primer test de "sin cambios" fallaba 1 de cada 3 veces con una subida de más. Instrumenté los pedidos y vi la causa: con el reloj simulado avanzando 30 s de golpe, se cumplía el corte de 20 s de un pedido en vuelo y la respuesta llegaba "vacía"; la app la tomaba como "en el servidor no hay nada" y subía todo (que después se arreglaba con el 409). En la vida real eso puede pasar con una respuesta cortada a la mitad, así que **lo arreglé en la app** (una respuesta incompleta ahora cuenta como "sin conexión", nunca como "no hay nada") y en el test avanzo el reloj de a una vuelta. Los tests nuevos fallaron todos antes de implementar, salvo el del formulario abierto, que pasaba de casualidad porque antes no había ninguna pasada en 30 s.
+**Tests:** +7 en `tests/sync-vivo.spec.js` (función con `same`, llega en ≤ 15 s con reloj simulado, sin cambios no sube/baja/redibuja, sube lo local sin bajar, formulario abierto no se pisa, focus/pageshow/online, tocar el indicador, tirar para actualizar con toques reales por CDP incluyendo tirón corto y de costado). Actualicé 2 tests viejos (`sync-app` y `sync-ui`) que esperaban el texto "sincronizado": cambió a propósito a "al día". `npm test`: **332 pasaron, 0 fallaron** (38 saltados a propósito, como antes).
+**Capturas:** [tirando, celu](capturas/S2-tirar-mobile-light.png) · [actualizando, celu oscuro](capturas/S2-actualizando-mobile-dark.png) · [al día, compu](capturas/S2-aldia-desktop-light.png) (y las demás `S2-*`).
+**Para Bauti:** probalo con el celu y la compu abiertos a la vez: un cambio en uno tiene que aparecer en el otro en unos 10 s. **Si tarda cerca de un minuto**, es la caché de Cloudflare KV cuando los dos dispositivos entran por lugares distintos de su red (puede pasar con wifi vs datos): la app no lo puede saltear. Lo dejé anotado como X8 (pasar a D1, que no tiene esa demora); avisame si lo notás y lo hago. Gasto: cada pregunta "¿hay algo nuevo?" es una lectura de KV; con la app abierta 3 h por día y dos dispositivos son ~2.000 lecturas, muy lejos de las 100.000 gratis por día.
+
+---
+
 ## Corrida 04:07–04:34 (hora ARG) — E1a2 («Avisarme») y cierre de la noche
 
 **Resumen de la corrida:** era la última de la noche (la hora de cierre de hoy eran las 04:00). Hice un ítem (E1a2), con tiempo reservado para publicar en `main`, escribir `RESUMEN-NOCHE.md` y crear `TERMINADO`. Versión 2.40.0 → 2.41.0. Sin cambios en la forma de los datos (el esquema 6 ya lo había puesto E1a1).

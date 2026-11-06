@@ -128,7 +128,7 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
 
 ## Noche 3 (pedidos del 5/11 a la mañana, después de probar en el celu) — HACER PRIMERO, en este orden: S2, M2, M1
 
-- [ ] **S2 · Que los cambios lleguen solos y rápido al otro dispositivo, y poder actualizar a mano**
+- [x] **S2 · Que los cambios lleguen solos y rápido al otro dispositivo, y poder actualizar a mano**
   Pedido (5/11 11:43): *"no hay un actualizar en el celu, por lo tanto si hago un cambio en la compu no impacta en el celu hasta que cierre y vuelva a entrar"*.
   Estado actual (`syncInit`, `syncNow`, `syncApply` en `app.js`): baja cambios al abrir, al volver a primer plano (`visibilitychange`) y cada 60 s con la app visible; `syncApply` ya redibuja. En la práctica, en el iPhone (app en la pantalla de inicio) Bauti no ve los cambios hasta cerrar y abrir. Investigar por qué (¿no llega `visibilitychange` en standalone?, ¿60 s es demasiado?, ¿el SW cachea `/api/`?, ¿`render()` no refresca un modal o una hoja abierta?) y arreglarlo de raíz.
   Listo cuando:
@@ -343,6 +343,9 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
 - [x] **X7 · Al abrir un modal, el foco se robaba lo que estabas escribiendo** *(agregado por el agente)*
   Por qué: el test de series "cambiar minutos de una…" fallaba ~1 de cada 3 veces (también en el commit anterior, no era nuevo). Causa: `openModal` enfoca el primer campo 30 ms después de abrir; si ya habías tocado otro campo (minutos), le sacaba el foco y lo que escribías caía en el título. Ahora solo enfoca si el foco no está ya dentro del modal.
 
+
+- [ ] **X8 · Sync más inmediata que KV (opcional)** *(agregado por el agente en S2)*
+  Por qué: Cloudflare KV guarda en caché cada lectura en el lugar de Cloudflare que la atiende (≥ 30–60 s). Si la compu y el celu entran por lugares distintos de la red de Cloudflare (por ejemplo, wifi de casa vs datos), un cambio puede tardar hasta ~1 min aunque la app pregunte cada 10 s. Si pasa, la solución de raíz es guardar en **D1** (base de Cloudflare, también gratis; Bauti tendría que crearla y vincularla como hizo con KV). No hacerlo hasta que Bauti confirme que lo nota.
 
 ## Ideas del agente
 
