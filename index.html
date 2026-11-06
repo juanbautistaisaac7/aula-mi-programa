@@ -391,6 +391,14 @@ body.is-dragging .task:hover .drag{opacity:.35;color:var(--tx3)}
 .dragghost.settling{transition:transform .2s cubic-bezier(.2,.8,.2,1),box-shadow .2s;box-shadow:none}
 .dragghost .tactions{display:none}
 @media (hover:none){.task{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}}
+/* M1 · deslizar para borrar */
+@media (hover:none){#view .task[data-id]{touch-action:pan-y}}
+.swipeclip{overflow:hidden}
+.task.swiping{position:relative;z-index:2;background:var(--card);will-change:transform}
+.swipebg{position:fixed;z-index:1;background:#e0362b;color:#fff;border-radius:8px;display:flex;align-items:center;padding-left:16px;overflow:hidden;pointer-events:none}
+.swipebg svg{flex-shrink:0;transform:scale(var(--k,.6));transition:transform .12s ease}
+.swipebg.armed svg{transform:scale(1.15)}
+@media (prefers-reduced-motion:reduce){.swipebg svg{transition:none}}
 #sheetbg{z-index:100;align-items:flex-end;padding:0}
 #sheet{background:var(--card);width:min(440px,100vw);border-radius:16px 16px 0 0;padding:6px 12px calc(12px + env(safe-area-inset-bottom));box-shadow:var(--shadow-lg);animation:sheetup .22s cubic-bezier(.2,.8,.2,1)}
 @media (min-width:721px){#sheetbg{align-items:center;padding:20px}#sheet{border-radius:16px;padding:6px 12px 12px;animation:sheetpop .18s ease-out}.sheetgrip{display:none}}

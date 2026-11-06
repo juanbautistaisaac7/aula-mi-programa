@@ -146,7 +146,7 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
   - Test automático que abre cada modal en mobile y falla si dos campos (`input, select, textarea, button`) tienen sus rectángulos superpuestos o si alguno se sale del contenedor. Sumarlo al revisor de L1a.
   - Capturas de cada modal en mobile (claro y oscuro).
 
-- [ ] **M1 · Deslizar una tarea para borrarla (celu)**
+- [x] **M1 · Deslizar una tarea para borrarla (celu)**
   Pedido (5/11 11:43): *"en el cel poder eliminar una tarea arrastrando hacia la derecha"*.
   Listo cuando:
   - En el celu, **deslizar una tarea hacia la derecha** muestra detrás un fondo rojo con un tachito que crece con el gesto; si pasás el umbral (~40 % del ancho) o soltás rápido, se borra con animación y aparece **Deshacer**. Si soltás antes, vuelve a su lugar.

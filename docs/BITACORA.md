@@ -6,7 +6,21 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
-## Corrida 00:06– (hora ARG) — S2 (los cambios llegan solos + actualizar a mano) y M2 (formularios en el celu)
+## Corrida 00:06– (hora ARG) — S2 (los cambios llegan solos + actualizar a mano) M2 (formularios en el celu) y M1 (deslizar para borrar)
+
+### M1 · Deslizar una tarea a la derecha para borrarla (Aula 2.44.0)
+
+**Plan:** gesto propio con eventos táctiles (sin librerías), que conviva con lo que ya hay: scroll, mantener apretado para arrastrar (C5), tocar para abrir y tirar para actualizar (S2).
+**Decisiones:**
+- **Cómo se siente:** la fila sigue al dedo y detrás aparece un fondo rojo con un tachito que crece; al pasar el **40 % del ancho** el tachito "salta" (y vibra en Android) para avisar que si soltás se borra. Un **movimiento rápido** también borra aunque sea corto (más de 70 px). Si soltás antes, vuelve a su lugar con una animación de 0,2 s. Al borrar, la fila sale por la derecha y aparece **Deshacer**. Sin confirmación doble: el gesto es intencional y Deshacer alcanza (como en Mail del iPhone).
+- **Cuándo es deslizar y cuándo no:** se decide en los primeros 10 px. Si va más para abajo que para el costado, es scroll; hacia la izquierda no hace nada. Si ya la levantaste con el mantener apretado, es arrastre, no borrado. Se puede empezar desde cualquier parte de la fila, incluido el círculo de completar (un toque sin mover sigue completando). La manija ⣿ sigue siendo solo para arrastrar.
+- **Series (C3):** pregunta "Solo esta / Esta y las siguientes / Todas", igual que al editar. **Tarea que se repite** (un solo objeto con regla): avisa que se van todas sus repeticiones y ofrece borrarla o cancelar; para saltear un día ya están completar o mover.
+- La fila no se sale de su tarjeta mientras la deslizás (la primera captura mostró que generaba scroll de costado y se cortaba la barra de arriba; lo arreglé y lo sumé al test). El rojo es fijo (#e0362b) en los dos temas: el rojo "suave" del tema oscuro dejaba el tachito blanco sin contraste.
+- **Propuesta (no la hice):** usar el otro lado, deslizar a la **izquierda**, para abrir "Mover a…". Es lo que más hacés con una tarea después de completarla, y hoy pide mantener apretado o abrir el menú. No la agregué porque no la pediste y dos gestos opuestos en la misma fila se pueden confundir; si te gusta, es chica.
+**Salió mal / intentos fallidos:** con la fecha fija de los tests, la tarea tenía la manija de arrastre a la izquierda y el toque caía justo en el círculo de completar, que yo había excluido: el gesto no arrancaba. Lo cambié para que también se pueda empezar ahí (en el celu, el círculo ocupa buena parte del borde izquierdo de la fila). También me faltaba cortar el deslizamiento si la tarea ya estaba levantada para arrastrar; lo vi revisando el diff.
+**Tests:** +5 en `tests/deslizar.spec.js` con toques reales (CDP): corto vuelve y largo borra con Deshacer (y sin scroll de costado), rápido borra, vertical e izquierda no borran y tocar sigue abriendo, serie (cancelar / todas con deshacer / solo esta), tarea que se repite. `npm test`: **341 pasaron, 0 fallaron** (47 saltados a propósito).
+**Capturas:** [deslizando](capturas/M1-deslizando-mobile-light.png) · [pasado el umbral, oscuro](capturas/M1-listo-mobile-dark.png) · [Deshacer](capturas/M1-deshacer-mobile-dark.png) · video: [M1-deslizar.webm](capturas/M1-deslizar.webm)
+**Para Bauti:** en el iPhone probá deslizar una tarea de Hoy despacio (tiene que volver si no llegás) y rápido (se borra). Ojo con scrollear la lista: no debería borrar nada.
 
 ### M2 · Formularios en el celu sin campos encimados (Aula 2.43.0)
 

@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.43.0";
+const APP_VERSION = "2.44.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -516,6 +516,10 @@ function syncInit() {
   document.addEventListener("touchmove", ptrMove, { passive: true });
   document.addEventListener("touchend", ptrEnd, { passive: true });
   document.addEventListener("touchcancel", ptrCancel, { passive: true });
+  document.addEventListener("touchstart", swStart, { passive: true });
+  document.addEventListener("touchmove", swMove, { passive: false });
+  document.addEventListener("touchend", swEnd, { passive: true });
+  document.addEventListener("touchcancel", swCancel, { passive: true });
 }
 
 /* S2 · Tirar hacia abajo para actualizar (celu). Solo con la página arriba de todo,
@@ -1591,6 +1595,123 @@ function minsBetween(d1, d2, filter) {
 function subjectRealMin(id) { return state.sessions.filter(s => s.subjectId === id).reduce((a, s) => a + s.min, 0); }
 function projectRealMin(id) { return state.sessions.filter(s => s.projectId === id).reduce((a, s) => a + s.min, 0); }
 function evalRealMin(id) { return state.sessions.filter(s => s.evalId === id).reduce((a, s) => a + s.min, 0); }
+
+/* ===================== DESLIZAR PARA BORRAR (M1) =====================
+   En el celu, deslizar una tarea hacia la DERECHA la borra (lo pidió Bauti; en iOS es
+   a la izquierda). Detrás aparece un fondo rojo con un tachito que crece; pasando el
+   40 % del ancho, o con un movimiento rápido, se borra con Deshacer. Si el gesto empieza
+   vertical es scroll; el mantener apretado para arrastrar (C5) y tirar para actualizar
+   (S2) siguen igual. Tarea de una serie: pregunta cuáles. */
+let sw = null;
+const SW_FRAC = 0.4;
+function swStart(e) {
+  sw = null;
+  if (e.touches.length !== 1 || ui.selMode || (drag && drag.state !== "press")) return;
+  const row = e.target.closest && e.target.closest("#view .task[data-id]");
+  // desde cualquier parte de la fila, también el círculo de completar (un toque sin mover sigue completando)
+  if (!row || (!e.target.closest(".cb") && e.target.closest("button,a,input,select,textarea,.drag[title]")) || row.classList.contains("swiping-out")) return;
+  const t = e.touches[0];
+  sw = { row, id: row.dataset.id, x0: t.clientX, y0: t.clientY, axis: null, dx: 0, w: row.getBoundingClientRect().width, hist: [] };
+}
+function swMove(e) {
+  if (!sw) return;
+  if (!sw.axis && drag && drag.state !== "press") { sw = null; return; } // ya la levantaste para arrastrarla (C5)
+  const t = e.touches[0], dx = t.clientX - sw.x0, dy = t.clientY - sw.y0;
+  if (!sw.axis) {
+    if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+    sw.axis = dx > 0 && Math.abs(dx) > Math.abs(dy) * 1.3 ? "x" : "no";
+    if (sw.axis !== "x") { sw = null; return; }
+    if (drag && drag.state === "press") dragCancel();
+    swBegin();
+  }
+  if (e.cancelable) e.preventDefault(); // es un deslizamiento: la página no scrollea
+  sw.dx = Math.max(0, dx);
+  sw.hist.push([Date.now(), sw.dx]); if (sw.hist.length > 5) sw.hist.shift();
+  swPaint();
+}
+function swBegin() {
+  const r = sw.row.getBoundingClientRect();
+  const bg = document.createElement("div");
+  bg.className = "swipebg"; bg.setAttribute("aria-hidden", "true");
+  bg.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6"/></svg>';
+  Object.assign(bg.style, { top: r.top + "px", left: r.left + "px", height: r.height + "px", width: "0px" });
+  document.body.appendChild(bg);
+  sw.bg = bg;
+  sw.row.classList.add("swiping");
+  sw.clip = sw.row.closest(".card") || sw.row.parentElement; // la fila no se sale de su tarjeta (ni crea scroll de costado)
+  if (sw.clip) sw.clip.classList.add("swipeclip");
+}
+function swPaint() {
+  sw.row.style.transform = "translateX(" + sw.dx + "px)";
+  sw.bg.style.width = sw.dx + "px";
+  const k = Math.min(1, sw.dx / (sw.w * SW_FRAC));
+  sw.bg.style.setProperty("--k", (0.6 + 0.5 * k).toFixed(3));
+  const armed = sw.dx >= sw.w * SW_FRAC;
+  if (armed && !sw.bg.classList.contains("armed") && navigator.vibrate) { try { navigator.vibrate(8); } catch (e) {} }
+  sw.bg.classList.toggle("armed", armed);
+}
+function swEnd() {
+  if (!sw || sw.axis !== "x") { sw = null; return; }
+  const s = sw; sw = null;
+  const h = s.hist, v = h.length > 1 ? (h[h.length - 1][1] - h[0][1]) / Math.max(1, h[h.length - 1][0] - h[0][0]) : 0;
+  const go = s.dx >= s.w * SW_FRAC || (v > 0.6 && s.dx > 70);
+  if (!go) return swBack(s);
+  const t = taskById(s.id);
+  if (!t) return swBack(s);
+  const sp = seriesPos(t);
+  if (sp && sp.n > 1) return swAskSeries(s, t, sp);
+  if (t.recur) return swAskRecur(s, t);
+  swRemove(s, [t], "Tarea eliminada");
+}
+function swBack(s) {
+  const fast = reducedMotion();
+  s.row.style.transition = fast ? "none" : "transform .2s ease";
+  s.row.style.transform = "translateX(0px)";
+  if (s.bg) { s.bg.style.transition = fast ? "none" : "width .2s ease"; s.bg.style.width = "0px"; }
+  setTimeout(() => { s.row.classList.remove("swiping"); s.row.style.transition = ""; s.row.style.transform = ""; if (s.bg) s.bg.remove(); if (s.clip) s.clip.classList.remove("swipeclip"); }, fast ? 0 : 210);
+}
+/* Borra con animación (la fila sale por la derecha) y ofrece Deshacer. */
+function swRemove(s, list, msg) {
+  const fast = reducedMotion();
+  s.row.classList.add("swiping-out");
+  s.row.style.transition = fast ? "none" : "transform .18s ease-in, opacity .18s ease-in";
+  s.row.style.transform = "translateX(" + s.w + "px)"; s.row.style.opacity = "0";
+  if (s.bg) { s.bg.style.transition = fast ? "none" : "width .18s ease-in"; s.bg.style.width = s.w + "px"; }
+  setTimeout(() => {
+    if (s.bg) s.bg.remove();
+    if (s.clip) s.clip.classList.remove("swipeclip");
+    const snap = list.map(t => ({ t, i: state.tasks.indexOf(t) })).filter(x => x.i >= 0).sort((a, b) => b.i - a.i);
+    snap.forEach(x => state.tasks.splice(x.i, 1));
+    ui.serMap = null; change(); render();
+    toast(msg, () => { [...snap].reverse().forEach(x => state.tasks.splice(Math.min(x.i, state.tasks.length), 0, x.t)); ui.serMap = null; change(); render(); });
+  }, fast ? 0 : 190);
+}
+function swAsk(s, html, actions) {
+  ui.swPending = { s, actions };
+  const box = byId("confirmbox");
+  box.innerHTML = html + `<div class="scopebtns">${actions.map((a, i) => `<button class="btn${a.primary ? " danger" : ""}" onclick="swPick(${i})">${esc(a.label)}</button>`).join("")}
+    <button class="btn ghost" onclick="swPick(-1)">Cancelar</button></div>`;
+  byId("confirmbg").classList.add("open");
+}
+function swPick(i) {
+  const p = ui.swPending; ui.swPending = null; closeConfirm();
+  if (!p) return;
+  if (i < 0) return swBack(p.s);
+  const a = p.actions[i];
+  swRemove(p.s, a.list, a.msg);
+}
+function swAskSeries(s, t, sp) {
+  const next = sp.list.slice(sp.i - 1);
+  const acts = [{ label: "Solo esta", list: [t], msg: "Tarea eliminada" }];
+  if (next.length > 1 && next.length < sp.n) acts.push({ label: "Esta y las siguientes (" + next.length + ")", list: next, msg: next.length + " tareas eliminadas" });
+  acts.push({ label: "Todas (" + sp.n + ")", list: sp.list, msg: sp.n + " tareas eliminadas", primary: true });
+  swAsk(s, `<h3>Borrar de la serie</h3><p class="muted">“${esc(t.title.slice(0, 60))}” es la ${sp.i} de ${sp.n}. ¿Cuáles borro?</p>`, acts);
+}
+function swAskRecur(s, t) {
+  swAsk(s, `<h3>Es una tarea que se repite</h3><p class="muted">Si la borrás, se van todas sus repeticiones. Para saltear un día, marcala como hecha o movela.</p>`,
+    [{ label: "Borrar con sus repeticiones", list: [t], msg: "Tarea eliminada", primary: true }]);
+}
+function swCancel() { if (sw && sw.axis === "x") swBack(sw); sw = null; }
 
 /* ======================= TOAST / UNDO / CONFIRM ======================= */
 let toastTimer = null;
