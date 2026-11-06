@@ -6,7 +6,24 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
-## Corrida 00:06–00:40 (hora ARG) — S2 (los cambios llegan solos + actualizar a mano)
+## Corrida 00:06– (hora ARG) — S2 (los cambios llegan solos + actualizar a mano) y M2 (formularios en el celu)
+
+### M2 · Formularios en el celu sin campos encimados (Aula 2.43.0)
+
+**Plan:** encontrar la causa real antes de tocar CSS. El problema es de **Safari en iOS**: sus campos de fecha y hora traen un ancho mínimo propio que no se achica, y en una fila de dos o tres columnas se meten debajo del de al lado. En las capturas (Chrome) se ve bien, por eso nunca lo vimos.
+**Decisiones:**
+- **Test que imita a Safari:** como acá no hay WebKit, el test le agrega a la página ese ancho mínimo (con especificidad cero, así cualquier regla de la app le gana). Con el CSS viejo el test **reproduce exactamente tu reporte**: "Fecha se encima con Hora" en Nueva tarea (4 variantes) y en el parcial, y a 320 px la hora salida del modal. Recorre 22 modales + Configuración y Estudio de hoy, en 390, 375 y 320 px. No lo sumé dentro del revisor de L1a (que corre 9 estados × 2 dispositivos y ya tarda): es un test aparte con su propia lista, anotado en `docs/AUDITORIA.md`.
+- **Arreglo de raíz:** `min-width:0` en todos los campos; en iOS, fecha y hora sin apariencia nativa y alineadas a la izquierda; con el dedo, **letra de 16 px** (si es menor, iOS hace zoom al tocar el campo y no vuelve) y **44 px de alto**.
+- **Cómo se reparte el espacio en el celu:** filas de dos, de a dos; en las de tres, la primera va a lo ancho, **salvo que sea la fecha**: así queda "Programación" arriba y **Fecha + Hora juntas** en la tarea, y en el parcial **Fecha + Hora** con "Días de repaso" abajo. Los campos quedan parejos aunque un rótulo ocupe dos renglones, y el texto de ayuda del pie va arriba de los botones en vez de apretarlos.
+- "Parcial / final (opcional)" pasó a "Parcial o final": el "— Ninguno —" ya dice que es opcional y el rótulo ya no ocupa dos renglones.
+- De paso: a 320 px la tarjeta de Configuración era más ancha que la pantalla (las grillas de tarjetas pedían 330 px mínimo) y las fechas de "Año nuevo" se salían.
+- Lo de "unificar Programación y Repetir" (del Q1) **no** lo hice acá: cambia cómo se crea una tarea, va con Q1.
+**Salió mal / intentos fallidos:** el primer test pasaba en verde con el CSS viejo a 390 px (Chrome no tiene el problema); recién al imitar a Safari falló donde tenía que fallar. Después del arreglo, al revisar las capturas vi el rótulo de dos renglones que desalineaba los selects y el botón "Agregar" de subtareas más bajo que su campo; los corregí.
+**Tests:** +4 en `tests/formularios-celu.spec.js` (3 anchos + fecha/hora listos para Safari, 16 px, 44 px y Fecha + Hora en la misma fila). `npm test`: **336 pasaron, 0 fallaron**.
+**Capturas:** [nueva tarea, celu](capturas/M2-nueva-tarea-mobile-dark.png) · [con Repetir](capturas/M2-nueva-tarea-repetir-mobile-light.png) · [parcial](capturas/M2-parcial-mobile-light.png) · [editar tarea](capturas/M2-editar-tarea-mobile-light.png) · [año nuevo](capturas/M2-ano-nuevo-mobile-light.png)
+**Para Bauti:** probá en el iPhone "Nueva tarea" y "Editar parcial": Fecha y Hora tienen que verse lado a lado, sin pisarse, y al tocar un campo la pantalla no tiene que hacer zoom. Si algún modal se ve mal en el iPhone, mandame captura: el test imita a Safari pero no es Safari.
+
+### S2 · Los cambios llegan solos y se puede actualizar a mano (Aula 2.42.0)
 
 **Plan:** S2 es lo primero de la Noche 3. Antes de tocar nada busqué por qué en el iPhone no ves los cambios de la compu hasta cerrar y abrir. Versión 2.41.0 → 2.42.0. **No cambia la forma de los datos** (ni el esquema ni lo que viaja por la sync), así que no hizo falta migración.
 

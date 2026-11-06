@@ -110,7 +110,7 @@ html,body{overscroll-behavior-y:contain}
 .ynm{font-weight:650;font-size:.88rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ytag{font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--acc);margin-left:4px}
 .yrow .btn{min-height:40px}
-.nydates{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.nydates{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px}
 .modal .nysubs{border:1px solid var(--line);border-radius:10px;margin:0 0 8px;background:var(--card2)}
 .modal .nysubs summary{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:46px;padding:0 14px;cursor:pointer;font-size:.85rem;font-weight:500;list-style:none}
 .modal .nysubs summary::-webkit-details-marker{display:none}
@@ -213,8 +213,8 @@ body.sb-open #sidebar{transform:translateX(0)}
 .pill.acc{background:var(--acc-soft);color:var(--acc);border-color:transparent}
 .pbar{height:6px;background:var(--card2);border-radius:99px;overflow:hidden;flex:1}
 .pbar i{display:block;height:100%;border-radius:99px;background:var(--acc);transition:width .35s}
-.grid2{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px}
-.grid3{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.grid2{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(330px,100%),1fr));gap:12px}
+.grid3{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(240px,100%),1fr));gap:12px}
 .statnum{font-size:1.55rem;font-weight:800;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
 .statlab{font-size:.7rem;color:var(--tx3)}
 .empty{padding:26px;text-align:center;color:var(--tx3);font-size:.8rem}
@@ -554,6 +554,26 @@ body.is-dragging .task:hover .drag{opacity:.35;color:var(--tx3)}
 .modal textarea{resize:vertical;min-height:64px}
 .modal input:focus,.modal select:focus,.modal textarea:focus{outline:2px solid var(--acc-soft);border-color:var(--acc)}
 .mrow{display:flex;gap:10px}.mrow>div{flex:1;min-width:0}
+/* M2 · formularios a prueba de Safari en iOS: sus campos de fecha y hora traen un ancho
+   mínimo propio y se salían de la fila; con 16 px iOS no hace zoom al tocar. */
+.modal input,.modal select,.modal textarea,#view input,#view select{min-width:0;max-width:100%}
+input[type=date],input[type=time]{min-width:0}
+@supports (-webkit-touch-callout:none){
+  .modal input[type=date],.modal input[type=time],#view input[type=date],#view input[type=time]{-webkit-appearance:none;appearance:none;display:block;text-align:left}
+  input::-webkit-date-and-time-value{text-align:left;margin:0}
+}
+@media (pointer:coarse){
+  .modal input:not([type=checkbox]):not([type=radio]),.modal select,.modal textarea,#view input:not([type=checkbox]):not([type=radio]),#view select{font-size:16px}
+  .modal input:not([type=checkbox]):not([type=radio]),.modal select{min-height:44px}
+  .modal .mrow>.btn{min-height:44px}
+}
+@media(max-width:600px){
+  .mrow{flex-wrap:wrap;column-gap:10px;row-gap:0}
+  .mrow>div{flex:1 1 calc(50% - 5px)}
+  .mrow{align-items:flex-end} /* si un rótulo ocupa dos renglones, los campos igual quedan parejos */
+  .mrow>div:first-child:nth-last-child(3):not(:has(input[type=date])){flex-basis:100%} /* de tres: el primero a lo ancho, salvo que sea la fecha (fecha + hora van juntas) */
+  .mfoot>.tiny.grow{flex-basis:100%;order:-1}
+}
 .mfoot{display:flex;gap:8px;margin-top:18px;justify-content:flex-end;align-items:center;flex-wrap:wrap}
 .mfoot .grow{flex:1}
 /* toast + undo */

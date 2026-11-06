@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.42.0";
+const APP_VERSION = "2.43.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -5290,7 +5290,7 @@ function openQuickTask(date, subjectId, projectId) {
     <label for="qt_title">Título</label><input id="qt_title" placeholder="Ej: resolver práctica de límites" onkeydown="if(event.key==='Enter')saveQuickTask()">
     <div class="mrow">
       <div><label for="qt_link">Materia / proyecto</label><select id="qt_link" onchange="refreshEvalSelect('qt_link','qt_eval')">${linkOptions(sel)}</select></div>
-      <div><label for="qt_eval">Parcial / final (opcional)</label><select id="qt_eval" onchange="evalPicked('qt_link','qt_eval')">${evalOptions(sel, null)}</select></div>
+      <div><label for="qt_eval">Parcial o final</label><select id="qt_eval" onchange="evalPicked('qt_link','qt_eval')">${evalOptions(sel, null)}</select></div>
     </div>
     <div class="mrow">
       <div><label for="qt_min">Tiempo estimado (min)</label><input id="qt_min" type="number" value="60" min="0" step="5" oninput="repPreview()"></div>

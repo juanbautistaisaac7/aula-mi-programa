@@ -30,3 +30,26 @@ Gravedad: **rompe** (dato mal o algo que no anda) · **confunde** (se entiende o
 
 
 **L1b (recorrido pensado, corrida 03:05):** revisé Hoy, Semana, Calendario, Materias, Parciales y Series en el celu a las 23:40 con el fixture, más casos borde: inicio de semana en domingo (calendario y semana se acomodan bien), borrar una materia con parciales y sesiones (ninguna vista muestra `undefined` ni se rompe), parcial pasado sin nota (ya lo resuelve "Ya pasaron"), y las reglas de repetición a fin de mes (#16). Sin hallazgos en Calendario ni en Hoy más allá de #7.
+
+## M2 · Inventario de formularios en el celu (corrida 00:06, 6/11)
+
+Lo revisa `tests/formularios-celu.spec.js` en 390, 375 y 320 px: falla si dos campos (`input, select, textarea, button`) se enciman o si alguno se sale del modal, y si hay scroll de costado. **Como los tests corren en Chrome**, el test le agrega a la página el comportamiento de Safari en iOS (un ancho mínimo propio en los campos de fecha y hora): sin los arreglos de M2, ese test reproduce exactamente lo que viste ("la hora se superpone": fecha encima de hora en Nueva tarea y en el parcial, y a 320 px la hora salida del modal).
+
+| Formulario | Cómo se abre | Estado |
+|---|---|---|
+| Nueva tarea (simple, con Repetir, días + cantidad, tramos) | `+` / "Nueva tarea" | ✔ Programación a lo ancho, Fecha + Hora en una fila |
+| Agregado rápido | `+` arriba | ✔ |
+| Editar tarea (simple y de una serie) | tocar una tarea | ✔ |
+| Mover a… | mantener apretada / menú | ✔ (hoja de abajo) |
+| Materia (nueva y editar) | Materias | ✔ |
+| Parcial (nuevo y editar) | Parciales y finales | ✔ Fecha + Hora juntas, días de repaso abajo |
+| Plan de estudio | detalle del parcial | ✔ |
+| Proyecto, nota, hábito | sus vistas | ✔ |
+| Registrar tiempo | Progreso | ✔ |
+| Años / año nuevo | selector de año | ✔ (las fechas ya no se salen a 320 px) |
+| Informe descargable | Progreso | ✔ |
+| Cambiar fecha / tiempo de varias | modo selección | ✔ |
+| Avisos, sincronizar, configuración | Configuración | ✔ (a 320 px la tarjeta se salía de la pantalla) |
+| Estudio de hoy | Inicio | ✔ |
+
+Reglas que quedaron (en `index.html`, bloque "M2"): campos con `min-width:0`; en iOS, fecha y hora sin apariencia nativa y alineadas a la izquierda; con el dedo, letra de 16 px (iOS no hace zoom al tocar) y 44 px de alto; en el celu cada fila de dos va de a dos, la de tres pone la primera a lo ancho (salvo que sea la fecha), y los campos quedan parejos aunque un rótulo ocupe dos renglones. Las grillas de tarjetas (`grid2`, `grid3`) ya no pueden ser más anchas que la pantalla. Lo que no se puede probar acá: Safari de verdad (WebKit no se descarga en este entorno).

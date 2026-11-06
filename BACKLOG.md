@@ -137,7 +137,7 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
   - Si estás editando algo (modal abierto o escribiendo), los cambios remotos no te pisan lo que estás escribiendo: se aplican al cerrar.
   - Tests con dos contextos de navegador y red mockeada: el cambio llega solo en ≤ 15 s (con reloj simulado), el pull-to-refresh sincroniza, el 304 no redibuja ni gasta, y un modal abierto no se pierde.
 
-- [ ] **M2 · Formularios en el celu: nada encimado y el espacio bien usado**
+- [x] **M2 · Formularios en el celu: nada encimado y el espacio bien usado**
   Pedido (5/11 11:44): *"temas de interfaz en el celu, cuando hay que crear una tarea, proyecto, etc. la hora se superpone con otros campos, no me fijé en todos pero en algunos pasa, fijate que tampoco otros campos se superpongan y que a la vez se ocupe el espacio lo mejor posible"*.
   Causa probable: los `<input type="time">` y `type="date"` de **Safari en iOS** tienen un ancho mínimo propio y se salen de las grillas de dos columnas (`.mrow`) aunque en Chrome se vean bien. Ojo: los tests corren en Chrome (WebKit no se puede descargar en este entorno), así que **no alcanza con que se vea bien en las capturas**: hay que hacer el CSS a prueba de Safari (`min-width:0`, `width:100%`, `box-sizing:border-box`, `-webkit-appearance:none` con estilo propio y alto fijo, `font-size:16px` para que iOS no haga zoom al tocar) y que las grillas tengan columnas `minmax(0,1fr)`.
   Listo cuando:
