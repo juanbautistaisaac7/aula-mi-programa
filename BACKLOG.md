@@ -126,6 +126,18 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
   - Funciona con 0 datos (estado vacío lindo) y con muchos datos (usar el fixture de A1).
   - Tests de que los números son correctos para el fixture.
 
+## Noche 4 (pedidos del 6/11) — HACER PRIMERO: Q2; después H1b, H1c, H1d, H1e, H1f, F1, F2
+
+- [ ] **Q2 · Cambiar estado y fecha de parciales, finales y exposiciones sin entrar a editar**
+  Pedido (6/11 17:40): *"poner para cambiar el estado en los parciales, finales o exposiciones ahí al toque para no tener que andar entrando en editar cada uno para cambiar, lo mismo poner la fecha ahí para cambiarla sin tener que entrar a editar"*.
+  Dónde: en **todas** las listas de evaluaciones (vista Parciales/Evaluaciones ~línea 4091, detalle de materia, detalle de proyecto ~4234, "Próximas evaluaciones" de Inicio) y en el encabezado del detalle del parcial (~4120). Hoy el estado es una etiqueta (`pill`) que no hace nada y la fecha es texto.
+  Listo cuando:
+  - **Tocar la etiqueta de estado** abre un menú chiquito anclado ahí (hoja inferior en el celu) con los estados de `EVAL_STATUS` (Planificado, Preparando, Rendido, Aprobado, Desaprobado, Reprogramado), el actual marcado. Un toque cambia y cierra. Al elegir **Aprobado o Desaprobado**, ofrece opcionalmente cargar la **nota** en el mismo lugar (campo numérico + "Listo"/"Después"), sin obligar. Al elegir **Reprogramado**, abre directamente el cambio de fecha.
+  - **Tocar la fecha** abre el selector de fecha (y hora si la tiene) en el lugar; al confirmar se guarda. Mostrar cómo queda ("vie 14 nov · en 8 días") antes de cerrar.
+  - Tocar el resto de la fila sigue abriendo el detalle como hoy (que no choque con el tap de la etiqueta o la fecha). Las etiquetas y fechas tocables tienen que **parecer tocables** (chevron chiquito o subrayado sutil) y medir 44 px de área táctil.
+  - Todo con **Deshacer** y usando el mismo camino que el editor (reusar la función de la línea ~2778 que cambia el estado, para que se disparen `checkPastEvals`, recordatorios de ntfy, sync, etc.). Si cambia la fecha, se reprograman los avisos.
+  - Tests en desktop y mobile: cambiar estado desde la lista y desde Inicio sin abrir el editor; aprobado + nota; desaprobado sin nota; reprogramado → fecha; cambiar fecha; deshacer; que viaje por la sync (marca de cambio); que el tap en la fila siga abriendo el detalle. Capturas.
+
 ## Noche 3 (pedidos del 5/11 a la mañana, después de probar en el celu) — HACER PRIMERO, en este orden: S2, M2, M1
 
 - [x] **S2 · Que los cambios lleguen solos y rápido al otro dispositivo, y poder actualizar a mano**
