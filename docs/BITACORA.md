@@ -6,6 +6,41 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
+## Corrida 02:06–02:35 (hora ARG) — E1b2 (programar los avisos en ntfy) y E1c (respaldo local)
+
+**Resumen de la corrida:** con esto **E1 (avisos al celu) queda completo**. Dos commits, `npm test` en verde en cada uno. Versión 2.46.0 → 2.48.0. **Cambia la forma de los datos: esquema 7 → 8** (agrega `state.ntfySched` vacío), con copia previa automática, migración idempotente y test con el fixture.
+
+### E1b2 · Programar los avisos en ntfy (Aula 2.47.0)
+
+**Plan:** resolver primero las dos dudas que dejó E1b1: ¿se puede cancelar un aviso programado en ntfy? ¿Cómo evitar que con dos dispositivos llegue cada aviso dos veces?
+**Lo que averigüé:** ntfy 2.16 sumó "actualizar y borrar notificaciones, también las programadas", con un *sequence id*: se publica en `/<tema>/<id>` y se cancela con `DELETE /<tema>/<id>`. ntfy.sh corre la última versión. (Lo saqué del changelog citado en el foro de Cloudron y de un listado de la API; la página de la doc de ntfy sigue siendo difícil de leer por partes. No lo pude probar contra ntfy.sh real: los tests nunca salen a internet.)
+**Decisiones:**
+- **Registro sincronizado `state.ntfySched`** (`clave → {seq, at, tema, servidor}`), una clave por aviso (`t:<id tarea>:<minutos antes>`, `e:<id parcial>:…`). Viaja por la sync **clave por clave**, así que se fusiona bien aunque los dos dispositivos programen cosas distintas. Descarté "solo programa un dispositivo": si ese es la compu y no la abrís, no llega nada.
+- **Con la sync activa no se programa nada hasta la primera sincronización de la sesión**: así el celu primero ve lo que ya programó la compu. Y el *sequence id* sale de la clave + hora + texto, igual en los dos: si alguna vez programan a la vez, ntfy lo toma como el mismo aviso.
+- **Ventana de 48 h** (ntfy deja hasta 3 días). Se revisa al abrir Aula, a los 5 s de cada cambio, cuando llega algo por la sync y cada 30 min. Un aviso de "7 días antes" se programa recién en las 48 h previas: si no abrís Aula en ningún dispositivo en esos dos días, no llega. Me pareció mejor que la ventana larga: menos avisos "colgados" si algo falla al cancelar.
+- **Cambiar hora, texto o "mensaje genérico"** → se cancela el viejo y se programa el nuevo. **Completar, borrar o archivar** → se cancela. Un 404 al cancelar cuenta como cancelado (ya llegó). Sin conexión, no se anota nada y la próxima pasada reintenta. Tope de 25 envíos por pasada (límite de 250/día de ntfy.sh).
+- **Desconectar** ahora cancela lo que ya estaba programado (antes decía "puede llegar igual").
+- Mira **todos los años** (`fullState()`): si estás mirando un año viejo, no se cancelan los avisos del actual. Esto lo encontré pensando el caso, no por un test que fallara; ahora tiene test.
+- Las lápidas de la sync de avisos viejos se limpian a la semana para que el documento no crezca para siempre.
+- La tarjeta de Configuración ahora explica cómo funciona y dice "2 avisos programados · el próximo: hoy 17:30". Corregí también el texto de "Avisos por defecto", que todavía decía "que lleguen con la app cerrada es el próximo paso".
+**Salió mal / intentos fallidos:** la frase nueva "quedan activos los avisos" rompió un test viejo que verificaba que la palabra "activo" no aparezca antes de la prueba: cambié la frase, no el test. Un 404 de ntfy al cancelar aparece en la consola del navegador como "Failed to load resource" (lo pone el navegador, no la app; no se puede evitar desde JS): en ese test lo filtro, como ya se hacía con los cortes de red.
+**Tests:** +7 en `tests/ntfy-programar.spec.js` × 2 dispositivos (migración 7 → 8 con el fixture y copia previa; solo 48 h, path con sequence id y sin repetir; mover/completar/borrar cancela, 404 y lápidas; mensaje genérico; dos dispositivos con `syncMerge`; sin red y desconectar; la tarjeta). Actualicé `tests/ntfy.spec.js` (esperaba esquema 7 fijo: ahora compara con `SCHEMA_VERSION`). `tests/tools/capturar.js` ahora intercepta ntfy.sh para que una captura nunca mande nada real. `npm test`: **370 pasaron, 0 fallaron** (52 saltados a propósito).
+**Capturas:** [celu claro](capturas/E1b2-ntfy-mobile-light.png) · [celu oscuro](capturas/E1b2-ntfy-mobile-dark.png) · [compu](capturas/E1b2-ntfy-desktop-light.png)
+**Commits:** `1a70b9c` feat(avisos): E1b2.
+
+### E1c · Respaldo local (Aula 2.48.0)
+
+**Plan:** el aviso local con la app abierta ya existía desde E1a2; lo que faltaba era que conviva con ntfy.
+**Decisiones:**
+- Si ntfy ya mandó (o tiene programado) ese mismo aviso a esa misma hora, el local **no suena**: si no, en el celu con Aula abierta te llegaba dos veces. Para eso lo programado queda anotado 13 h después de sonar (el aviso local mira hasta 12 h atrás) y la pasada de ntfy no toca lo que está por sonar en menos de 30 s.
+- Igual que ntfy, ahora mira **todos los años**: antes, con un año viejo a la vista, no avisaba nada del actual.
+- **¿Por qué no WhatsApp o mail?** Los dos necesitan un servidor propio que mande el mensaje a la hora justa (una cuenta de WhatsApp Business o un servicio de mail con clave secreta, que no puede vivir en la app porque cualquiera la vería). ntfy resuelve lo mismo gratis y sin cuentas: el "servidor que espera hasta la hora" es ntfy.sh.
+**Tests:** +3 en `tests/avisos-e1c.spec.js` × 2 (con ntfy no repite y lo demás suena; con ntfy apagado suena todo; año viejo a la vista). Fallaron 2 de 3 antes del arreglo. `npm test`: **376 pasaron, 0 fallaron**.
+**Commits:** `9ca610a` fix(avisos): E1c.
+**Para Bauti:** con ntfy conectado (Configuración → "Avisos con la app cerrada"), poné una tarea para dentro de una hora con "Avisarme 30 min antes", cerrá Aula del todo y esperá: tiene que llegar por ntfy. Después cambiale la hora y fijate que **no** llegue a la hora vieja. Si llega igual, avisame: quiere decir que ntfy.sh no está cancelando y hay que acortar la ventana.
+
+---
+
 ## Corrida 01:07–01:50 (hora ARG) — Q1 (hallazgos de la revisión en el celu) y E1b1 (conectar ntfy)
 
 **Resumen de la corrida:** dos ítems, cada uno con su commit y `npm test` en verde. Versión 2.44.0 → 2.46.0. Q1 no toca los datos; **E1b1 sí: esquema 6 → 7** (agrega `settings.ntfy` apagado, con copia previa automática, idempotente y probado con el fixture). Lo siguiente es E1b2 (programar los avisos), que dejé planificado con dos problemas que encontré.
