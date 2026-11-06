@@ -236,7 +236,8 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
   - [x] **L1b** · Recorrido pensado (punto 3) de Hoy, Semana, Calendario, Materias, Parciales y Series. *(hecho, corrida 03:05: hallazgos #7 y #14–#20 en `docs/AUDITORIA.md`; #19 y #20 quedan para F1)*
   - [ ] **L1c** *(partido en L1c1 + L1c2 por el agente, corrida 03:06)* · Recorrido pensado de Progreso/estadísticas, Configuración, Copias, búsqueda, y de las cosas nuevas (sincronización, años). Repetir después de F1.
     - [x] **L1c1** · Búsqueda y Copias de seguridad. *(hecho, corrida 03:06, Aula 2.49.0: hallazgos #21–#27, `tests/l1c-busqueda.spec.js`)*
-    - [ ] **L1c2** · Progreso/estadísticas, Configuración, sincronización y años.
+    - [x] **L1c2** · Configuración y sincronización. *(hecho, corrida 03:06, Aula 2.50.0: hallazgos #28–#34, `tests/l1c-config.spec.js`; #28 era grave: reiniciar con la sync activa borraba también el otro dispositivo)*
+    - [ ] **L1c3** · Progreso/estadísticas (mirado por arriba en L1c2, ver #34) y años de cursado.
   Listo cuando: `docs/AUDITORIA.md` existe y está al día, el revisor automático corre en `npm test`, y no quedan hallazgos "rompe" ni "confunde" abiertos (los "detalle" pueden quedar listados con su porqué).
 
 ## Noche 3 o siguientes — NO hacer la noche del 5/11 (Bauti lo pidió "para los próximos días")

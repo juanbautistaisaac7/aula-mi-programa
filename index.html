@@ -351,7 +351,7 @@ body.selbar-on #main{padding-bottom:230px}
 .remcustom{display:inline-flex;gap:6px;align-items:center}
 .remcustom input{width:72px}
 .remcustom select{width:auto}
-@media (pointer:coarse){.remchip,.remadd{min-height:44px}.remchip button{width:40px;height:40px}}
+@media (pointer:coarse){.remchip,.remadd{min-height:44px}.remchip button{width:40px;height:40px;position:relative}.remchip button::after{content:"";position:absolute;top:-8px;bottom:-8px;left:-4px;right:-4px}}
 @media (prefers-reduced-motion:reduce){.remchip button,.remadd{transition:none}}
 .srchips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
 .srchips .btn{min-height:32px;font-variant-numeric:tabular-nums}
@@ -670,6 +670,8 @@ footer{text-align:center;margin-top:30px;color:var(--tx3);font-size:.7rem}
 #saveInd{min-width:0;flex-shrink:1}#saveTxt{overflow:hidden;text-overflow:ellipsis}
 @media (max-width:480px){#topbar .logo>span:not(.mark){display:none}}
 .filebtn input[type=file]{display:none}
+/* L1c2 · Configuración con el dedo: botones de 44 px y sin atajos de teclado */
+@media (pointer:coarse){.cfg .btn,.synccard .btn,.yearcard .btn{min-height:44px}.cfg .kbdhint{display:none}}
 @media(max-width:700px){
   #btnSearch{display:flex;order:0}
   #searchbox{display:none}

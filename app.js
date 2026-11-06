@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.49.0";
+const APP_VERSION = "2.50.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -5446,7 +5446,7 @@ function viewConfig() {
   <div class="card yearcard"><div class="yc-h"><div><h3 style="margin:0">Años de cursado</h3>
     <p class="tiny" style="margin-top:4px">Estás en <b>${esc(activeYear().name)}</b> · ${fmtYearRange(activeYear())}. Cada año tiene sus materias, parciales y tareas; los anteriores quedan para consultar.</p></div></div>
     <div class="yc-b"><button class="btn" onclick="openYearPicker()">Ver mis años</button><button class="btn primary" onclick="openNewYear()">Nuevo año…</button></div></div>
-  <div class="grid2">
+  <div class="grid2 cfg">
   <div class="card" style="margin:0"><h3>Apariencia</h3>
     <label class="tiny" style="font-weight:700">Tema</label>
     <div style="display:flex;gap:8px;margin:6px 0 12px">
@@ -5486,7 +5486,7 @@ function viewConfig() {
     <label class="tiny" style="font-weight:700;display:block;margin-top:12px" for="cfg_donekeep">Sacar de la lista las hechas hace más de</label>
     <select id="cfg_donekeep" style="margin-top:6px;width:100%;max-width:220px;min-height:40px;background:var(--card2);color:var(--tx);border:1px solid var(--line);border-radius:8px;padding:7px" onchange="state.settings.doneKeepDays=parseInt(this.value)||0;change();render()">
       ${[3, 5, 7, 10, 14, 30, 0].map(n => `<option value="${n}" ${(st.doneKeepDays | 0) === n ? "selected" : ""}>${n ? n + " días" : "Nunca"}</option>`).join("")}</select>
-    <p class="tiny" style="margin-top:6px">No se borran: siguen en Historial y en Estadísticas.</p>
+    <p class="tiny" style="margin-top:6px">No se borran: siguen en Historial y en Progreso.</p>
     <div class="hr"></div>
     <label class="tiny" style="font-weight:700">Formato horario</label>
     <div style="display:flex;gap:8px;margin-top:6px">
@@ -5503,11 +5503,13 @@ function viewConfig() {
       <button class="btn sm" onclick="go('backups')">Copias de seguridad</button>
       <button class="btn sm" onclick="go('history')">Historial</button>
       <button class="btn sm" onclick="exportCSV()">Exportar estadísticas CSV</button>
-      <button class="btn sm danger" onclick="resetApp()">Reiniciar aplicación</button></div>
+      </div>
     <div class="hr"></div>
     <p class="tiny">Versión ${APP_VERSION} (datos v${schemaOf(state)}) · ${state.meta.migratedV1 ? "Datos migrados de la versión anterior el " + (state.meta.migratedAt || "").slice(0, 10) : "Instalación nueva"} · Guardado principal: ${db ? "IndexedDB" : "localStorage"}</p>
-    <button class="btn sm ghost" style="margin-top:6px" onclick="showShortcuts()">Ver atajos de teclado</button>
+    <button class="btn sm ghost kbdhint" style="margin-top:6px" onclick="showShortcuts()">Ver atajos de teclado</button>
     <span id="installSlot"></span>
+    <div class="hr"></div>
+    <button class="btn sm danger" onclick="resetApp()">Reiniciar aplicación</button>
   </div>
   </div>`;
 }
@@ -5561,13 +5563,19 @@ function setAccent(c) {
   try { localStorage.setItem("aula-accent", c); } catch (e) {}
   render();
 }
+/* L1c2 · Con la sincronización activa, reiniciar borraba también el otro dispositivo
+   (el borrado viajaba como lápidas). Ahora reinicia solo este: primero lo desconecta
+   y arranca sin marcas de sync, así nada de acá borra lo del otro. */
 function resetApp() {
+  const sync = syncOn();
   askConfirm({
-    title: "Reiniciar aplicación", body: "Se borrarán TODAS las tareas, materias, evaluaciones, notas, hábitos y estadísticas de este navegador.", okLabel: "Continuar", danger: true,
+    title: "Reiniciar aplicación", body: "Se borrarán TODAS las tareas, materias, evaluaciones, notas, hábitos y estadísticas de este dispositivo." + (sync ? " La sincronización se desconecta antes: el otro dispositivo conserva todo, y si volvés a conectar este con el código, recupera tus datos." : ""), okLabel: "Continuar", danger: true,
     second: { title: "¿Estás completamente seguro?", body: "Esta acción es definitiva. Antes se creará una última copia de seguridad local por si te arrepentís (en Copias de seguridad).", okLabel: "Sí, borrar todo" },
     onOk: async () => {
       try { if (db) await idbPut("backups", "pre-reset-" + Date.now(), { ts: Date.now(), label: "Antes de reiniciar", data: JSON.stringify(fullState()) }); } catch (e) {}
+      if (syncOn()) { syncDisconnect(); syncAgreed = null; }
       const ns = baseState(); ns.subjects = initialSubjects(); ns.meta.migratedV1 = true; migrateState(ns); setWholeState(ns);
+      ns.sync = syncBlank(); syncResetHashes(); // sin lápidas: lo de antes no se marca como "borrado"
       change(); render(); toast("Aplicación reiniciada");
     }
   });

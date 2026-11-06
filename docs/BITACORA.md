@@ -6,6 +6,38 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
+## Corrida 03:06–03:40 (hora ARG) — L1c1 (búsqueda y copias) y L1c2 (configuración y sincronización)
+
+**Resumen de la corrida:** L1c era un recorrido de varias pantallas, así que lo partí en L1c1, L1c2 y L1c3 (este último queda: Progreso a fondo y años). Dos commits, `npm test` en verde en cada uno. Versión 2.48.0 → 2.50.0. **No cambia la forma de los datos** (sigue esquema 8): no hizo falta migración.
+
+### L1c1 · Búsqueda y Copias de seguridad (Aula 2.49.0)
+
+**Plan:** usar la búsqueda y las copias en el celu con el fixture, anotar todo en `docs/AUDITORIA.md` y arreglar de a uno con test.
+**Lo que encontré (#21–#27):**
+- **En el celu no se podía buscar** (#21): el campo "Buscar" se esconde en pantallas chicas y el único otro acceso era la tecla `/`. Ahora hay una lupa en la barra de arriba. Para que entre sin cortar "todo guardado", en pantallas de 480 px o menos el logo queda solo con "Au" (sin la palabra "Aula").
+- **No encontraba sin tildes** (#22): "economia" no daba "Economía". Ahora compara sin tildes ni mayúsculas.
+- **Resultados desordenados** (#23): sin escribir nada mostraba 14 tareas al azar; "Repasar unidad 3" salía 5 veces (una por ocurrencia de la serie); lo hecho y lo cancelado se mezclaba con lo pendiente. Ahora: sin texto, una ayuda; una serie aparece **una vez** ("serie · 5 veces") y abre la próxima pendiente; materias y parciales primero, después lo pendiente, y lo hecho en gris con "hecha"; las tareas sueltas muestran su fecha (había dos "Repasar" imposibles de distinguir). El subtítulo pasó abajo del título, porque en el celu apretaba el nombre a una palabra por renglón (lo vi en la captura).
+- Acciones rápidas con los nombres del menú (#24: "Ir a Progreso", no "Estadísticas"; sumé Series y Copias), sin atajos de teclado en pantalla táctil y filas de 44 px (#25).
+- Copias: "Choose File / No file chosen" en inglés → botón "Elegir archivo…" (#26).
+- **Restaurar con la sincronización activa** (#27): revisé qué pasa. `syncTrack` compara lo restaurado con lo que había y lo marca como cambio nuevo, así que la restauración gana en los dos dispositivos (no "vuelve" lo de antes en la próxima sincronización). Es lo correcto, pero no se avisaba: ahora la confirmación lo dice.
+**Decisiones:** la búsqueda sigue mirando solo el año que estás viendo (igual que el resto de las vistas); me pareció coherente y no lo cambié.
+**Salió mal:** el primer test de tildes falló una vez de cada tres por apuro (leía los resultados antes de que se dibujen): lo cambié a `expect.poll`.
+**Tests:** +5 en `tests/l1c-busqueda.spec.js` × 2 (fallaban todos antes del arreglo). `npm test`: **386 pasaron, 0 fallaron** (52 saltados a propósito).
+**Capturas:** [búsqueda, celu oscuro](capturas/L1c1-busqueda-mobile-dark.png) · [búsqueda, compu](capturas/L1c1-busqueda-desktop-light.png) · [copias, celu](capturas/L1c1-copias-mobile-light.png)
+**Commits:** `7d729bd` fix(busqueda): L1c1.
+
+### L1c2 · Configuración y sincronización (Aula 2.50.0)
+
+**El hallazgo importante (#28, "rompe"):** "Reiniciar aplicación" decía "se borrarán todas las tareas… de este navegador", pero con la sincronización activa el borrado viajaba como lápidas y **borraba todo también en el otro dispositivo**. Con datos reales en dos dispositivos, era la forma más fácil de perder todo (la copia local previa existía solo en el que reiniciaste).
+**Decisión:** reiniciar ahora es **solo de este dispositivo**: primero lo desconecta de la sincronización y arranca sin marcas de sync (así no queda ninguna lápida que pueda borrar lo del otro). El otro conserva todo y, si volvés a conectar este con el código, recupera tus datos. Descarté "reiniciar los dos": es justo lo que el texto prometía que no pasaba, y para eso ya existe borrar a mano. El test lo prueba con dos dispositivos contra la función real de sync: A reinicia, B sincroniza y conserva todo, A se reconecta y vuelve a tener lo de B.
+**Otros (#29–#31):** en el celu, sin "Ver atajos de teclado", "Reiniciar aplicación" separado abajo (estaba pegado a "Exportar JSON"), botones de 44 px con el dedo, y "Historial y Progreso" en vez de "Estadísticas".
+**Quedan abiertos (detalle):** #32 al reiniciar con ntfy conectado no se cancelan los avisos ya programados (llegan como mucho 2 días); #33 la × de las etiquetas es chica; #34 en Progreso, "le estás dando poco" es una regla fija (parcial en ≤ 14 días y menos de 2 h) aunque sea la materia que más estudiás: corresponde a H1d.
+**Tests:** +2 en `tests/l1c-config.spec.js` (dos dispositivos, desktop; botones y atajos, celu). `npm test`: **388 pasaron, 0 fallaron** (54 saltados a propósito).
+**Capturas:** [config, celu oscuro](capturas/L1c2-config-mobile-dark.png) · [config, celu claro](capturas/L1c2-config-mobile-light.png) · [config, compu](capturas/L1c2-config-desktop-light.png)
+**Para Bauti:** probá la búsqueda en el celu (lupa arriba) escribiendo sin tildes. **No hace falta que pruebes "Reiniciar"**; si alguna vez lo usás con la sync activa, ahora te avisa que desconecta ese dispositivo.
+
+---
+
 ## Corrida 02:06–02:35 (hora ARG) — E1b2 (programar los avisos en ntfy) y E1c (respaldo local)
 
 **Resumen de la corrida:** con esto **E1 (avisos al celu) queda completo**. Dos commits, `npm test` en verde en cada uno. Versión 2.46.0 → 2.48.0. **Cambia la forma de los datos: esquema 7 → 8** (agrega `state.ntfySched` vacío), con copia previa automática, migración idempotente y test con el fixture.
