@@ -223,7 +223,7 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
   - Disponible para el año en curso ("hasta ahora") y para los años cerrados. Con el fixture y con 0 datos (no se rompe).
   - Tests de los números con el fixture y de que se navega entera sin errores; capturas de varias pantallas en mobile.
 
-- [ ] **L1 · Cazar errores de lógica y de experiencia en toda la app** *(trabajo continuo: arrancar con L1a esta noche si sobra tiempo después de G1; el resto en las noches siguientes, intercalado)*
+- [x] **L1 · Cazar errores de lógica y de experiencia en toda la app** *(trabajo continuo: arrancar con L1a esta noche si sobra tiempo después de G1; el resto en las noches siguientes, intercalado)*
   Pedido (4/11 21:49): *"temas de lógica en general, por ejemplo una que vi recién: caen dos parciales el mismo día pero arriba dice 'próximo parcial Economía en 2 días'... que diga Economía y tal en 2 días. Esas cosas que por ahí son pequeñas pero son de lógica o de experiencia de usuario, que debe haber varias... fijate si podés sumar eso también e investigar bien profundo e ir resolviéndolas"*.
   Método (no al azar, sistemático):
   1. **Inventario:** abrir `docs/AUDITORIA.md` con una tabla: dónde, qué pasa, qué debería pasar, gravedad (rompe / confunde / detalle), estado. Todo lo que se encuentre va ahí primero.
@@ -234,10 +234,10 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
   - [x] **L1a2** · El revisor automático de textos (punto 2) y sus primeros hallazgos. *(hecho, corrida 02:06: `tests/revisor.spec.js`, hallazgos 8–13 en `docs/AUDITORIA.md`)*
   - [x] **L1a** *(partido en L1a1 + L1a2)* · El caso de Bauti: arriba ("próximo parcial", `renderTop` → `nextEv`, que hoy toma `evs[0]`) y en todo lugar que muestre "el próximo parcial" (Inicio, detalle de materia, Progreso, recordatorios): si hay varios el mismo día, mostrarlos juntos ("Economía y AN · en 2 días", o "2 parciales · en 2 días" si no entran). Test con dos y tres parciales el mismo día. Después, el revisor automático de textos (punto 2) y los primeros hallazgos.
   - [x] **L1b** · Recorrido pensado (punto 3) de Hoy, Semana, Calendario, Materias, Parciales y Series. *(hecho, corrida 03:05: hallazgos #7 y #14–#20 en `docs/AUDITORIA.md`; #19 y #20 quedan para F1)*
-  - [ ] **L1c** *(partido en L1c1 + L1c2 por el agente, corrida 03:06)* · Recorrido pensado de Progreso/estadísticas, Configuración, Copias, búsqueda, y de las cosas nuevas (sincronización, años). Repetir después de F1.
+  - [x] **L1c** *(partido en L1c1 + L1c2 + L1c3 por el agente, corrida 03:06; "repetir después de F1" quedó anotado en F1)* · Recorrido pensado de Progreso/estadísticas, Configuración, Copias, búsqueda, y de las cosas nuevas (sincronización, años). Repetir después de F1.
     - [x] **L1c1** · Búsqueda y Copias de seguridad. *(hecho, corrida 03:06, Aula 2.49.0: hallazgos #21–#27, `tests/l1c-busqueda.spec.js`)*
     - [x] **L1c2** · Configuración y sincronización. *(hecho, corrida 03:06, Aula 2.50.0: hallazgos #28–#34, `tests/l1c-config.spec.js`; #28 era grave: reiniciar con la sync activa borraba también el otro dispositivo)*
-    - [ ] **L1c3** · Progreso/estadísticas (mirado por arriba en L1c2, ver #34) y años de cursado.
+    - [x] **L1c3** · Progreso/estadísticas (mirado por arriba en L1c2, ver #34) y años de cursado. *(corrida 03:06: años sin hallazgos; Progreso a fondo se deja para H1, que lo rehace entero)*
   Listo cuando: `docs/AUDITORIA.md` existe y está al día, el revisor automático corre en `npm test`, y no quedan hallazgos "rompe" ni "confunde" abiertos (los "detalle" pueden quedar listados con su porqué).
 
 ## Noche 3 o siguientes — NO hacer la noche del 5/11 (Bauti lo pidió "para los próximos días")
@@ -307,7 +307,7 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
 
 ## F. Pulido final
 
-- [ ] **F1 · Nivel Apple en toda la app**
+- [ ] **F1 · Nivel Apple en toda la app** *(al terminar: repetir el recorrido de L1 y revisar los "detalle" abiertos de `docs/AUDITORIA.md`: #6, #19, #20, #32, #33)*
   **Dirección de diseño de Bauti (4/11 21:40):** *"colores diferentes, no me gustaría que pierda la esencia completa porque sino se vuelve muy monocromático y aburrido como Notion por ejemplo, Notion no me gusta, no tengo una que quiero que se copie o sea igual, simplemente mejorar la estética y UX/UI manteniendo un poco la esencia de Aula original"*.
   Traducido a reglas:
   - **Evolución, no reemplazo.** Aula tiene que seguir reconociéndose como Aula: el índigo de acento (`--acc`, editable), los colores por materia, el tono de los textos. Antes de tocar, sacar capturas "antes" y escribir en la bitácora qué es la esencia que se conserva.

@@ -6,9 +6,9 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
-## Corrida 03:06–03:40 (hora ARG) — L1c1 (búsqueda y copias) y L1c2 (configuración y sincronización)
+## Corrida 03:06–03:35 (hora ARG) — L1c1 (búsqueda y copias), L1c2 (configuración y sincronización) y L1c3 (años)
 
-**Resumen de la corrida:** L1c era un recorrido de varias pantallas, así que lo partí en L1c1, L1c2 y L1c3 (este último queda: Progreso a fondo y años). Dos commits, `npm test` en verde en cada uno. Versión 2.48.0 → 2.50.0. **No cambia la forma de los datos** (sigue esquema 8): no hizo falta migración.
+**Resumen de la corrida:** L1c era un recorrido de varias pantallas, así que lo partí en L1c1, L1c2 y L1c3. Con esto **L1 queda cerrado**: no hay hallazgos "rompe" ni "confunde" abiertos; los "detalle" se repasan en F1. L1c3 (años: "Tus años" y "Nuevo año" en el celu) no encontró nada; Progreso a fondo lo dejé para H1, que lo rehace entero ([captura](capturas/L1c3-anio-nuevo-mobile-dark.png)). Dos commits, `npm test` en verde en cada uno. Versión 2.48.0 → 2.50.0. **No cambia la forma de los datos** (sigue esquema 8): no hizo falta migración.
 
 ### L1c1 · Búsqueda y Copias de seguridad (Aula 2.49.0)
 
