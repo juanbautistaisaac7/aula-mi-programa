@@ -24,7 +24,7 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 **Salió mal / intentos fallidos:** lo de los acentos en headers (arriba). Leer la doc de ntfy por partes con la herramienta web no encontró las secciones de cancelar y límites; los límites salieron de una copia de la doc.
 **Tests:** +3 en `tests/ntfy.spec.js` × 2 dispositivos (migración 6 → 7 con el fixture, copia previa, idempotente y sin marcas de sync en tareas; la pantalla completa con ntfy mockeado; sin red no queda activo; `at` y acentos). Nunca se llama a ntfy.sh real: hay un `page.route` de red de seguridad. `npm test`: **356 pasaron, 0 fallaron** (52 saltados a propósito).
 **Capturas:** [ntfy, celu claro](capturas/E1b1-ntfy-mobile-light.png) · [ntfy, celu oscuro](capturas/E1b1-ntfy-mobile-dark.png)
-**Commits:** ver abajo.
+**Commits:** `ea8318e` feat(avisos): E1b1.
 **Para Bauti:** si querés adelantarte: Configuración → "Avisos con la app cerrada" → Empezar, instalá ntfy, suscribite y tocá la prueba. Debería llegarte "¡Listo! Así te van a llegar los avisos." Si no llega, avisame (puede ser el iPhone: ntfy en iOS a veces tarda la primera vez).
 
 ### Q1 · Hallazgos de la revisión en el celu (Aula 2.45.0)
