@@ -21,6 +21,7 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 **Salió mal / intentos fallidos:** el primer test pasaba en verde con el CSS viejo a 390 px (Chrome no tiene el problema); recién al imitar a Safari falló donde tenía que fallar. Después del arreglo, al revisar las capturas vi el rótulo de dos renglones que desalineaba los selects y el botón "Agregar" de subtareas más bajo que su campo; los corregí.
 **Tests:** +4 en `tests/formularios-celu.spec.js` (3 anchos + fecha/hora listos para Safari, 16 px, 44 px y Fecha + Hora en la misma fila). `npm test`: **336 pasaron, 0 fallaron**.
 **Capturas:** [nueva tarea, celu](capturas/M2-nueva-tarea-mobile-dark.png) · [con Repetir](capturas/M2-nueva-tarea-repetir-mobile-light.png) · [parcial](capturas/M2-parcial-mobile-light.png) · [editar tarea](capturas/M2-editar-tarea-mobile-light.png) · [año nuevo](capturas/M2-ano-nuevo-mobile-light.png)
+**Commits:** `b2806a0` feat(formularios): M2.
 **Para Bauti:** probá en el iPhone "Nueva tarea" y "Editar parcial": Fecha y Hora tienen que verse lado a lado, sin pisarse, y al tocar un campo la pantalla no tiene que hacer zoom. Si algún modal se ve mal en el iPhone, mandame captura: el test imita a Safari pero no es Safari.
 
 ### S2 · Los cambios llegan solos y se puede actualizar a mano (Aula 2.42.0)
