@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.47.0";
+const APP_VERSION = "2.48.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -2569,7 +2569,10 @@ async function ntfyPlan() {
     for (const k of Object.keys(sched)) {
       const e = sched[k];
       if (!e || typeof e !== "object" || !e.seq || !e.topic || !e.server) { delete sched[k]; changed = true; continue; }
-      if (e.at < now - 60e3) { delete sched[k]; changed = true; continue; }
+      // lo que ya sonó queda anotado 13 h (más que la ventana de 12 h del aviso local, E1c): así
+      // la notificación local de la app abierta sabe que ntfy ya avisó y no lo repite
+      if (e.at < now - 13 * 3600e3) { delete sched[k]; changed = true; continue; }
+      if (e.at <= now + NTFY_MIN_AHEAD) continue; // ya sonó o está por sonar: no tocarlo
       const w = want.get(k);
       if (w && w.seq === e.seq && e.topic === n.topic && e.server === n.server) continue;
       if (await ntfyDelete(e)) { delete sched[k]; changed = true; }
@@ -2614,18 +2617,22 @@ function checkReminders() {
   // E1a2: los parciales y las tareas con hora avisan según sus "Avisarme" (los parciales
   // sin lista propia usan los de Configuración: 7 y 1 día antes). Suena una sola vez,
   // si la app está abierta dentro de las 12 h siguientes a la hora del aviso.
-  const now = Date.now(), WIN = 12 * 3600e3;
+  // E1c: mira todos los años (con un año viejo a la vista, state.tasks solo tiene ese año) y no
+  // repite lo que ntfy ya mandó al celu (si está en el registro de lo programado, E1b2).
+  const now = Date.now(), WIN = 12 * 3600e3, fs = fullState(), ntOn = ntfyCfg().on, sched = state.ntfySched || {};
   const due = (x, kind, id, text) => {
     for (const { at, r } of reminderTimes(x, kind)) {
       if (at > now || now - at > WIN) continue;
       const key = "rem-" + id + "-" + reminderOffsetMin(r) + "-" + x.date + "-" + (x.time || "");
       if (notified[key]) continue;
+      const nk = sched[(kind === "eval" ? "e:" : "t:") + id + ":" + reminderOffsetMin(r)];
+      if (ntOn && nk && nk.at === at) { notified[key] = today; continue; }
       notified[key] = today; try { new Notification("Aula", { body: text + " · en " + remShort(r) }); } catch (e) {}
     }
   };
-  for (const e of state.evals) if (!EV_CLOSED.includes(e.status)) due(e, "eval", e.id, e.name);
-  for (const t of state.tasks) if (!t.archived && !t.recur && t.status !== "done" && t.status !== "canc") due(t, "task", t.id, t.title.slice(0, 60));
-  for (const t of state.tasks) {
+  for (const e of fs.evals || []) if (!EV_CLOSED.includes(e.status)) due(e, "eval", e.id, e.name);
+  for (const t of fs.tasks || []) if (!t.archived && !t.recur && t.status !== "done" && t.status !== "canc") due(t, "task", t.id, String(t.title || "").slice(0, 60));
+  for (const t of fs.tasks || []) {
     if (t.archived || t.recur || t.status === "done" || t.status === "canc") continue;
     if (t.due === today) fire("due-" + t.id, "Vence hoy: " + t.title.slice(0, 60));
   }
