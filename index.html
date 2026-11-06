@@ -66,7 +66,23 @@ a{color:var(--acc)}
 #topbar .spacer{flex:1}
 .iconbtn{background:transparent;border:1px solid transparent;color:var(--tx2);width:34px;height:34px;border-radius:8px;cursor:pointer;font-size:.95rem;display:flex;align-items:center;justify-content:center;line-height:1}
 .iconbtn:hover{background:var(--hover);border-color:var(--line)}
-#saveInd{font-size:.7rem;color:var(--tx3);display:flex;align-items:center;gap:6px;white-space:nowrap}
+#saveInd{font:inherit;font-size:.7rem;color:var(--tx3);display:flex;align-items:center;gap:6px;white-space:nowrap;background:none;border:0;min-height:44px;padding:0 6px;border-radius:8px;cursor:default;-webkit-tap-highlight-color:transparent}
+#saveInd[class^="sync-"]{cursor:pointer}
+#saveInd[class^="sync-"]:active{background:var(--hover)}
+#saveInd.sync-busy .dot{animation:syncpulse 1s ease-in-out infinite}
+@keyframes syncpulse{50%{opacity:.3}}
+/* S2 · tirar para actualizar */
+html,body{overscroll-behavior-y:contain}
+#ptr{position:fixed;top:58px;left:50%;z-index:55;width:36px;height:36px;margin-top:-44px;border-radius:18px;background:var(--card);border:1px solid var(--line);box-shadow:0 2px 10px rgba(0,0,0,.12);display:flex;align-items:center;justify-content:center;color:var(--tx2);opacity:0;transform:translate(-50%,0);pointer-events:none;transition:transform .2s ease,opacity .2s ease}
+#ptr.pull{transition:none}
+#ptr .ptrarrow{font-size:1rem;font-weight:700;transition:transform .18s ease}
+#ptr.ready .ptrarrow{transform:rotate(180deg);color:var(--acc)}
+#ptr .ptrspin{display:none;width:16px;height:16px;border-radius:50%;border:2px solid var(--acc-soft);border-top-color:var(--acc);animation:ptrspin .7s linear infinite}
+#ptr.on{opacity:1;transform:translate(-50%,64px)}
+#ptr.on .ptrarrow{display:none}
+#ptr.on .ptrspin{display:block}
+@keyframes ptrspin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){#ptr,#ptr .ptrarrow{transition:none}#ptr .ptrspin,#saveInd.sync-busy .dot{animation:none}}
 #saveInd .dot{width:7px;height:7px;border-radius:50%;background:#12b76a;flex-shrink:0}
 #saveInd.saving .dot{background:var(--warn)}
 #saveInd.sync-busy .dot{background:var(--acc)}
@@ -94,7 +110,7 @@ a{color:var(--acc)}
 .ynm{font-weight:650;font-size:.88rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ytag{font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--acc);margin-left:4px}
 .yrow .btn{min-height:40px}
-.nydates{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.nydates{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px}
 .modal .nysubs{border:1px solid var(--line);border-radius:10px;margin:0 0 8px;background:var(--card2)}
 .modal .nysubs summary{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:46px;padding:0 14px;cursor:pointer;font-size:.85rem;font-weight:500;list-style:none}
 .modal .nysubs summary::-webkit-details-marker{display:none}
@@ -197,10 +213,44 @@ body.sb-open #sidebar{transform:translateX(0)}
 .pill.acc{background:var(--acc-soft);color:var(--acc);border-color:transparent}
 .pbar{height:6px;background:var(--card2);border-radius:99px;overflow:hidden;flex:1}
 .pbar i{display:block;height:100%;border-radius:99px;background:var(--acc);transition:width .35s}
-.grid2{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px}
-.grid3{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.grid2{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(330px,100%),1fr));gap:12px}
+.grid3{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(240px,100%),1fr));gap:12px}
 .statnum{font-size:1.55rem;font-weight:800;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
 .statlab{font-size:.7rem;color:var(--tx3)}
+/* Q1 · Inicio: los tres números en una sola tarjeta de una fila */
+.homestats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px 12px;padding:14px 16px 12px}
+.homestats .hs{min-width:0}
+.homestats .hs+.hs{border-left:1px solid var(--line2);padding-left:12px}
+.homestats .statnum{font-size:1.35rem;white-space:nowrap}
+.homestats .statlab{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.homestats .hsbar{grid-column:1/-1;margin-top:8px}
+@media(max-width:400px){.homestats{padding:12px;gap:4px 8px}.homestats .hs+.hs{padding-left:8px}.homestats .statnum{font-size:1.15rem}}
+/* en el celu, las materias como lista compacta (una fila de 44 px cada una) en vez de cajas */
+@media(max-width:720px){.homesubs{grid-template-columns:minmax(0,1fr);gap:0}.homesubs .subrow{border:0!important;border-radius:0!important;min-height:44px;padding:6px 2px}.homesubs .subrow+.subrow{border-top:1px solid var(--line2)!important}.homesubs .iconchip{width:28px;height:28px;font-size:.66rem}}
+/* E1b · avisos con ntfy (Configuración) */
+.ntfysteps{margin:0 0 6px 18px;padding:0;font-size:.8rem;line-height:1.5}
+.ntfysteps li{margin:0 0 10px}
+.ntfytopic{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0 4px}
+.ntfytopic code{font-size:.74rem;background:var(--card2);border:1px solid var(--line);border-radius:7px;padding:6px 8px;word-break:break-all;min-width:0;flex:1 1 180px}
+.ntfysoon{margin:0 0 10px;padding:8px 10px;background:var(--card2);border-radius:8px}
+.ntfysum{display:block;margin-top:6px;color:var(--tx);font-weight:600}
+.ntfygen{display:flex;gap:8px;align-items:flex-start;font-size:.8rem;cursor:pointer;line-height:1.4}
+.ntfygen input{width:18px;height:18px;flex:none;margin-top:1px;accent-color:var(--acc);-webkit-appearance:checkbox;appearance:checkbox}
+.ntfygen>span{flex:1;min-width:0}
+@media (pointer:coarse){.ntfycard .btn{min-height:44px}.ntfygen{min-height:44px}}
+.homemore{width:100%;justify-content:center;margin-top:8px;min-height:44px;gap:6px}
+.homemore .tiny{font-weight:400}
+.studyfold>summary{list-style:none;display:flex;align-items:center;gap:8px;cursor:pointer;min-height:28px;font-size:.92rem}
+.studyfold>summary::-webkit-details-marker{display:none}
+.studyfold>summary .tiny{margin-left:auto}
+.studyfold>summary::after{content:"";width:7px;height:7px;border-right:2px solid var(--tx3);border-bottom:2px solid var(--tx3);transform:rotate(45deg);margin:0 4px 3px 2px;transition:transform .2s}
+.studyfold[open]>summary{margin-bottom:10px}
+.studyfold[open]>summary::after{transform:rotate(225deg);margin-bottom:-3px}
+@media (prefers-reduced-motion:reduce){.studyfold>summary::after{transition:none}}
+#btnTheme{position:relative}
+#btnTheme .autob{position:absolute;right:calc(50% - 14px);bottom:calc(50% - 14px);font-size:.5rem;font-weight:800;line-height:1;background:var(--card);color:var(--tx2);border-radius:3px;padding:0 1px}
+@media (pointer:coarse){#topbar .iconbtn{width:44px;height:44px;flex-shrink:0}}
+@media (max-width:360px){#topbar{gap:2px;padding:0 6px}#topbar .logo>span:not(.mark){display:none}}
 .empty{padding:26px;text-align:center;color:var(--tx3);font-size:.8rem}
 .hr{border:none;border-top:1px solid var(--line2);margin:10px 0}
 /* tareas */
@@ -222,7 +272,10 @@ body.sb-open #sidebar{transform:translateX(0)}
 .tactions button:hover{color:var(--acc);border-color:var(--acc)}
 /* X2 · En pantallas táctiles no hay hover: estas acciones nunca se veían pero
    ocupaban la mitad del ancho de la fila. Tocar la tarea abre su detalle. */
-@media (hover:none){.tactions{display:none}}
+/* Q1 · también en pantallas angostas: un teléfono que dice tener hover (Android con mouse, algunos
+   Samsung) volvía a partir los títulos a la mitad. Ahí se abre la tarea o se desliza/arrastra. */
+@media (hover:none),(max-width:600px){.tactions{display:none}}
+.mins.late{color:var(--bad);opacity:.8}
 /* arrastrar para ordenar el día */
 .drag{cursor:grab;color:var(--tx3);font-size:.72rem;line-height:1;padding:3px 2px;margin-top:2px;flex-shrink:0;opacity:.35;transition:opacity .12s,color .12s;letter-spacing:-2px;user-select:none;touch-action:none}
 .task:hover .drag{opacity:.9;color:var(--acc)}
@@ -298,7 +351,7 @@ body.selbar-on #main{padding-bottom:230px}
 .remcustom{display:inline-flex;gap:6px;align-items:center}
 .remcustom input{width:72px}
 .remcustom select{width:auto}
-@media (pointer:coarse){.remchip,.remadd{min-height:44px}.remchip button{width:40px;height:40px}}
+@media (pointer:coarse){.remchip,.remadd{min-height:44px}.remchip button{width:40px;height:40px;position:relative}.remchip button::after{content:"";position:absolute;top:-8px;bottom:-8px;left:-4px;right:-4px}}
 @media (prefers-reduced-motion:reduce){.remchip button,.remadd{transition:none}}
 .srchips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
 .srchips .btn{min-height:32px;font-variant-numeric:tabular-nums}
@@ -375,6 +428,14 @@ body.is-dragging .task:hover .drag{opacity:.35;color:var(--tx3)}
 .dragghost.settling{transition:transform .2s cubic-bezier(.2,.8,.2,1),box-shadow .2s;box-shadow:none}
 .dragghost .tactions{display:none}
 @media (hover:none){.task{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}}
+/* M1 · deslizar para borrar */
+@media (hover:none){#view .task[data-id]{touch-action:pan-y}}
+.swipeclip{overflow:hidden}
+.task.swiping{position:relative;z-index:2;background:var(--card);will-change:transform}
+.swipebg{position:fixed;z-index:1;background:#e0362b;color:#fff;border-radius:8px;display:flex;align-items:center;padding-left:16px;overflow:hidden;pointer-events:none}
+.swipebg svg{flex-shrink:0;transform:scale(var(--k,.6));transition:transform .12s ease}
+.swipebg.armed svg{transform:scale(1.15)}
+@media (prefers-reduced-motion:reduce){.swipebg svg{transition:none}}
 #sheetbg{z-index:100;align-items:flex-end;padding:0}
 #sheet{background:var(--card);width:min(440px,100vw);border-radius:16px 16px 0 0;padding:6px 12px calc(12px + env(safe-area-inset-bottom));box-shadow:var(--shadow-lg);animation:sheetup .22s cubic-bezier(.2,.8,.2,1)}
 @media (min-width:721px){#sheetbg{align-items:center;padding:20px}#sheet{border-radius:16px;padding:6px 12px 12px;animation:sheetpop .18s ease-out}.sheetgrip{display:none}}
@@ -538,9 +599,48 @@ body.is-dragging .task:hover .drag{opacity:.35;color:var(--tx3)}
 .modal textarea{resize:vertical;min-height:64px}
 .modal input:focus,.modal select:focus,.modal textarea:focus{outline:2px solid var(--acc-soft);border-color:var(--acc)}
 .mrow{display:flex;gap:10px}.mrow>div{flex:1;min-width:0}
+/* M2 · formularios a prueba de Safari en iOS: sus campos de fecha y hora traen un ancho
+   mínimo propio y se salían de la fila; con 16 px iOS no hace zoom al tocar. */
+.modal input,.modal select,.modal textarea,#view input,#view select{min-width:0;max-width:100%}
+input[type=date],input[type=time]{min-width:0}
+@supports (-webkit-touch-callout:none){
+  .modal input[type=date],.modal input[type=time],#view input[type=date],#view input[type=time]{-webkit-appearance:none;appearance:none;display:block;text-align:left}
+  input::-webkit-date-and-time-value{text-align:left;margin:0}
+}
+@media (pointer:coarse){
+  .modal input:not([type=checkbox]):not([type=radio]),.modal select,.modal textarea,#view input:not([type=checkbox]):not([type=radio]),#view select{font-size:16px}
+  .modal input:not([type=checkbox]):not([type=radio]),.modal select{min-height:44px}
+  .modal .mrow>.btn{min-height:44px}
+}
+@media(max-width:600px){
+  .mrow{flex-wrap:wrap;column-gap:10px;row-gap:0}
+  .mrow>div{flex:1 1 calc(50% - 5px)}
+  .mrow{align-items:flex-end} /* si un rótulo ocupa dos renglones, los campos igual quedan parejos */
+  .mrow>div:first-child:nth-last-child(3):not(:has(input[type=date])){flex-basis:100%} /* de tres: el primero a lo ancho, salvo que sea la fecha (fecha + hora van juntas) */
+  .mfoot>.tiny.grow{flex-basis:100%;order:-1}
+}
 .mfoot{display:flex;gap:8px;margin-top:18px;justify-content:flex-end;align-items:center;flex-wrap:wrap}
 .mfoot .grow{flex:1}
 /* toast + undo */
+/* H1a · barrita "¿cuánto te llevó?" al completar: abajo, no bloquea */
+#donebar{position:fixed;left:50%;bottom:calc(14px + env(safe-area-inset-bottom));transform:translate(-50%,24px);width:min(440px,calc(100vw - 24px));background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow-lg);padding:12px 12px 12px 14px;z-index:115;opacity:0;pointer-events:none;transition:opacity .2s ease,transform .22s cubic-bezier(.2,.8,.2,1)}
+#donebar.open{opacity:1;transform:translate(-50%,0);pointer-events:auto}
+#donebar .db-top{display:flex;align-items:center;gap:10px}
+#donebar .db-ok{flex:none;width:26px;height:26px;border-radius:13px;background:var(--ok,#34c759);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.8rem;font-weight:800}
+#donebar .db-txt{flex:1;min-width:0}
+#donebar .db-t{font-size:.86rem;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#donebar .db-s{font-size:.76rem;color:var(--tx2);margin-top:1px}
+#donebar .db-x{flex:none;min-height:44px;min-width:44px;padding:0 10px;background:transparent;border:0;color:var(--acc);font-weight:650;font-size:.84rem;cursor:pointer;font-family:inherit;border-radius:10px}
+#donebar .db-chips{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+#donebar .db-chip{flex:1 1 0;min-width:56px;min-height:44px;padding:0 8px;border-radius:12px;border:1px solid var(--line);background:var(--card2);color:var(--tx);font-size:.82rem;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap;transition:background .15s,border-color .15s}
+#donebar .db-chip.on{background:var(--acc);border-color:var(--acc);color:#fff}
+#donebar .db-chip:active{transform:scale(.97)}
+#donebar .db-other{display:flex;gap:8px;align-items:center;margin-top:10px}
+#donebar .db-other[hidden]{display:none}
+#donebar .db-other input{width:96px;min-height:44px;font-size:16px;background:var(--card2);color:var(--tx);border:1px solid var(--line);border-radius:10px;padding:0 10px}
+#donebar .db-other .btn{margin-left:auto;min-height:44px}
+body.has-donebar #toast{bottom:calc(150px + env(safe-area-inset-bottom))}
+@media (prefers-reduced-motion:reduce){#donebar{transition:none}}
 #toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(16px);background:var(--tx);color:var(--bg);padding:9px 16px;border-radius:9px;font-size:.79rem;font-weight:600;opacity:0;transition:.22s;z-index:120;display:flex;gap:14px;align-items:center;box-shadow:var(--shadow-lg);pointer-events:none;max-width:92vw}
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0);pointer-events:auto}
 #toast button{background:transparent;border:none;color:var(--acc);font-weight:700;cursor:pointer;font-size:.79rem;filter:brightness(1.4)}
@@ -582,7 +682,17 @@ kbd{background:var(--card2);border:1px solid var(--line);border-bottom-width:2px
 @media(max-width:600px){.subrow{flex-wrap:wrap;row-gap:8px}.subacts{width:100%;padding-left:40px}.subacts .btn{min-height:40px;min-width:44px}.subacts .btn:not(.ghost){flex:1}}
 .iconchip{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:.72rem;color:#fff;flex-shrink:0}
 footer{text-align:center;margin-top:30px;color:var(--tx3);font-size:.7rem}
+/* L1c · búsqueda: en el celu se abre con la lupa de arriba; filas de 44 px y sin atajos de teclado con el dedo */
+#btnSearch{display:none}
+.sres .sl{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}.sres .st{overflow-wrap:anywhere}.sres .sdone .st{color:var(--tx3)}
+@media (pointer:coarse){.sres{min-height:44px}.kbdhint{display:none}}
+#saveInd{min-width:0;flex-shrink:1}#saveTxt{overflow:hidden;text-overflow:ellipsis}
+@media (max-width:480px){#topbar .logo>span:not(.mark){display:none}}
+.filebtn input[type=file]{display:none}
+/* L1c2 · Configuración con el dedo: botones de 44 px y sin atajos de teclado */
+@media (pointer:coarse){.cfg .btn,.synccard .btn,.yearcard .btn{min-height:44px}.cfg .kbdhint{display:none}}
 @media(max-width:700px){
+  #btnSearch{display:flex;order:0}
   #searchbox{display:none}
   #nextEv{display:none}
   #topbar .date{display:none}
@@ -639,8 +749,9 @@ body:has(#wrapped.open) #toast{z-index:310}
   <div class="spacer"></div>
   <button id="nextEv" title="Próximo evento importante" onclick="go('evals')"></button>
   <div id="searchbox"><input id="topSearch" placeholder="Buscar…  ( / )" readonly onclick="openSearch()" aria-label="Buscar"></div>
-  <span id="saveInd"><span class="dot"></span><span id="saveTxt">guardado</span></span>
-  <button class="iconbtn" id="btnTheme" title="Cambiar tema" aria-label="Cambiar tema">◐</button>
+  <button class="iconbtn" id="btnSearch" title="Buscar" aria-label="Buscar" onclick="openSearch()"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/></svg></button>
+  <button type="button" id="saveInd" title="Tocá para actualizar" aria-live="polite" onclick="if(syncOn())syncNow(true)"><span class="dot"></span><span id="saveTxt">guardado</span></button>
+  <button class="iconbtn" id="btnTheme" title="Cambiar tema" aria-label="Cambiar tema"></button>
   <button class="iconbtn" title="Agregado rápido (N)" aria-label="Agregado rápido" onclick="openQuick()" style="font-size:1.25rem;font-weight:600">+</button>
 </header>
 
@@ -654,6 +765,7 @@ body:has(#wrapped.open) #toast{z-index:310}
 <div class="mbg" id="searchbg"><div class="modal" id="searchbox2" role="dialog" aria-modal="true"></div></div>
 <div class="mbg" id="sheetbg"><div id="sheet" role="dialog" aria-modal="true" aria-label="Mover a otro día"></div></div>
 <div id="selbar" role="toolbar" aria-label="Acciones sobre las tareas seleccionadas"></div>
+<div id="donebar" role="region" aria-label="Tiempo de la tarea completada" aria-live="polite"></div>
 <div id="toast" role="status"></div>
 
 <script src="app.js"></script>

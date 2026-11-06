@@ -1,5 +1,7 @@
 // S1 · Sincronización compu-celu (Cloudflare Pages Functions + KV).
 // GET  /api/sync           → { version, data } del código de sincronización ({ version: 0, data: null } si todavía no hay nada)
+//      con "X-Aula-Have: <versión>" y sin nada nuevo → { version, same: true } (S2: la app pregunta cada ~10 s; así
+//      no baja el documento entero cada vez, y la función no lo parsea: lee la versión del principio del texto)
 // PUT  /api/sync  { baseVersion, data } → { version } · 409 { version, data } si otro dispositivo escribió antes
 // El código va en "Authorization: Bearer <código>". En KV se guarda bajo el SHA-256
 // del código: sin el código no hay forma de saber qué clave leer.
@@ -20,6 +22,13 @@ async function keyFrom(request) {
   return m ? "doc:" + await sha256hex("aula-sync:" + m[1]) : null;
 }
 
+// El documento se guarda como {"version":N,...}: la versión se lee sin parsear todo (barato en CPU).
+function versionOf(raw) {
+  const m = /^\{"version":(\d+)[,}]/.exec(raw);
+  if (m) return Number(m[1]);
+  try { return JSON.parse(raw).version || 0; } catch (e) { return -1; }
+}
+
 export async function onRequest(context) {
   const { request, env } = context;
   const kv = env && env.AULA_KV;
@@ -30,6 +39,8 @@ export async function onRequest(context) {
   if (request.method === "GET") {
     const raw = await kv.get(key);
     if (!raw) return json({ version: 0, data: null }); // todavía no hay nada (200, así el navegador no lo anota como error)
+    const have = request.headers.get("x-aula-have");
+    if (have != null && /^\d{1,12}$/.test(have) && versionOf(raw) === Number(have)) return json({ version: Number(have), same: true });
     return new Response(raw, { headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
   }
   if (request.method === "PUT") {

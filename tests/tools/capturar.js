@@ -14,6 +14,8 @@ const out = path.join(__dirname, "..", "..", "docs", "capturas");
   for (const [dev, opts] of [["desktop", { viewport: { width: 1280, height: 800 } }], ["mobile", devices["Pixel 7"]]]) {
     for (const theme of ["light", "dark"]) {
       const ctx = await browser.newContext({ ...opts, colorScheme: theme, timezoneId: "America/Argentina/Buenos_Aires", locale: "es-AR", serviceWorkers: "block" });
+      // nunca salir a ntfy.sh de verdad desde una captura
+      await ctx.route("https://ntfy.sh/**", r => r.fulfill({ status: 200, body: "{}", headers: { "access-control-allow-origin": "*" } }));
       const page = await ctx.newPage();
       await page.clock.install({ time: new Date(process.env.CLOCK || "2026-11-04T11:00:00-03:00") });
       await page.goto("http://localhost:" + (process.env.PORT || 4173) + "/manifest.webmanifest");

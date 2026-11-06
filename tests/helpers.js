@@ -27,6 +27,11 @@ async function createQuickTask(page, title, opts = {}) {
   await expect(page.locator("#modalbg")).not.toHaveClass(/open/);
 }
 
+/** Q1 · En el Inicio del celu "Estudio de hoy" viene plegado: lo abre si hace falta (en desktop no hace nada). */
+async function abrirEstudio(page) {
+  await page.evaluate(() => { const d = document.querySelector("#view details.studyfold"); if (d && !d.open) d.querySelector("summary").click(); });
+}
+
 /** Recarga y espera a que el estado vuelva desde IndexedDB. */
 async function reload(page) {
   await page.reload();
@@ -117,4 +122,4 @@ function expectNothingLost(before, after, allowChanged = []) {
   expect(problems, "datos perdidos o cambiados por la migración").toEqual([]);
 }
 
-module.exports = { openApp, setClock, createQuickTask, reload, fixture, seedState, readBackups, storedState, expectNothingLost };
+module.exports = { abrirEstudio, openApp, setClock, createQuickTask, reload, fixture, seedState, readBackups, storedState, expectNothingLost };

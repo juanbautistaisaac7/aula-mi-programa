@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.41.0";
+const APP_VERSION = "2.51.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -61,7 +61,8 @@ function defaultSettings() {
     sounds: true, notif: false, hourFmt: 24, showDone: true,
     upcomingDays: 7, tags: ["repaso", "importante", "entrega"], dayEnd: "04:00",
     doneKeepDays: 7, // B5: la Lista completa oculta las hechas hace más de N días (0 = nunca)
-    reminderDefaults: defaultReminderDefaults() // E1: lo que trae un parcial que no tiene recordatorios propios
+    reminderDefaults: defaultReminderDefaults(), // E1: lo que trae un parcial que no tiene recordatorios propios
+    ntfy: defaultNtfy() // E1b: avisos al celu con la app cerrada (ntfy)
   };
 }
 function baseState() {
@@ -69,6 +70,7 @@ function baseState() {
     v: 2, settings: defaultSettings(),
     subjects: [], projects: [], evals: [], tasks: [], notes: [], habits: [], sessions: [],
     dayLog: {}, dayPlan: {}, years: [defaultFirstYear()],
+    ntfySched: {}, // E1b2: avisos ya programados en ntfy (viaja por la sync: así el otro dispositivo no los repite)
     timer: { phase: "focus", left: 25 * 60, total: 25 * 60, run: false, ends: null, taskId: null, subjectId: null, projectId: null, cycle: 0 },
     meta: { created: todayISO(), migratedV1: false, notified: {}, lastBackup: null },
     sync: syncBlank()
@@ -164,7 +166,40 @@ async function persist() {
   saving = false;
   if (savePending) { savePending = false; persist(); }
 }
-function change() { markDirty(); syncSoon(); }
+function change() { trackMoves(); markDirty(); syncSoon(); ntfyPlanSoon(); }
+/* H1a · Historial de cambios de día. Cada vez que se guarda, se compara el día de cada
+   tarea con el que tenía la última vez; si cambió, se anota en t.moves [{from, to, at}] y,
+   la primera vez, t.origDate (el día para el que estaba planificada). Así cualquier forma
+   de mover (arrastrar, "Mover a…", editor, mover en bloque, planes) queda registrada sin
+   tocar cada lugar. Reglas:
+   - Asignar un día a una tarea que no tenía no es mover (no hay plan previo).
+   - Si vuelve al día del que venía en su último movimiento (Deshacer, o la devolviste),
+     se borra ese movimiento: no fue una postergación.
+   - Las que se repiten no tienen "día" propio: no se registran.
+   - Lo que llega por la sincronización no se registra acá (lo anota el dispositivo que
+     movió): trackMovesReset() se llama después de aplicar lo remoto.
+   Campos opcionales y solo agregados: una tarea sin moves nunca se movió y su día
+   original es t.date. No hace falta migración ni cambia el esquema (ver bitácora H1a). */
+let moveDates = null;
+function trackMovesReset() { moveDates = state ? new Map(state.tasks.map(t => [t.id, t.date || null])) : null; }
+function trackMoves(now) {
+  if (!state || !Array.isArray(state.tasks)) return;
+  if (!moveDates) { trackMovesReset(); return; }
+  now = now || Date.now();
+  for (const t of state.tasks) {
+    const nd = t.date || null;
+    if (!moveDates.has(t.id)) { moveDates.set(t.id, nd); continue; }
+    const od = moveDates.get(t.id);
+    if (od === nd) continue;
+    moveDates.set(t.id, nd);
+    if (t.recur || !od) continue;
+    const mv = Array.isArray(t.moves) ? t.moves : null, last = mv && mv[mv.length - 1];
+    if (last && last.to === nd) continue; // ya estaba anotado (p. ej. vino así)
+    if (last && last.from === nd && last.to === od) { mv.pop(); if (!mv.length) { delete t.moves; if (t.origDate === nd) delete t.origDate; } continue; }
+    if (!t.origDate) t.origDate = od;
+    (t.moves = mv || []).push({ from: od, to: nd, at: now });
+  }
+}
 /* Guardado sincrónico de último momento (al cerrar, recargar o mandar la app al fondo).
    IndexedDB es asíncrono y el navegador puede cortar la transacción cuando mata la
    página; localStorage es sincrónico y siempre llega. loadState usa la copia de
@@ -361,7 +396,7 @@ let syncCfg = null, syncBusy = false, syncAgain = false, syncSoonT = null, syncS
 function syncLoadCfg() { try { syncCfg = JSON.parse(localStorage.getItem(SYNC_CFG_KEY) || "null"); } catch (e) { syncCfg = null; } }
 function syncSaveCfg() { try { if (syncCfg) localStorage.setItem(SYNC_CFG_KEY, JSON.stringify(syncCfg)); else localStorage.removeItem(SYNC_CFG_KEY); } catch (e) {} }
 function syncOn() { return !!(syncCfg && syncCfg.key); }
-const SYNC_TXT = { busy: "sincronizando…", ok: "sincronizado", offline: "sin conexión · se sube después", nokv: "falta activar la sincronización", badkey: "código de sincronización inválido", newer: "actualizá Aula en este dispositivo", error: "no se pudo sincronizar" };
+const SYNC_TXT = { busy: "actualizando…", ok: "al día", offline: "sin conexión · se sube después", nokv: "falta activar la sincronización", badkey: "código de sincronización inválido", newer: "actualizá Aula en este dispositivo", error: "no se pudo sincronizar" };
 function syncSetStatus(kind) {
   syncStat = { kind, at: Date.now() };
   syncPaint();
@@ -370,8 +405,10 @@ function syncSetStatus(kind) {
 function syncPaint() {
   const el = byId("saveInd"), t = byId("saveTxt"); if (!el || !t || el.classList.contains("saving")) return;
   if (!syncOn()) { t.textContent = "todo guardado"; el.className = ""; return; }
-  t.textContent = SYNC_TXT[syncStat.kind] || "todo guardado";
+  const recien = syncStat.kind === "ok" && syncStat.manualAt && Date.now() - syncStat.manualAt < 4000;
+  t.textContent = (SYNC_TXT[syncStat.kind] || "todo guardado") + (recien ? " · recién" : "");
   el.className = "sync-" + syncStat.kind;
+  if (recien) { clearTimeout(syncPaint.t); syncPaint.t = setTimeout(syncPaint, 4100 - (Date.now() - syncStat.manualAt)); }
 }
 function canon(x) {
   if (Array.isArray(x)) return "[" + x.map(canon).join(",") + "]";
@@ -393,6 +430,7 @@ function syncApply(m) {
   normalizeState(state);
   yearSplit();
   syncResetHashes();
+  trackMovesReset();
   if (canon(syncLocal().data) === before) return false;
   markDirty();
   try { applyTheme(); document.documentElement.style.setProperty("--acc", state.settings.accent); } catch (e) {}
@@ -400,30 +438,53 @@ function syncApply(m) {
   render();
   return true;
 }
-async function syncFetch(method, body) {
+async function syncFetch(method, body, have) {
   const ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
   const tm = setTimeout(() => { if (ctl) ctl.abort(); }, 20000);
+  const headers = { authorization: "Bearer " + syncCfg.key, "content-type": "application/json" };
+  if (have != null) headers["x-aula-have"] = String(have);
   try {
-    const r = await fetch(SYNC_URL, { method, cache: "no-store", signal: ctl ? ctl.signal : undefined,
-      headers: { authorization: "Bearer " + syncCfg.key, "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+    const r = await fetch(SYNC_URL, { method, cache: "no-store", signal: ctl ? ctl.signal : undefined, headers, body: body ? JSON.stringify(body) : undefined });
     let j = null; try { j = await r.json(); } catch (e) {}
+    if (r.ok && (!j || typeof j !== "object")) throw new Error("respuesta incompleta"); // cortada a la mitad: como sin conexión, nunca "no hay nada"
     return { status: r.status, body: j };
   } finally { clearTimeout(tm); }
 }
 async function syncBackup() {
   try { if (db) await idbPut("backups", "presync-" + Date.now(), { ts: Date.now(), label: "Antes de sincronizar por primera vez", version: APP_VERSION, data: JSON.stringify(fullState()) }); } catch (e) {}
 }
-async function syncNow() {
+/* S2 · Lo último que quedó acordado con el servidor (en memoria). Si lo tengo, las
+   pasadas siguientes solo preguntan "¿hay algo más nuevo que la versión N?" y el
+   servidor contesta { same: true } sin mandar el documento: barato cada 10 s. */
+let syncAgreed = null, syncLastPass = 0, syncDeferred = false, syncManual = false;
+const SYNC_POLL_MS = 10000;
+/* Si estás escribiendo (un formulario abierto o un campo con foco), las pasadas
+   automáticas esperan: lo de otro dispositivo se aplica cuando terminás. */
+function syncEditing() {
+  for (const id of ["modalbg", "confirmbg", "searchbg", "sheetbg"]) { const el = byId(id); if (el && el.classList.contains("open")) return true; }
+  const a = document.activeElement;
+  return !!(a && a !== document.body && (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || a.isContentEditable) && !a.readOnly);
+}
+function syncResume() { if (syncDeferred && !syncEditing()) { syncDeferred = false; syncSoon(300); } }
+/* manual: lo pidió Bauti (tocar el indicador, tirar hacia abajo): muestra "actualizando…"
+   y no espera aunque haya un campo con foco. Las automáticas no muestran nada si no hay novedades. */
+async function syncNow(manual) {
   if (!syncOn() || !state) return;
+  manual = manual === true;
+  if (!manual && syncEditing()) { syncDeferred = true; return; }
+  if (manual) syncManual = true;
   if (syncBusy) { syncAgain = true; return; }
-  syncBusy = true; clearTimeout(syncSoonT); syncSetStatus("busy");
+  syncBusy = true; clearTimeout(syncSoonT);
+  if (manual || syncStat.kind === "off") syncSetStatus("busy"); // las automáticas no titilan "actualizando…" cada 10 s (tampoco sin conexión)
   try {
-    let doc = await syncFetch("GET");
+    const known = syncAgreed != null && Number.isInteger(syncCfg.version) && syncCfg.version > 0;
+    let doc = await syncFetch("GET", null, known ? syncCfg.version : null);
     for (let attempt = 0; attempt < 4; attempt++) {
       if (doc.status === 503) return syncSetStatus("nokv");
       if (doc.status === 401) return syncSetStatus("badkey");
       if (![200, 404, 409].includes(doc.status)) return syncSetStatus("error");
-      const remote = doc.body && doc.body.data && typeof doc.body.data === "object" ? doc.body : null;
+      const unchanged = !!(doc.body && doc.body.same === true && doc.status === 200);
+      const remote = !unchanged && doc.body && doc.body.data && typeof doc.body.data === "object" ? doc.body : null;
       const baseVersion = (doc.body && Number.isInteger(doc.body.version)) ? doc.body.version : 0;
       if (remote && Number(remote.data.schema) > SCHEMA_VERSION) return syncSetStatus("newer");
       if (remote && !syncCfg.merged) await syncBackup();
@@ -434,7 +495,9 @@ async function syncNow() {
       }
       const mine = syncLocal();
       const payload = { app: APP_VERSION, schema: SCHEMA_VERSION, state: mine.data, stamps: mine.stamps, tombs: mine.tombs };
-      const same = remote && canon({ s: payload.state, a: payload.stamps, b: payload.tombs }) === canon({ s: remote.data.state, a: remote.data.stamps || {}, b: remote.data.tombs || {} });
+      const mineCanon = canon({ s: payload.state, a: payload.stamps, b: payload.tombs });
+      const same = unchanged ? mineCanon === syncAgreed
+        : !!remote && mineCanon === canon({ s: remote.data.state, a: remote.data.stamps || {}, b: remote.data.tombs || {} });
       let version = baseVersion;
       if (!same) {
         const put = await syncFetch("PUT", { baseVersion, data: payload });
@@ -442,16 +505,24 @@ async function syncNow() {
         if (put.status !== 200) return syncSetStatus(put.status === 503 ? "nokv" : put.status === 401 ? "badkey" : "error");
         version = put.body.version;
       }
+      syncAgreed = mineCanon;
       syncCfg.version = version; syncCfg.merged = true; syncCfg.lastSync = Date.now(); syncSaveCfg();
-      return syncSetStatus("ok");
+      if (syncStat.kind !== "ok" || manual || syncManual) { syncSetStatus("ok"); if (syncManual) syncStat.manualAt = Date.now(); syncManual = false; syncPaint(); }
+      else syncStat.at = Date.now();
+      // E1b2: con lo que llegó del otro dispositivo (o en la primera pasada), revisar los avisos de ntfy
+      if (remote || !syncDoneOnce) { syncDoneOnce = true; ntfyPlanSoon(1500); }
+      return;
     }
     syncSetStatus("error");
   } catch (e) { syncSetStatus("offline"); }
   finally {
-    syncBusy = false;
-    if (syncAgain) { syncAgain = false; syncSoon(1000); }
+    syncBusy = false; syncLastPass = Date.now();
+    if (syncAgain) { syncAgain = false; syncSoon(syncManual ? 0 : 1000); }
   }
 }
+/* Disparadores "volví a la app" (visibilitychange, focus, pageshow, online): pueden
+   llegar dos o tres juntos; con uno alcanza. */
+function syncWake() { if (syncOn() && Date.now() - syncLastPass > 2000) syncNow(); }
 function syncSoon(ms) { if (!syncOn()) return; clearTimeout(syncSoonT); syncSoonT = setTimeout(syncNow, ms == null ? 4000 : ms); }
 function syncNewKey() {
   const b = new Uint8Array(16); crypto.getRandomValues(b);
@@ -469,9 +540,82 @@ function syncConnect(key) {
 function syncDisconnect() { syncCfg = null; syncSaveCfg(); clearTimeout(syncSoonT); syncSetStatus("off"); }
 function syncInit() {
   syncLoadCfg();
-  if (!syncOn()) return;
-  setTimeout(syncNow, 800);
-  setInterval(() => { if (document.visibilityState === "visible") syncNow(); }, 60000);
+  if (syncOn()) setTimeout(syncNow, 800);
+  // S2 · con la app a la vista, cada ~10 s pregunta si hay algo nuevo (la respuesta "nada" pesa ~25 bytes)
+  setInterval(() => {
+    if (!syncOn() || document.visibilityState !== "visible" || (typeof navigator !== "undefined" && navigator.onLine === false)) return;
+    if (Date.now() - syncLastPass >= SYNC_POLL_MS - 1500) syncNow(); else syncResume();
+  }, SYNC_POLL_MS);
+  window.addEventListener("focus", syncWake);
+  window.addEventListener("pageshow", syncWake);
+  window.addEventListener("online", syncWake);
+  document.addEventListener("focusout", () => setTimeout(syncResume, 50));
+  document.addEventListener("touchstart", ptrStart, { passive: true });
+  document.addEventListener("touchmove", ptrMove, { passive: true });
+  document.addEventListener("touchend", ptrEnd, { passive: true });
+  document.addEventListener("touchcancel", ptrCancel, { passive: true });
+  document.addEventListener("touchstart", swStart, { passive: true });
+  document.addEventListener("touchmove", swMove, { passive: false });
+  document.addEventListener("touchend", swEnd, { passive: true });
+  document.addEventListener("touchcancel", swCancel, { passive: true });
+}
+
+/* S2 · Tirar hacia abajo para actualizar (celu). Solo con la página arriba de todo,
+   un dedo, gesto claramente vertical y sin un arrastre de tarea en curso (C5).
+   Resistencia 0,5: hay que tirar ~130 px para que se active. */
+const PTR_GO = 64, PTR_MAX = 92;
+let ptr = null;
+function ptrEl() {
+  let el = byId("ptr");
+  if (!el) { el = document.createElement("div"); el.id = "ptr"; el.setAttribute("aria-hidden", "true"); el.innerHTML = '<span class="ptrarrow">↓</span><span class="ptrspin"></span>'; document.body.appendChild(el); }
+  return el;
+}
+function ptrPaint(d) {
+  const el = ptrEl();
+  el.style.transform = "translate(-50%," + Math.round(d) + "px)";
+  el.style.opacity = String(Math.min(1, d / PTR_GO));
+  const ready = d >= PTR_GO;
+  if (ready && !el.classList.contains("ready") && navigator.vibrate) { try { navigator.vibrate(8); } catch (e) {} }
+  el.classList.toggle("ready", ready);
+}
+function ptrStart(e) {
+  ptr = null;
+  if (!syncOn() || e.touches.length !== 1 || window.scrollY > 0 || syncEditing() || (drag && drag.state !== "press")) return;
+  const tg = e.target;
+  if (tg && tg.closest && tg.closest("#sidebar,#topbar,#selbar,.wstory,.cal")) return;
+  if (byId("ptr") && byId("ptr").classList.contains("on")) return;
+  ptr = { x: e.touches[0].clientX, y: e.touches[0].clientY, d: 0, axis: null };
+}
+function ptrMove(e) {
+  if (!ptr) return;
+  const t = e.touches[0], dx = t.clientX - ptr.x, dy = t.clientY - ptr.y;
+  if (!ptr.axis) {
+    if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+    ptr.axis = dy > 0 && Math.abs(dy) > Math.abs(dx) * 1.5 ? "y" : "x";
+    if (ptr.axis === "y") ptrEl().classList.add("pull");
+  }
+  if (ptr.axis !== "y" || window.scrollY > 0 || (drag && drag.state !== "press")) { ptrCancel(); return; }
+  ptr.d = Math.min(PTR_MAX, Math.max(0, dy) * 0.5);
+  ptrPaint(ptr.d);
+}
+function ptrCancel() {
+  const el = byId("ptr"); ptr = null;
+  if (el && !el.classList.contains("on")) { el.classList.remove("pull", "ready"); el.style.transform = ""; el.style.opacity = ""; }
+}
+async function ptrEnd() {
+  if (!ptr) return;
+  const go = ptr.axis === "y" && ptr.d >= PTR_GO;
+  if (!go) return ptrCancel();
+  ptr = null;
+  const el = ptrEl();
+  el.classList.remove("pull", "ready"); el.classList.add("on");
+  el.style.transform = ""; el.style.opacity = "";
+  const t0 = Date.now();
+  try { await syncNow(true); } catch (e) {}
+  while (syncBusy) await new Promise(r => setTimeout(r, 100));
+  const wait = 450 - (Date.now() - t0); // que se llegue a ver el "actualizando"
+  if (wait > 0) await new Promise(r => setTimeout(r, wait));
+  el.classList.remove("on");
 }
 
 /* ============================ QR (S1c) ============================
@@ -616,7 +760,7 @@ function syncCardHTML() {
   const dot = { ok: "ok", busy: "busy", offline: "warn", nokv: "warn", newer: "warn", badkey: "bad", error: "bad" }[k] || "ok";
   h += `<div class="syncstat"><span class="syncdot ${dot}"></span><div class="grow"><b id="sync_stattxt">${esc(k === "off" ? "Conectado" : capitalize(SYNC_TXT[k] || "conectado"))}</b>
       <div class="tiny">${syncCfg.lastSync ? "Última sincronización: " + syncAgo(syncCfg.lastSync) : "Todavía no se sincronizó"}</div></div>
-      <button class="btn sm" onclick="syncNow()" ${k === "busy" ? "disabled" : ""}>Sincronizar ahora</button></div>`;
+      <button class="btn sm" onclick="syncNow(true)" ${k === "busy" ? "disabled" : ""}>Sincronizar ahora</button></div>`;
   if (k === "nokv") h += `<div class="syncwarn"><b>Falta un paso en Cloudflare.</b> Mientras tanto la app anda igual que siempre; tus datos están guardados en este dispositivo.${SYNC_STEPS}</div>`;
   if (k === "newer") h += `<div class="syncwarn">El otro dispositivo tiene una versión más nueva de Aula. Cerrá y abrí la app para actualizarla.</div>`;
   h += `<div class="syncshare"><div class="syncqr">${qrSVG(syncLink(), 168)}</div>
@@ -663,7 +807,7 @@ function syncAskChange() {
    - Antes de correr pasos, loadState guarda una copia del estado viejo en
      "Copias de seguridad" (clave premig-…) para poder volver atrás.
    - Cada paso agrega un test que carga tests/fixtures/estado-v2.6.json. */
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 8;
 const MIGRATIONS = [
   { to: 2, desc: "Esquema versionado (Aula 2.7)", run: () => {} },
   { to: 3, desc: "Series explícitas con seriesId (Aula 2.10)", run: s => inferSeriesIds(s.tasks) },
@@ -683,6 +827,17 @@ const MIGRATIONS = [
       eval: d && Array.isArray(d.eval) ? normReminders(d.eval) : base.eval,
       task: d && Array.isArray(d.task) ? normReminders(d.task) : base.task
     };
+  } },
+  // E1b: avisos con la app cerrada vía ntfy. Solo agrega settings.ntfy apagado si no
+  // estaba (si ya estaba, lo deja tal cual: puede venir de otro dispositivo por la sync).
+  { to: 7, desc: "Avisos al celu con ntfy (Aula 2.46)", run: s => {
+    s.settings = s.settings || {};
+    s.settings.ntfy = normNtfy(s.settings.ntfy);
+  } },
+  // E1b2: registro de los avisos ya programados en ntfy. Solo agrega state.ntfySched vacío
+  // si no estaba (si ya llegó por la sync con cosas, lo deja tal cual).
+  { to: 8, desc: "Avisos programados en ntfy (Aula 2.47)", run: s => {
+    if (!s.ntfySched || typeof s.ntfySched !== "object" || Array.isArray(s.ntfySched)) s.ntfySched = {};
   } }
 ];
 /* A3 · Antes, cualquier par de tareas con el mismo título y materia se mostraba como
@@ -950,7 +1105,7 @@ function yearJoin() {
   yearHidden = null;
 }
 /* Reemplaza el estado entero (restaurar, importar, reiniciar…) y vuelve a separar por año. */
-function setWholeState(s) { yearHidden = null; state = s; yearSplit(); }
+function setWholeState(s) { yearHidden = null; state = s; yearSplit(); trackMovesReset(); }
 function setActiveYear(id) {
   if (!yearById(id) || id === activeYearId()) return;
   yearJoin();
@@ -1423,7 +1578,7 @@ function moveSheetPick() {
   r.hidden = false; byId("mv_pick").hidden = true;
   const i = byId("mv_date"); if (i) i.focus();
 }
-function closeMoveSheet() { const bg = byId("sheetbg"); if (bg) bg.classList.remove("open"); }
+function closeMoveSheet() { const bg = byId("sheetbg"); if (bg) bg.classList.remove("open");  syncResume(); }
 function moveTaskOrder(id, dir, date) {
   const mt = taskById(id); if (mt && mt.time) { toast("Las tareas con hora se ordenan solas por hora"); return; }
   const ids = tasksOn(date).map(t => t.id);
@@ -1490,6 +1645,123 @@ function subjectRealMin(id) { return state.sessions.filter(s => s.subjectId === 
 function projectRealMin(id) { return state.sessions.filter(s => s.projectId === id).reduce((a, s) => a + s.min, 0); }
 function evalRealMin(id) { return state.sessions.filter(s => s.evalId === id).reduce((a, s) => a + s.min, 0); }
 
+/* ===================== DESLIZAR PARA BORRAR (M1) =====================
+   En el celu, deslizar una tarea hacia la DERECHA la borra (lo pidió Bauti; en iOS es
+   a la izquierda). Detrás aparece un fondo rojo con un tachito que crece; pasando el
+   40 % del ancho, o con un movimiento rápido, se borra con Deshacer. Si el gesto empieza
+   vertical es scroll; el mantener apretado para arrastrar (C5) y tirar para actualizar
+   (S2) siguen igual. Tarea de una serie: pregunta cuáles. */
+let sw = null;
+const SW_FRAC = 0.4;
+function swStart(e) {
+  sw = null;
+  if (e.touches.length !== 1 || ui.selMode || (drag && drag.state !== "press")) return;
+  const row = e.target.closest && e.target.closest("#view .task[data-id]");
+  // desde cualquier parte de la fila, también el círculo de completar (un toque sin mover sigue completando)
+  if (!row || (!e.target.closest(".cb") && e.target.closest("button,a,input,select,textarea,.drag[title]")) || row.classList.contains("swiping-out")) return;
+  const t = e.touches[0];
+  sw = { row, id: row.dataset.id, x0: t.clientX, y0: t.clientY, axis: null, dx: 0, w: row.getBoundingClientRect().width, hist: [] };
+}
+function swMove(e) {
+  if (!sw) return;
+  if (!sw.axis && drag && drag.state !== "press") { sw = null; return; } // ya la levantaste para arrastrarla (C5)
+  const t = e.touches[0], dx = t.clientX - sw.x0, dy = t.clientY - sw.y0;
+  if (!sw.axis) {
+    if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+    sw.axis = dx > 0 && Math.abs(dx) > Math.abs(dy) * 1.3 ? "x" : "no";
+    if (sw.axis !== "x") { sw = null; return; }
+    if (drag && drag.state === "press") dragCancel();
+    swBegin();
+  }
+  if (e.cancelable) e.preventDefault(); // es un deslizamiento: la página no scrollea
+  sw.dx = Math.max(0, dx);
+  sw.hist.push([Date.now(), sw.dx]); if (sw.hist.length > 5) sw.hist.shift();
+  swPaint();
+}
+function swBegin() {
+  const r = sw.row.getBoundingClientRect();
+  const bg = document.createElement("div");
+  bg.className = "swipebg"; bg.setAttribute("aria-hidden", "true");
+  bg.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6"/></svg>';
+  Object.assign(bg.style, { top: r.top + "px", left: r.left + "px", height: r.height + "px", width: "0px" });
+  document.body.appendChild(bg);
+  sw.bg = bg;
+  sw.row.classList.add("swiping");
+  sw.clip = sw.row.closest(".card") || sw.row.parentElement; // la fila no se sale de su tarjeta (ni crea scroll de costado)
+  if (sw.clip) sw.clip.classList.add("swipeclip");
+}
+function swPaint() {
+  sw.row.style.transform = "translateX(" + sw.dx + "px)";
+  sw.bg.style.width = sw.dx + "px";
+  const k = Math.min(1, sw.dx / (sw.w * SW_FRAC));
+  sw.bg.style.setProperty("--k", (0.6 + 0.5 * k).toFixed(3));
+  const armed = sw.dx >= sw.w * SW_FRAC;
+  if (armed && !sw.bg.classList.contains("armed") && navigator.vibrate) { try { navigator.vibrate(8); } catch (e) {} }
+  sw.bg.classList.toggle("armed", armed);
+}
+function swEnd() {
+  if (!sw || sw.axis !== "x") { sw = null; return; }
+  const s = sw; sw = null;
+  const h = s.hist, v = h.length > 1 ? (h[h.length - 1][1] - h[0][1]) / Math.max(1, h[h.length - 1][0] - h[0][0]) : 0;
+  const go = s.dx >= s.w * SW_FRAC || (v > 0.6 && s.dx > 70);
+  if (!go) return swBack(s);
+  const t = taskById(s.id);
+  if (!t) return swBack(s);
+  const sp = seriesPos(t);
+  if (sp && sp.n > 1) return swAskSeries(s, t, sp);
+  if (t.recur) return swAskRecur(s, t);
+  swRemove(s, [t], "Tarea eliminada");
+}
+function swBack(s) {
+  const fast = reducedMotion();
+  s.row.style.transition = fast ? "none" : "transform .2s ease";
+  s.row.style.transform = "translateX(0px)";
+  if (s.bg) { s.bg.style.transition = fast ? "none" : "width .2s ease"; s.bg.style.width = "0px"; }
+  setTimeout(() => { s.row.classList.remove("swiping"); s.row.style.transition = ""; s.row.style.transform = ""; if (s.bg) s.bg.remove(); if (s.clip) s.clip.classList.remove("swipeclip"); }, fast ? 0 : 210);
+}
+/* Borra con animación (la fila sale por la derecha) y ofrece Deshacer. */
+function swRemove(s, list, msg) {
+  const fast = reducedMotion();
+  s.row.classList.add("swiping-out");
+  s.row.style.transition = fast ? "none" : "transform .18s ease-in, opacity .18s ease-in";
+  s.row.style.transform = "translateX(" + s.w + "px)"; s.row.style.opacity = "0";
+  if (s.bg) { s.bg.style.transition = fast ? "none" : "width .18s ease-in"; s.bg.style.width = s.w + "px"; }
+  setTimeout(() => {
+    if (s.bg) s.bg.remove();
+    if (s.clip) s.clip.classList.remove("swipeclip");
+    const snap = list.map(t => ({ t, i: state.tasks.indexOf(t) })).filter(x => x.i >= 0).sort((a, b) => b.i - a.i);
+    snap.forEach(x => state.tasks.splice(x.i, 1));
+    ui.serMap = null; change(); render();
+    toast(msg, () => { [...snap].reverse().forEach(x => state.tasks.splice(Math.min(x.i, state.tasks.length), 0, x.t)); ui.serMap = null; change(); render(); });
+  }, fast ? 0 : 190);
+}
+function swAsk(s, html, actions) {
+  ui.swPending = { s, actions };
+  const box = byId("confirmbox");
+  box.innerHTML = html + `<div class="scopebtns">${actions.map((a, i) => `<button class="btn${a.primary ? " danger" : ""}" onclick="swPick(${i})">${esc(a.label)}</button>`).join("")}
+    <button class="btn ghost" onclick="swPick(-1)">Cancelar</button></div>`;
+  byId("confirmbg").classList.add("open");
+}
+function swPick(i) {
+  const p = ui.swPending; ui.swPending = null; closeConfirm();
+  if (!p) return;
+  if (i < 0) return swBack(p.s);
+  const a = p.actions[i];
+  swRemove(p.s, a.list, a.msg);
+}
+function swAskSeries(s, t, sp) {
+  const next = sp.list.slice(sp.i - 1);
+  const acts = [{ label: "Solo esta", list: [t], msg: "Tarea eliminada" }];
+  if (next.length > 1 && next.length < sp.n) acts.push({ label: "Esta y las siguientes (" + next.length + ")", list: next, msg: next.length + " tareas eliminadas" });
+  acts.push({ label: "Todas (" + sp.n + ")", list: sp.list, msg: sp.n + " tareas eliminadas", primary: true });
+  swAsk(s, `<h3>Borrar de la serie</h3><p class="muted">“${esc(t.title.slice(0, 60))}” es la ${sp.i} de ${sp.n}. ¿Cuáles borro?</p>`, acts);
+}
+function swAskRecur(s, t) {
+  swAsk(s, `<h3>Es una tarea que se repite</h3><p class="muted">Si la borrás, se van todas sus repeticiones. Para saltear un día, marcala como hecha o movela.</p>`,
+    [{ label: "Borrar con sus repeticiones", list: [t], msg: "Tarea eliminada", primary: true }]);
+}
+function swCancel() { if (sw && sw.axis === "x") swBack(sw); sw = null; }
+
 /* ======================= TOAST / UNDO / CONFIRM ======================= */
 let toastTimer = null;
 function toast(msg, undoFn) {
@@ -1518,7 +1790,7 @@ function askConfirm(opts) {
   bg.classList.add("open");
   step(opts);
 }
-function closeConfirm() { byId("confirmbg").classList.remove("open"); }
+function closeConfirm() { byId("confirmbg").classList.remove("open");  syncResume(); }
 function doubleDelete(what, onOk) {
   askConfirm({
     title: "Eliminar " + what,
@@ -1534,10 +1806,10 @@ function toggleTask(id, date) {
   if (t.recur) {
     const d = date || todayISO();
     t.recurDone = t.recurDone || {};
-    if (t.recurDone[d]) { delete t.recurDone[d]; uncreditTaskDone(t, d); }
+    if (t.recurDone[d]) { delete t.recurDone[d]; uncreditTaskDone(t, d); if (ui.doneSel && ui.doneSel.id === id) hideDoneBar(); }
     else { t.recurDone[d] = 1; bumpDayDone(d); askDoneTime(id, d); }
   } else if (t.status === "done") {
-    t.status = "pend"; t.doneAt = null; uncreditTaskDone(t);
+    t.status = "pend"; t.doneAt = null; uncreditTaskDone(t); if (ui.doneSel && ui.doneSel.id === id) hideDoneBar();
   } else {
     t.status = "done"; t.doneAt = todayISO(); bumpDayDone(todayISO()); askDoneTime(id);
   }
@@ -1555,38 +1827,77 @@ function moveDoneDate(t, nd) {
   change();
 }
 function bumpDayDone(d) { state.dayLog[d] = state.dayLog[d] || {}; state.dayLog[d].tasksDone = (state.dayLog[d].tasksDone || 0) + 1; }
-/* Al completar una tarea se pregunta cuánto llevó realmente: ese tiempo (no el estimado)
-   es el que suma a las estadísticas de la materia. Se descuenta lo ya registrado
-   (a mano, o con el pomodoro en versiones viejas) para no contar doble, y todo se revierte al desmarcar. */
+/* H1a · Al completar una tarea se registra su tiempo con UN toque. Por defecto cuenta lo
+   estimado (se acredita en el momento, así saltear la pregunta no deja la estadística
+   vacía) y aparece abajo una barrita que NO bloquea, con chips para corregir
+   (-30 m · = · +30 m · +1 h · Otro). Si no tocás nada, se va sola y queda lo estimado.
+   Sin estimado, los chips son tiempos fijos y si no elegís, no se registra nada.
+   Se descuenta lo ya registrado a mano (o con el pomodoro de versiones viejas) para no
+   contar doble, y todo se revierte al desmarcar. Opción en Configuración:
+   settings.doneAsk === false → no preguntar, usar el estimado. */
+const DONEBAR_MS = 9000;
+let doneBarTimer = null;
 function askDoneTime(taskId, date) {
   const t = taskById(taskId); if (!t) return;
-  const already = t.recur ? 0 : (t.realMin || 0);
-  const box = byId("confirmbox"), bg = byId("confirmbg");
-  bg.classList.add("open");
-  box.innerHTML = `<h3>Tarea completada</h3>
-    <p class="muted">¿Cuánto tiempo te llevó “${esc(t.title.slice(0, 55))}”?${already ? " Ya tenés " + fmtMin(already) + " cronometrados: se suma solo la diferencia." : ""}</p>
-    <label style="display:block;font-size:.66rem;color:var(--tx2);margin:12px 0 4px;text-transform:uppercase;letter-spacing:.06em;font-weight:700" for="dt_min">Tiempo real (minutos)</label>
-    <input id="dt_min" type="number" min="0" step="5" value="${t.estMin || 60}" style="width:130px;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:8px"
-      onkeydown="if(event.key==='Enter')resolveDoneTime('${t.id}','${date || ""}','input')">
-    <div class="mfoot">
-      <button class="btn" onclick="resolveDoneTime('${t.id}','${date || ""}',null)">Sin tiempo</button>
-      <div class="grow"></div>
-      ${t.estMin ? `<button class="btn" onclick="resolveDoneTime('${t.id}','${date || ""}','est')">Usar estimado (${fmtMin(t.estMin)})</button>` : ""}
-      <button class="btn primary" onclick="resolveDoneTime('${t.id}','${date || ""}','input')">Guardar</button>
-    </div>`;
-  setTimeout(() => { const i = byId("dt_min"); if (i && i.focus) i.focus(); }, 40);
+  const est = t.estMin || 0;
+  if (est) creditDone(t, date, est, true);
+  if (state.settings.doneAsk === false) { toast(est ? "Hecha · registré " + fmtMin(Math.max(est, t.recur ? 0 : t.realMin || 0)) : "Tarea completada"); return; }
+  ui.doneSel = { id: t.id, date: date || "", min: est || null };
+  paintDoneBar();
 }
-function resolveDoneTime(taskId, date, mode) {
-  closeConfirm();
-  const t = taskById(taskId); if (!t) { render(); return; }
-  if (mode !== null) {
-    const min = mode === "est" ? (t.estMin || 0) : Math.max(0, parseInt((byId("dt_min") || {}).value) || 0);
-    const already = t.recur ? 0 : (t.realMin || 0);
-    const credit = Math.max(0, min - already);
-    if (credit > 0) addSession(credit, { taskId: t.id, date: t.recur ? (date || todayISO()) : (t.doneAt || todayISO()), auto: true, note: "Tarea completada (tiempo real)" });
-    if (credit > 0 || already) toast("Registradas " + fmtMin(Math.max(min, already)) + " en la tarea");
-    else toast("Tarea completada");
-  } else toast("Tarea completada (sin tiempo registrado)");
+/* Deja registrado `min` como el tiempo de la tarea (reemplaza lo que se había acreditado al completarla). */
+function creditDone(t, date, min, quiet) {
+  uncreditTaskDone(t, t.recur ? (date || todayISO()) : undefined);
+  const already = t.recur ? 0 : (t.realMin || 0);
+  const credit = Math.max(0, Math.round(min) - already);
+  if (credit > 0) addSession(credit, { taskId: t.id, date: t.recur ? (date || todayISO()) : (t.doneAt || todayISO()), auto: true, note: "Tarea completada (tiempo real)" });
+  if (!quiet) change();
+}
+function doneChips(est) {
+  if (!est) return [[15, "15 m"], [30, "30 m"], [60, "1 h"], [120, "2 h"]];
+  const c = [];
+  if (est > 30) c.push([est - 30, "−30 m"]);
+  c.push([est, "= " + fmtMin(est)], [est + 30, "+30 m"], [est + 60, "+1 h"]);
+  return c;
+}
+function paintDoneBar(msg) {
+  const bar = byId("donebar"), d = ui.doneSel; if (!bar) return;
+  const t = d && taskById(d.id);
+  if (!t) { hideDoneBar(); return; }
+  const est = t.estMin || 0;
+  bar.innerHTML = `<div class="db-top"><span class="db-ok" aria-hidden="true">✓</span>
+      <div class="db-txt"><div class="db-t">${esc(t.title.slice(0, 60))}</div>
+      <div class="db-s" id="db_msg">${msg ? esc(msg) : d.min ? "Registré " + fmtMin(d.min) + ". ¿Te llevó otro tiempo?" : "¿Cuánto te llevó?"}</div></div>
+      <button class="db-x" onclick="hideDoneBar()" aria-label="Listo">${d.min ? "Listo" : "Ahora no"}</button></div>
+    <div class="db-chips" role="group" aria-label="Tiempo que te llevó">
+      ${doneChips(est).map(([m, l]) => `<button class="db-chip${d.min === m ? " on" : ""}" aria-pressed="${d.min === m}" onclick="pickDoneTime(${m})">${l}</button>`).join("")}
+      <button class="db-chip" id="db_other" onclick="doneOther()">Otro</button>
+    </div>
+    <div class="db-other" id="db_otherrow" hidden><input id="db_min" type="number" inputmode="numeric" min="0" step="5" value="${d.min || est || 30}" aria-label="Minutos"
+      onkeydown="if(event.key==='Enter')pickDoneTime(this.value)"><span class="tiny">min</span><button class="btn primary sm" onclick="pickDoneTime(byId('db_min').value)">Guardar</button></div>`;
+  bar.classList.add("open");
+  document.body.classList.add("has-donebar");
+  armDoneBar();
+}
+function armDoneBar(ms) { clearTimeout(doneBarTimer); doneBarTimer = setTimeout(hideDoneBar, ms || DONEBAR_MS); }
+function hideDoneBar() {
+  clearTimeout(doneBarTimer); ui.doneSel = null;
+  const bar = byId("donebar"); if (bar) bar.classList.remove("open");
+  document.body.classList.remove("has-donebar");
+}
+function doneOther() {
+  const r = byId("db_otherrow"); if (!r) return;
+  r.hidden = false; byId("db_other").hidden = true;
+  clearTimeout(doneBarTimer); // escribiendo: no se va sola
+  const i = byId("db_min"); if (i) { i.focus(); i.select && i.select(); }
+}
+function pickDoneTime(v) {
+  const d = ui.doneSel, t = d && taskById(d.id); if (!t) { hideDoneBar(); return; }
+  const min = Math.max(0, Math.min(24 * 60, parseInt(v) || 0));
+  creditDone(t, d.date || null, min);
+  d.min = min || null;
+  paintDoneBar(min ? "Registré " + fmtMin(Math.max(min, t.recur ? 0 : t.realMin || 0)) + " ✓" : "Sin tiempo registrado");
+  armDoneBar(1600);
   render();
 }
 function uncreditTaskDone(t, recurDate) {
@@ -1696,7 +2007,7 @@ function createDistTasks() {
   if (!created) { toast("Asigná minutos al menos a una materia"); return; }
   render(); toast(created + " tarea" + (created > 1 ? "s" : "") + " creada" + (created > 1 ? "s" : "") + " para hoy");
 }
-function studyTodayCard() {
+function studyTodayCard(opts = {}) {
   const today = todayISO();
   pruneDayPlan();
   const dp = state.dayPlan[today] = state.dayPlan[today] || { blocks: [] };
@@ -1719,15 +2030,21 @@ function studyTodayCard() {
       <input type="number" class="dist-inp" data-sid="${s.id}" value="0" min="0" step="15" max="${totMin}" oninput="updateDistLeft(${totMin})" aria-label="Minutos para ${escA(s.name)}" style="width:76px;background:var(--card2);border:1px solid var(--line);border-radius:7px;padding:5px 7px"></div>`).join("") +
     `<div style="display:flex;justify-content:flex-end;margin-top:8px"><button class="btn sm primary" onclick="createDistTasks()">Crear tareas para hoy</button></div>`;
   }
-  return `<div class="card"><h3>Estudio de hoy<div class="grow"></div>
-    <span class="tiny">${totMin ? fmtMin(totMin) + " disponibles" : ""}</span></h3>
-    ${rows || '<p class="tiny" style="margin-bottom:6px">Cargá tus horarios de estudio de hoy. Podés agregar varios bloques (por ejemplo 14:00–17:00 y 20:00–22:00).</p>'}
+  const body = `${rows || '<p class="tiny" style="margin-bottom:6px">Cargá tus horarios de estudio de hoy. Podés agregar varios bloques (por ejemplo 14:00–17:00 y 20:00–22:00).</p>'}
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
       <input type="time" id="sb_from" value="${nb.from}" aria-label="Hora de inicio" style="background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:6px">
       <span class="tiny">a</span>
       <input type="time" id="sb_to" value="${nb.to}" aria-label="Hora de fin" style="background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:6px">
       <button class="btn sm" onclick="addStudyBlock()">Agregar bloque</button>
-    </div>${dist}</div>`;
+    </div>${dist}`;
+  const side = totMin ? fmtMin(totMin) + " disponibles" : "";
+  // Q1 · en el Inicio del celu va plegado: a mano, pero sin ocupar media pantalla. Recuerda si lo abriste
+  // (agregar un bloque redibuja la vista y no tiene que cerrarse solo).
+  if (opts.fold) return `<details class="card studyfold"${ui.studyOpen ? " open" : ""} ontoggle="ui.studyOpen=this.open">
+    <summary><b>Estudio de hoy</b><span class="tiny">${side || "cargá tus horarios"}</span></summary>${body}</details>`;
+  return `<div class="card"><h3>Estudio de hoy<div class="grow"></div>
+    <span class="tiny">${side}</span></h3>
+    ${body}</div>`;
 }
 
 /* ======================== ACCIONES: MATERIAS ======================== */
@@ -2188,6 +2505,182 @@ function remAddOther(id) {
 /* Lo que hay que guardar: la lista si la tocaste; si no, lo que tenía (puede ser undefined). */
 function remValue(id) { const st = ui.rem && ui.rem[id]; return !st ? undefined : st.touched ? st.list.map(r => ({ ...r })) : st.orig; }
 
+/* ===================== AVISOS AL CELU CON NTFY (E1b) =====================
+   ntfy (https://ntfy.sh) es gratis y sin cuenta: instalás la app ntfy, te suscribís a un
+   "tema" secreto y todo lo que se publique en ese tema te llega como notificación,
+   aunque Aula esté cerrada. El tema es la única llave: por eso es largo y al azar.
+   Límites de ntfy.sh (docs.ntfy.sh/publish, consultado 6/11/2026): 250 mensajes por día,
+   y un envío programado puede ir de 10 s a 3 días adelante. */
+function defaultNtfy() { return { on: false, server: "https://ntfy.sh", topic: "", generic: false }; }
+function normNtfy(n) {
+  const d = defaultNtfy();
+  if (!n || typeof n !== "object") return d;
+  // conserva cualquier campo que ya tuviera (nunca borramos datos) y completa lo que falte
+  const out = Object.assign({}, n);
+  out.on = !!n.on && ntfyValidTopic(n.topic);
+  out.server = typeof n.server === "string" && /^https:\/\/[^\s/]+/.test(n.server) ? n.server.replace(/\/+$/, "") : d.server;
+  out.topic = ntfyValidTopic(n.topic) ? n.topic : "";
+  out.generic = !!n.generic;
+  return out;
+}
+function ntfyValidTopic(t) { return /^[A-Za-z0-9_-]{16,64}$/.test(String(t || "")); }
+function ntfyNewTopic() {
+  const b = new Uint8Array(16); crypto.getRandomValues(b);
+  return "aula-" + btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function ntfyCfg() { return normNtfy(state.settings.ntfy); }
+function ntfyUrl(n) { n = n || ntfyCfg(); return n.server + "/" + n.topic; }
+/* Publica un mensaje. opts.at (ms) lo programa para más tarde ("at", en segundos Unix).
+   Los parámetros van en la URL y no como headers: así los acentos llegan bien (los headers
+   HTTP no aceptan UTF-8) y el pedido es "simple" para el navegador (sin preflight de CORS).
+   Devuelve true si ntfy lo aceptó. Nunca tira error: sin red, devuelve false. */
+/* opts.seq: sequence id (E1b2), para poder cancelarlo después con DELETE /<tema>/<seq>. */
+async function ntfySend(title, body, opts = {}) {
+  const n = ntfyCfg();
+  if (!n.topic) return false;
+  const q = new URLSearchParams({ title: String(title || "Aula").slice(0, 120), tags: "books" });
+  if (opts.at) q.set("at", String(Math.round(opts.at / 1000)));
+  try {
+    const r = await fetch(ntfyUrl(n) + (opts.seq ? "/" + opts.seq : "") + "?" + q.toString(), { method: "POST", body: String(body || ""), cache: "no-store" });
+    return r.ok;
+  } catch (e) { return false; }
+}
+function ntfySetup() {
+  const n = ntfyCfg();
+  if (!n.topic) n.topic = ntfyNewTopic();
+  state.settings.ntfy = n; change(); render();
+}
+async function ntfyTest() {
+  const n = ntfyCfg(); if (!n.topic) return;
+  const b = byId("ntfyTestBtn"); if (b) { b.disabled = true; b.textContent = "Mandando…"; }
+  const ok = await ntfySend("Aula", "¡Listo! Así te van a llegar los avisos.");
+  if (ok) {
+    if (!n.on) { n.on = true; state.settings.ntfy = n; change(); ntfyPlanSoon(1000); }
+    toast("Notificación de prueba enviada: fijate en el celu");
+  } else toast("No se pudo mandar. ¿Tenés conexión?");
+  render();
+}
+function ntfySetGeneric(v) { const n = ntfyCfg(); n.generic = !!v; state.settings.ntfy = n; change(); render(); }
+function ntfyCopy() {
+  const t = ntfyCfg().topic;
+  try { navigator.clipboard.writeText(t).then(() => toast("Copiado: pegalo en ntfy"), () => toast(t)); } catch (e) { toast(t); }
+}
+function ntfyOff() {
+  askConfirm({ title: "Dejar de mandar avisos al celu", body: "Aula deja de mandar avisos a ntfy y cancela los que ya estaban programados. En la app ntfy podés borrar la suscripción.", okLabel: "Desconectar", danger: true,
+    onOk: () => { const n = ntfyCfg(); n.on = false; n.topic = ""; state.settings.ntfy = n; change(); render(); toast("Avisos al celu desconectados"); ntfyPlanSoon(0); } });
+}
+function ntfyCardHTML() {
+  const n = ntfyCfg();
+  if (!n.topic) return `<h3>Avisos con la app cerrada</h3>
+    <p class="tiny" style="margin-bottom:10px">Para que los avisos te lleguen al celu aunque Aula esté cerrada, usamos <b>ntfy</b>: una app gratis y sin cuenta.</p>
+    <button class="btn primary" onclick="ntfySetup()">Empezar</button>`;
+  const url = ntfyUrl(n);
+  return `<h3>Avisos con la app cerrada<div class="grow"></div>${n.on ? '<span class="pill ok">activo</span>' : ""}</h3>
+    <ol class="ntfysteps">
+      <li><b>Instalá ntfy</b> en el celu: <a href="https://apps.apple.com/app/ntfy/id1625396347" target="_blank" rel="noopener">App Store</a> · <a href="https://play.google.com/store/apps/details?id=io.heckel.ntfy" target="_blank" rel="noopener">Google Play</a>.</li>
+      <li><b>Suscribite a tu tema.</b> En ntfy tocá “+” y pegá este nombre (es secreto: no lo compartas):
+        <div class="ntfytopic"><code id="ntfyTopic">${esc(n.topic)}</code><button class="btn sm" onclick="ntfyCopy()">Copiar</button></div>
+        <span class="tiny">O abrí <a href="${escA(url)}" target="_blank" rel="noopener">este link</a> desde el celu.</span></li>
+      <li><b>Probá:</b> <button class="btn sm primary" id="ntfyTestBtn" onclick="ntfyTest()">Mandar notificación de prueba</button></li>
+    </ol>
+    ${n.on ? `<p class="tiny ntfysoon">Te avisa de las tareas con hora y de los parciales según su “Avisarme”. Se programan en las 48 h anteriores, cada vez que abrís Aula en cualquier dispositivo; si cambiás o completás algo, el aviso viejo se cancela.<b class="ntfysum">${esc(ntfyPendingSummary())}</b></p>` : `<p class="tiny ntfysoon">Cuando te llegue la prueba, Aula empieza a mandarte los avisos de tareas y parciales.</p>`}
+    <label class="ntfygen"><input type="checkbox" ${n.generic ? "checked" : ""} onchange="ntfySetGeneric(this.checked)"><span><b>Mensaje genérico</b><span class="tiny" style="display:block">Dice “Tenés un aviso de Aula” sin el nombre de la tarea. Útil porque los mensajes pasan por los servidores de ntfy.</span></span></label>
+    <button class="btn sm ghost" style="margin-top:8px;color:var(--bad)" onclick="ntfyOff()">Desconectar</button>`;
+}
+
+/* ---------- E1b2 · Programar los avisos en ntfy ----------
+   ntfy acepta mensajes programados ("at", hasta 3 días adelante) y, desde la versión
+   2.16, borrarlos por "sequence id" (DELETE /<tema>/<id>), también los programados.
+   - Qué se programa: los avisos ("Avisarme") de tareas con hora y de parciales que
+     suenan en las próximas NTFY_WIN (48 h). Lo más lejano se programa en una pasada
+     posterior: cada vez que abrís Aula, cambiás algo, llega algo por la sync, o cada 30 min.
+   - Registro: state.ntfySched[clave] = { seq, at, topic, server }. Viaja por la sync
+     (clave por clave), así el otro dispositivo ve lo que ya se programó y no lo repite.
+     Con la sync activa no se programa nada hasta la primera sincronización de la sesión.
+   - El sequence id sale de la clave + hora + texto: los dos dispositivos calculan el mismo,
+     así que si llegaran a programarlo a la vez ntfy lo trata como un solo aviso.
+   - Si cambia la hora, el texto o se completa/borra: se cancela el viejo (DELETE) y se
+     programa el nuevo. Un 404 al cancelar cuenta como cancelado (ya llegó). */
+const NTFY_WIN = 48 * 3600e3, NTFY_MIN_AHEAD = 30e3, NTFY_MAX_PASS = 25;
+let ntfyBusy = false, ntfyAgain = false, ntfyT = null, syncDoneOnce = false;
+function ntfySeq(key, at, title, body) { return "aula" + syncHash(key + "|" + at + "|" + title + "|" + body).replace(":", "x"); }
+/* Lo que debería estar programado ahora: Map clave → { at, title, body, seq }. */
+function ntfyWanted(now) {
+  const out = new Map(), n = ntfyCfg();
+  if (!n.on || !state) return out;
+  const fs = fullState(); // todos los años: mirar un año viejo no puede cancelar los avisos del actual
+  const add = (x, kind, pre, text) => {
+    for (const { at, r } of reminderTimes(x, kind)) {
+      if (at < now + NTFY_MIN_AHEAD || at > now + NTFY_WIN) continue;
+      const key = pre + ":" + x.id + ":" + reminderOffsetMin(r);
+      const title = n.generic ? "Aula" : kind === "eval" ? "Aula · parcial" : "Aula";
+      const body = n.generic ? "Tenés un aviso de Aula" : text + " · en " + remShort(r);
+      out.set(key, { at, title, body, seq: ntfySeq(key, at, title, body) });
+    }
+  };
+  for (const e of fs.evals || []) if (!EV_CLOSED.includes(e.status)) add(e, "eval", "e", e.name);
+  for (const t of fs.tasks || []) if (!t.archived && !t.recur && t.status !== "done" && t.status !== "canc") add(t, "task", "t", String(t.title || "").slice(0, 80));
+  return out;
+}
+async function ntfyDelete(e) {
+  try {
+    const r = await fetch(e.server + "/" + e.topic + "/" + e.seq, { method: "DELETE", cache: "no-store" });
+    return r.ok || r.status === 404 || r.status === 410;
+  } catch (err) { return false; }
+}
+function ntfyPlanSoon(ms) { clearTimeout(ntfyT); ntfyT = setTimeout(ntfyPlan, ms == null ? 5000 : ms); }
+async function ntfyPlan() {
+  if (!state) return;
+  if (ntfyBusy) { ntfyAgain = true; return; }
+  if (syncOn() && !syncDoneOnce) return; // primero ver qué programó el otro dispositivo
+  ntfyBusy = true;
+  let changed = false;
+  try {
+    if (!state.ntfySched || typeof state.ntfySched !== "object" || Array.isArray(state.ntfySched)) state.ntfySched = {};
+    const sched = state.ntfySched, now = Date.now(), n = ntfyCfg(), want = ntfyWanted(now);
+    // 1) lo que ya no va (o cambió): cancelar. Lo que ya sonó: sacarlo del registro.
+    for (const k of Object.keys(sched)) {
+      const e = sched[k];
+      if (!e || typeof e !== "object" || !e.seq || !e.topic || !e.server) { delete sched[k]; changed = true; continue; }
+      // lo que ya sonó queda anotado 13 h (más que la ventana de 12 h del aviso local, E1c): así
+      // la notificación local de la app abierta sabe que ntfy ya avisó y no lo repite
+      if (e.at < now - 13 * 3600e3) { delete sched[k]; changed = true; continue; }
+      if (e.at <= now + NTFY_MIN_AHEAD) continue; // ya sonó o está por sonar: no tocarlo
+      const w = want.get(k);
+      if (w && w.seq === e.seq && e.topic === n.topic && e.server === n.server) continue;
+      if (await ntfyDelete(e)) { delete sched[k]; changed = true; }
+      else return; // sin conexión: la próxima pasada sigue
+    }
+    // las lápidas de avisos viejos no hacen falta para siempre: si una "reviviera" desde el
+    // otro dispositivo, su hora ya pasó y la pasada siguiente la saca sola
+    const tb = state.sync && state.sync.tombs;
+    if (tb) for (const k of Object.keys(tb)) if (k.startsWith("ntfySched.") && tb[k] < now - 7 * 864e5) delete tb[k];
+    // 2) lo que falta: programar (con tope por pasada, por los límites de ntfy.sh)
+    let sent = 0;
+    for (const [k, w] of want) {
+      if (sched[k]) continue;
+      if (sent >= NTFY_MAX_PASS) { ntfyPlanSoon(60e3); break; }
+      if (!(await ntfySend(w.title, w.body, { at: w.at, seq: w.seq }))) break;
+      sched[k] = { seq: w.seq, at: w.at, topic: n.topic, server: n.server };
+      sent++; changed = true;
+    }
+  } finally {
+    ntfyBusy = false;
+    if (changed) {
+      markDirty(); syncSoon(); // sin ntfyPlanSoon: no volver a empezar por un cambio propio
+      const c = document.querySelector(".ntfycard"); if (c && !c.contains(document.activeElement)) c.innerHTML = ntfyCardHTML();
+    }
+    if (ntfyAgain) { ntfyAgain = false; ntfyPlanSoon(500); }
+  }
+}
+function ntfyPendingSummary() {
+  const now = Date.now(), list = Object.values(state.ntfySched || {}).filter(e => e && e.at > now).sort((a, b) => a.at - b.at);
+  if (!list.length) return "Ahora no hay avisos en las próximas 48 h.";
+  const d = new Date(list[0].at), iso = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+  const hm = String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+  return pl(list.length, "aviso programado", "avisos programados") + " · el próximo: " + (iso === todayISO() ? "hoy" : fmtD(iso)) + " " + fmtTime(hm) + ".";
+}
+
 /* ======================== NOTIFICACIONES ======================== */
 function checkReminders() {
   if (!state.settings.notif || typeof Notification === "undefined" || Notification.permission !== "granted") return;
@@ -2197,18 +2690,22 @@ function checkReminders() {
   // E1a2: los parciales y las tareas con hora avisan según sus "Avisarme" (los parciales
   // sin lista propia usan los de Configuración: 7 y 1 día antes). Suena una sola vez,
   // si la app está abierta dentro de las 12 h siguientes a la hora del aviso.
-  const now = Date.now(), WIN = 12 * 3600e3;
+  // E1c: mira todos los años (con un año viejo a la vista, state.tasks solo tiene ese año) y no
+  // repite lo que ntfy ya mandó al celu (si está en el registro de lo programado, E1b2).
+  const now = Date.now(), WIN = 12 * 3600e3, fs = fullState(), ntOn = ntfyCfg().on, sched = state.ntfySched || {};
   const due = (x, kind, id, text) => {
     for (const { at, r } of reminderTimes(x, kind)) {
       if (at > now || now - at > WIN) continue;
       const key = "rem-" + id + "-" + reminderOffsetMin(r) + "-" + x.date + "-" + (x.time || "");
       if (notified[key]) continue;
+      const nk = sched[(kind === "eval" ? "e:" : "t:") + id + ":" + reminderOffsetMin(r)];
+      if (ntOn && nk && nk.at === at) { notified[key] = today; continue; }
       notified[key] = today; try { new Notification("Aula", { body: text + " · en " + remShort(r) }); } catch (e) {}
     }
   };
-  for (const e of state.evals) if (!EV_CLOSED.includes(e.status)) due(e, "eval", e.id, e.name);
-  for (const t of state.tasks) if (!t.archived && !t.recur && t.status !== "done" && t.status !== "canc") due(t, "task", t.id, t.title.slice(0, 60));
-  for (const t of state.tasks) {
+  for (const e of fs.evals || []) if (!EV_CLOSED.includes(e.status)) due(e, "eval", e.id, e.name);
+  for (const t of fs.tasks || []) if (!t.archived && !t.recur && t.status !== "done" && t.status !== "canc") due(t, "task", t.id, String(t.title || "").slice(0, 60));
+  for (const t of fs.tasks || []) {
     if (t.archived || t.recur || t.status === "done" || t.status === "canc") continue;
     if (t.due === today) fire("due-" + t.id, "Vence hoy: " + t.title.slice(0, 60));
   }
@@ -3170,9 +3667,11 @@ function taskRow(t, opts = {}) {
   const o = ownerOf(t);
   const ev = t.evalId && evalById(t.evalId);
   const sub = t.subtasks && t.subtasks.length ? `<span class="tiny">${t.subtasks.filter(s => s.done).length}/${t.subtasks.length} sub</span>` : "";
-  const dateBit = opts.showDate ? (t.recur ? '<span class="tiny">recurrente</span>' : t.date ? `<span class="mins">${fmtD(t.date)}</span>` : t.due ? `<span class="mins">vence ${fmtD(t.due)}</span>` : "") :
-    (t.due && !t.date ? `<span class="mins">vence ${fmtD(t.due)}</span>` : "");
   const late = !t.recur && t.status !== "done" && ((t.date && t.date < todayISO()) || (!t.date && t.due && t.due < todayISO()));
+  // Q1 · dentro de "Atrasadas" no repetimos la etiqueta en cada fila: la fecha en rojo suave alcanza
+  const lateDate = late && opts.inOverdue ? " late" : "";
+  const dateBit = opts.showDate ? (t.recur ? '<span class="tiny">recurrente</span>' : t.date ? `<span class="mins${lateDate}">${fmtD(t.date)}</span>` : t.due ? `<span class="mins${lateDate}">vence ${fmtD(t.due)}</span>` : "") :
+    (t.due && !t.date ? `<span class="mins${lateDate}">vence ${fmtD(t.due)}</span>` : "");
   const canToday = !t.recur && !done && t.date !== todayISO();
   const srt = !!opts.sortable && !t.time; // las que tienen hora no se reordenan a mano
   const dd = opts.sortable || opts.date ? ` data-date="${date}"` : !t.recur && t.date ? ` data-date="${t.date}"` : "";
@@ -3183,7 +3682,7 @@ function taskRow(t, opts = {}) {
       onclick="event.stopPropagation();toggleTask('${t.id}','${date}')"
       onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();toggleTask('${t.id}','${date}')}">${done ? "✓" : ""}</div>
     <div class="tinfo">
-      <div class="tt">${t.time ? `<span class="ttime">${esc(fmtTime(t.time))}</span>` : ""}${esc(t.title)}${late ? ' <span class="pill bad">atrasada</span>' : ""}${t.status === "prog" ? ' <span class="pill acc">en progreso</span>' : ""}${t.status === "post" ? ' <span class="pill warn">pospuesta</span>' : ""}</div>
+      <div class="tt">${t.time ? `<span class="ttime">${esc(fmtTime(t.time))}</span>` : ""}${esc(t.title)}${late && !opts.inOverdue ? ' <span class="pill bad">atrasada</span>' : ""}${t.status === "prog" ? ' <span class="pill acc">en progreso</span>' : ""}${t.status === "post" ? ' <span class="pill warn">pospuesta</span>' : ""}</div>
       <div class="tmeta">
         ${o ? `<span class="tag" style="background:${o.color}1c;color:${o.color};border:1px solid ${o.color}40">${esc(o.name)}</span>` : ""}
         ${t.estMin ? `<span class="mins">${fmtMin(t.estMin)}</span>` : ""}
@@ -3223,14 +3722,18 @@ function viewHome() {
     <button class="btn" onclick="openManualSession()">Registrar tiempo</button>
     <button class="btn primary" onclick="openQuick()">Agregar</button></div>`;
 
-  h += `<div class="grid3" style="margin-bottom:12px">
-    <div class="card" style="margin:0"><div class="statnum">${fmtMin(est)}</div><div class="statlab">restante estimado para hoy${est > 420 ? ' · <span style="color:var(--warn)">día muy cargado</span>' : ""}</div></div>
-    <div class="card" style="margin:0"><div class="statnum">${done.length}/${dayTasks.length}</div><div class="statlab">tareas de hoy (${donePct}%)</div>
-      <div class="pbar" style="margin-top:6px"><i style="width:${donePct}%"></i></div></div>
-    <div class="card" style="margin:0"><div class="statnum">${fmtMin(focusToday)}</div><div class="statlab">estudiado hoy</div></div>
+  // Q1 · los tres números en una sola tarjeta de una fila (antes: tres tarjetas grandes que en el celu
+  // ocupaban una pantalla entera para decir tres números)
+  h += `<div class="card homestats">
+    <div class="hs"><div class="statnum">${fmtMin(est)}</div><div class="statlab">restante${est > 420 ? ' · <span style="color:var(--warn)">día cargado</span>' : ""}</div></div>
+    <div class="hs"><div class="statnum">${done.length}/${dayTasks.length}</div><div class="statlab">hechas</div></div>
+    <div class="hs"><div class="statnum">${fmtMin(focusToday)}</div><div class="statlab">estudiado</div></div>
+    <div class="pbar hsbar" title="${donePct}% de las tareas de hoy"><i style="width:${donePct}%"></i></div>
   </div>`;
 
-  h += studyTodayCard();
+  // Q1 · en el celu Inicio es un resumen: lo próximo y accesos. Las listas completas viven en Hoy.
+  const phone = homeIsPhone();
+  if (!phone) h += studyTodayCard();
 
   if (evs.length) {
     h += `<div class="card"><h3>Próximas evaluaciones<div class="grow"></div><button class="btn sm ghost" onclick="go('evals')">Ver todas</button></h3>`;
@@ -3249,17 +3752,29 @@ function viewHome() {
   const sug = suggestNow(dayTasks, od, flex, evs);
   if (sug) h += `<div class="card" style="border-left:3px solid var(--acc)"><h3>Qué conviene hacer ahora</h3>${sug}</div>`;
 
-  if (od.length) {
+  if (phone) {
+    const pend = dayTasks.filter(t => !isDoneOn(t, today));
+    const shown = pend.slice(0, 3);
+    const rest = [dayTasks.length ? pl(dayTasks.length, "para hoy", "para hoy") : "", od.length ? pl(od.length, "atrasada", "atrasadas") : ""].filter(Boolean).join(" · ");
+    h += `<div class="card"><h3>Para hoy<div class="grow"></div>${od.length ? `<span class="pill bad">${pl(od.length, "atrasada", "atrasadas")}</span>` : ""}</h3>`;
+    h += shown.length ? shown.map(t => taskRow(t)).join("") : `<div class="empty">${dayTasks.length ? "Terminaste todo lo de hoy." : "Nada programado para hoy."}</div>`;
+    h += `<button class="btn homemore" onclick="go('today')">Ver todo en Hoy${rest ? ` <span class="tiny">${rest}</span>` : ""}</button></div>`;
+    h += studyTodayCard({ fold: true });
+  }
+
+  if (!phone && od.length) {
     h += `<div class="card" style="border-left:3px solid var(--bad)"><h3>Atrasadas (${od.length})
       <div class="grow"></div><button class="btn sm" onclick="postponeAllOverdue()">Mover todas a hoy</button></h3>`;
-    h += od.slice(0, 8).map(t => taskRow(t, { showDate: true })).join("");
+    h += od.slice(0, 8).map(t => taskRow(t, { showDate: true, inOverdue: true })).join("");
     if (od.length > 8) h += `<p class="tiny" style="padding:6px">y ${od.length - 8} más — <a href="#/list">ver lista completa</a></p>`;
     h += "</div>";
   }
 
-  h += `<div class="card dropzone" data-dropdate="${today}"><h3>Para hoy<div class="grow"></div><span class="tiny">${dayTasks.length ? fmtMin(dayTasks.reduce((a, t) => a + (t.estMin || 0), 0)) + " en total" : ""}</span></h3>`;
-  h += dayTasks.length ? dayTasks.map(t => taskRow(t, { sortable: true })).join("") : `<div class="empty">Nada programado para hoy. Agregá una tarea o revisá las flexibles.</div>`;
-  h += "</div>";
+  if (!phone) {
+    h += `<div class="card dropzone" data-dropdate="${today}"><h3>Para hoy<div class="grow"></div><span class="tiny">${dayTasks.length ? fmtMin(dayTasks.reduce((a, t) => a + (t.estMin || 0), 0)) + " en total" : ""}</span></h3>`;
+    h += dayTasks.length ? dayTasks.map(t => taskRow(t, { sortable: true })).join("") : `<div class="empty">Nada programado para hoy. Agregá una tarea o revisá las flexibles.</div>`;
+    h += "</div>";
+  }
 
   if (habitsToday.length) {
     h += `<div class="card"><h3>Hábitos de hoy<div class="grow"></div><button class="btn sm ghost" onclick="go('habits')">Administrar</button></h3>`;
@@ -3270,8 +3785,10 @@ function viewHome() {
     h += "</div>";
   }
 
-  if (flex.length) {
-    h += `<div class="card"><h3>Flexibles próximas a vencer<div class="grow"></div><span class="tiny">botón “Hoy” para asignarlas</span></h3>` + flex.slice(0, 6).map(t => taskRow(t, { showDate: true })).join("") + "</div>";
+  if (flex.length && !phone) {
+    // Q1 · la ayuda iba metida en el encabezado y lo partía en dos columnas: ahora va abajo, chiquita,
+    // y solo donde existe el botón "Hoy" (con mouse); con el dedo se abre la tarea o se arrastra.
+    h += `<div class="card"><h3>Flexibles próximas a vencer</h3>${touchUI() ? "" : '<p class="tiny zonehint">pasá el mouse por una tarea y tocá “Hoy” para hacerla hoy</p>'}` + flex.slice(0, 6).map(t => taskRow(t, { showDate: true })).join("") + "</div>";
   }
 
   const subs = activeSubjects().map(s => {
@@ -3279,7 +3796,7 @@ function viewHome() {
     return { s, pend };
   }).filter(x => x.pend.length);
   if (subs.length) {
-    h += `<div class="card"><h3>Materias con pendientes</h3><div class="grid3">`;
+    h += `<div class="card"><h3>Materias con pendientes</h3><div class="grid3 homesubs">`;
     h += subs.map(({ s, pend }) => {
       const min = pend.reduce((a, t) => a + (t.estMin || 0), 0);
       return `<div class="subrow" style="cursor:pointer;border:1px solid var(--line2);border-radius:9px" onclick="go('subject','${s.id}')">
@@ -3290,6 +3807,8 @@ function viewHome() {
   }
   return h;
 }
+/** Q1 · Inicio en formato celu (resumen) o completo. Mismo corte que el calendario. */
+function homeIsPhone() { try { return matchMedia("(max-width:720px)").matches; } catch (e) { return false; } }
 function saludo() {
   const h = new Date().getHours();
   return h < 12 ? "Buen día" : h < 19 ? "Buenas tardes" : "Buenas noches";
@@ -3309,8 +3828,15 @@ function suggestNow(dayTasks, od, flex, evs) {
 }
 function postponeAllOverdue() {
   const od = overdueTasks(); const today = todayISO();
+  if (!od.length) return;
+  // Q1 · acción masiva: se puede deshacer (guardamos fecha y vencimiento de cada una)
+  const before = od.map(t => ({ id: t.id, date: t.date, due: t.due }));
   od.forEach(t => { if (t.date) t.date = today; else if (t.due) t.due = today; });
-  change(); render(); toast(od.length + " tareas movidas a hoy");
+  change(); render();
+  toast(od.length === 1 ? "1 tarea movida a hoy" : od.length + " tareas movidas a hoy", () => {
+    before.forEach(b => { const t = taskById(b.id); if (t) { t.date = b.date; t.due = b.due; } });
+    change(); render(); toast("Listo, volvieron a su fecha");
+  });
 }
 
 /* ============================ VISTA: HOY ============================ */
@@ -3322,7 +3848,7 @@ function viewToday() {
   let h = `<div class="vhead"><h2>Hoy</h2><span class="sub">${fmtDFull(today)}</span><div class="grow"></div>
     <button class="btn ${ui.selMode ? "primary" : ""}" onclick="toggleSelMode()" title="Elegir varias tareas (o usá Ctrl+clic y Shift+clic)">Seleccionar</button>
     <button class="btn primary" onclick="openQuickTask('${today}')">Nueva tarea para hoy</button></div>`;
-  if (od.length) h += `<div class="card"><h3>Atrasadas</h3>${od.map(t => taskRow(t, { showDate: true })).join("")}</div>`;
+  if (od.length) h += `<div class="card"><h3>Atrasadas<div class="grow"></div><button class="btn sm" onclick="postponeAllOverdue()">Mover todas a hoy</button></h3>${od.map(t => taskRow(t, { showDate: true, inOverdue: true })).join("")}</div>`;
   const hint = touchUI() ? "mantené apretada una tarea para moverla" : "arrastrá ⣿ para ordenar o pasar a mañana";
   h += `<div class="card dropzone" data-dropdate="${today}"><h3>Programadas para hoy</h3><p class="tiny zonehint">${hint}</p>${dayTasks.length ? dayTasks.map(t => taskRow(t, { sortable: true })).join("") : '<div class="empty">Sin tareas programadas.</div>'}</div>`;
   if (flex.length) h += `<div class="card"><h3>Flexibles (vencen pronto)</h3>${flex.map(t => taskRow(t, { showDate: true })).join("")}</div>`;
@@ -4703,7 +5229,7 @@ function viewBackups() {
     <button class="btn primary" onclick="exportJSON()">Exportar JSON</button></div>
   <div class="card"><h3>Importar datos</h3>
     <p class="muted" style="margin-bottom:10px">Elegí un archivo JSON exportado desde Aula (o desde la versión anterior). Antes de aplicar se valida el contenido y podés elegir fusionar o reemplazar.</p>
-    <input type="file" id="impfile" accept=".json,application/json" onchange="importJSON(event)" style="font-size:.8rem" aria-label="Importar archivo JSON"></div>
+    <label class="btn filebtn">Elegir archivo…<input type="file" id="impfile" accept=".json,application/json" onchange="importJSON(event)" aria-label="Importar archivo JSON"></label></div>
   <div class="card"><h3>Copias locales automáticas</h3>
     <p class="tiny" style="margin-bottom:8px">Se crea una por día al abrir la aplicación (se conservan las últimas 10, más 10 manuales) y otra antes de cada actualización que cambia la forma de tus datos. Se guardan en este navegador.</p>
     <div id="bklist"><div class="empty">Cargando…</div></div></div>
@@ -4728,7 +5254,7 @@ async function fillBackupsList() {
 }
 async function restoreBackup(key) {
   askConfirm({
-    title: "Restaurar copia", body: "Se reemplazará el estado actual por el de esta copia. Antes se creará una copia de seguridad del estado actual.", okLabel: "Restaurar", danger: true,
+    title: "Restaurar copia", body: "Se reemplazará el estado actual por el de esta copia. Antes se creará una copia de seguridad del estado actual." + (syncOn() ? " Como la sincronización está activa, el otro dispositivo también va a volver a esta copia." : ""), okLabel: "Restaurar", danger: true,
     onOk: async () => {
       try {
         await idbPut("backups", "pre-restore-" + Date.now(), { ts: Date.now(), label: "Antes de restaurar", data: JSON.stringify(fullState()) });
@@ -4754,7 +5280,7 @@ function importJSON(ev) {
     if (isV1) {
       askConfirm({
         title: "Archivo de la versión anterior", body: "Este archivo es de la app anterior. Se migrará su contenido y se agregará al estado actual.", okLabel: "Migrar e importar",
-        onOk: () => { try { localStorage.setItem(OLD_LS_KEY, JSON.stringify(s)); } catch (e) {} yearJoin(); const tmp = normalizeState(baseState()); tmp.subjects = state.subjects.length ? JSON.parse(JSON.stringify(state.subjects)) : initialSubjects(); if (migrateV1(tmp)) { migrateState(tmp); mergeStates(state, tmp); yearSplit(); change(); render(); toast("Datos de la versión anterior importados"); } else { yearSplit(); toast("No se pudo migrar el archivo"); } }
+        onOk: () => { try { localStorage.setItem(OLD_LS_KEY, JSON.stringify(s)); } catch (e) {} yearJoin(); const tmp = normalizeState(baseState()); tmp.subjects = state.subjects.length ? JSON.parse(JSON.stringify(state.subjects)) : initialSubjects(); if (migrateV1(tmp)) { migrateState(tmp); mergeStates(state, tmp); yearSplit(); trackMovesReset(); change(); render(); toast("Datos de la versión anterior importados"); } else { yearSplit(); toast("No se pudo migrar el archivo"); } }
       });
       ev.target.value = ""; return;
     }
@@ -4767,7 +5293,7 @@ function importJSON(ev) {
       <div class="mfoot"><button class="btn" onclick="closeConfirm()">Cancelar</button>
       <button class="btn" id="impMerge">Fusionar</button>
       <button class="btn danger" id="impReplace">Reemplazar todo</button></div>`;
-    byId("impMerge").onclick = () => { const src = normalizeState(s); migrateState(src); yearJoin(); mergeStates(state, src); yearSplit(); closeConfirm(); change(); render(); toast("Datos fusionados"); };
+    byId("impMerge").onclick = () => { const src = normalizeState(s); migrateState(src); yearJoin(); mergeStates(state, src); yearSplit(); trackMovesReset(); closeConfirm(); change(); render(); toast("Datos fusionados"); };
     byId("impReplace").onclick = () => {
       closeConfirm();
       askConfirm({
@@ -4993,7 +5519,7 @@ function viewConfig() {
   <div class="card yearcard"><div class="yc-h"><div><h3 style="margin:0">Años de cursado</h3>
     <p class="tiny" style="margin-top:4px">Estás en <b>${esc(activeYear().name)}</b> · ${fmtYearRange(activeYear())}. Cada año tiene sus materias, parciales y tareas; los anteriores quedan para consultar.</p></div></div>
     <div class="yc-b"><button class="btn" onclick="openYearPicker()">Ver mis años</button><button class="btn primary" onclick="openNewYear()">Nuevo año…</button></div></div>
-  <div class="grid2">
+  <div class="grid2 cfg">
   <div class="card" style="margin:0"><h3>Apariencia</h3>
     <label class="tiny" style="font-weight:700">Tema</label>
     <div style="display:flex;gap:8px;margin:6px 0 12px">
@@ -5011,12 +5537,13 @@ function viewConfig() {
     <label class="tiny" style="font-weight:700">Días considerados “próximos”</label>
     <input type="number" min="1" max="30" value="${st.upcomingDays}" onchange="state.settings.upcomingDays=parseInt(this.value)||7;change();render()" style="width:90px;background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:7px;margin-top:4px" aria-label="Días próximos">
   </div>
+  <div class="card ntfycard" style="margin:0">${ntfyCardHTML()}</div>
   <div class="card" style="margin:0"><h3>Avisos por defecto</h3>
     <label class="tiny" style="font-weight:700;display:block">Parciales y finales</label>
     ${remFieldHTML("cfg_rem_eval", "eval", null, { cfg: true, list: (st.reminderDefaults || {}).eval })}
     <label class="tiny" style="font-weight:700;display:block;margin-top:12px">Tareas con hora</label>
     ${remFieldHTML("cfg_rem_task", "task", null, { cfg: true, list: (st.reminderDefaults || {}).task })}
-    <p class="tiny" style="margin-top:10px">Cada parcial o tarea puede tener los suyos desde su editor, en “Avisarme”. Por ahora suenan con Aula abierta y las notificaciones activadas; que lleguen con la app cerrada es el próximo paso.</p>
+    <p class="tiny" style="margin-top:10px">Cada parcial o tarea puede tener los suyos desde su editor, en “Avisarme”. Suenan con Aula abierta si activaste las notificaciones, y con la app cerrada si conectaste ntfy (“Avisos con la app cerrada”).</p>
   </div>
   <div class="card" style="margin:0"><h3>Preferencias</h3>
     <label class="tiny" style="font-weight:700;display:block">Primer día de la semana</label>
@@ -5029,10 +5556,12 @@ function viewConfig() {
     <p class="tiny" style="margin-top:6px">Lo que marques antes de esa hora cuenta para el día anterior. Ideal si estudiás hasta tarde.</p>
     <div class="hr"></div>
     <label style="display:flex;gap:8px;align-items:center;font-size:.8rem;cursor:pointer"><input type="checkbox" style="width:auto" ${chk(st.showDone)} onchange="state.settings.showDone=this.checked;change();render()">Mostrar tareas completadas en la lista</label>
+    <label style="display:flex;gap:8px;align-items:center;font-size:.8rem;cursor:pointer;min-height:44px"><input type="checkbox" id="cfg_doneask" style="width:auto" ${chk(st.doneAsk !== false)} onchange="state.settings.doneAsk=this.checked;change();render()">Al completar una tarea, preguntar cuánto te llevó</label>
+    <p class="tiny" style="margin-top:2px">Si lo apagás, se registra lo estimado sin preguntar.</p>
     <label class="tiny" style="font-weight:700;display:block;margin-top:12px" for="cfg_donekeep">Sacar de la lista las hechas hace más de</label>
     <select id="cfg_donekeep" style="margin-top:6px;width:100%;max-width:220px;min-height:40px;background:var(--card2);color:var(--tx);border:1px solid var(--line);border-radius:8px;padding:7px" onchange="state.settings.doneKeepDays=parseInt(this.value)||0;change();render()">
       ${[3, 5, 7, 10, 14, 30, 0].map(n => `<option value="${n}" ${(st.doneKeepDays | 0) === n ? "selected" : ""}>${n ? n + " días" : "Nunca"}</option>`).join("")}</select>
-    <p class="tiny" style="margin-top:6px">No se borran: siguen en Historial y en Estadísticas.</p>
+    <p class="tiny" style="margin-top:6px">No se borran: siguen en Historial y en Progreso.</p>
     <div class="hr"></div>
     <label class="tiny" style="font-weight:700">Formato horario</label>
     <div style="display:flex;gap:8px;margin-top:6px">
@@ -5049,11 +5578,13 @@ function viewConfig() {
       <button class="btn sm" onclick="go('backups')">Copias de seguridad</button>
       <button class="btn sm" onclick="go('history')">Historial</button>
       <button class="btn sm" onclick="exportCSV()">Exportar estadísticas CSV</button>
-      <button class="btn sm danger" onclick="resetApp()">Reiniciar aplicación</button></div>
+      </div>
     <div class="hr"></div>
     <p class="tiny">Versión ${APP_VERSION} (datos v${schemaOf(state)}) · ${state.meta.migratedV1 ? "Datos migrados de la versión anterior el " + (state.meta.migratedAt || "").slice(0, 10) : "Instalación nueva"} · Guardado principal: ${db ? "IndexedDB" : "localStorage"}</p>
-    <button class="btn sm ghost" style="margin-top:6px" onclick="showShortcuts()">Ver atajos de teclado</button>
+    <button class="btn sm ghost kbdhint" style="margin-top:6px" onclick="showShortcuts()">Ver atajos de teclado</button>
     <span id="installSlot"></span>
+    <div class="hr"></div>
+    <button class="btn sm danger" onclick="resetApp()">Reiniciar aplicación</button>
   </div>
   </div>`;
 }
@@ -5078,7 +5609,22 @@ function applyTheme() {
   const dark = pref === "dark" || (pref === "auto" && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
   document.documentElement.dataset.theme = dark ? "dark" : "light";
   document.documentElement.dataset.themePref = pref;
-  const btn = byId("btnTheme"); if (btn) btn.title = "Tema: " + (pref === "auto" ? "automático" : pref === "dark" ? "oscuro" : "claro");
+  const btn = byId("btnTheme");
+  if (btn) {
+    // Q1 · el ◐ de antes casi no se veía y no se entendía: sol o luna según cómo se ve la app ahora,
+    // con una "A" chiquita si sigue al sistema.
+    const name = pref === "auto" ? "automático" : pref === "dark" ? "oscuro" : "claro";
+    btn.title = "Tema: " + name;
+    btn.setAttribute("aria-label", "Tema: " + name + ". Tocá para cambiar");
+    const icon = dark ? "moon" : "sun";
+    if (btn.dataset.icon !== icon || btn.dataset.auto !== String(pref === "auto")) {
+      btn.dataset.icon = icon; btn.dataset.auto = String(pref === "auto");
+      btn.innerHTML = (dark
+        ? '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.5 14.2A8.5 8.5 0 1 1 9.8 3.5a7 7 0 0 0 10.7 10.7z"/></svg>'
+        : '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4L6 18M18 6l1.4-1.4"/></svg>')
+        + (pref === "auto" ? '<span class="autob" aria-hidden="true">A</span>' : "");
+    }
+  }
 }
 function cycleTheme() {
   const order = ["light", "dark", "auto"];
@@ -5092,13 +5638,19 @@ function setAccent(c) {
   try { localStorage.setItem("aula-accent", c); } catch (e) {}
   render();
 }
+/* L1c2 · Con la sincronización activa, reiniciar borraba también el otro dispositivo
+   (el borrado viajaba como lápidas). Ahora reinicia solo este: primero lo desconecta
+   y arranca sin marcas de sync, así nada de acá borra lo del otro. */
 function resetApp() {
+  const sync = syncOn();
   askConfirm({
-    title: "Reiniciar aplicación", body: "Se borrarán TODAS las tareas, materias, evaluaciones, notas, hábitos y estadísticas de este navegador.", okLabel: "Continuar", danger: true,
+    title: "Reiniciar aplicación", body: "Se borrarán TODAS las tareas, materias, evaluaciones, notas, hábitos y estadísticas de este dispositivo." + (sync ? " La sincronización se desconecta antes: el otro dispositivo conserva todo, y si volvés a conectar este con el código, recupera tus datos." : ""), okLabel: "Continuar", danger: true,
     second: { title: "¿Estás completamente seguro?", body: "Esta acción es definitiva. Antes se creará una última copia de seguridad local por si te arrepentís (en Copias de seguridad).", okLabel: "Sí, borrar todo" },
     onOk: async () => {
       try { if (db) await idbPut("backups", "pre-reset-" + Date.now(), { ts: Date.now(), label: "Antes de reiniciar", data: JSON.stringify(fullState()) }); } catch (e) {}
+      if (syncOn()) { syncDisconnect(); syncAgreed = null; }
       const ns = baseState(); ns.subjects = initialSubjects(); ns.meta.migratedV1 = true; migrateState(ns); setWholeState(ns);
+      ns.sync = syncBlank(); syncResetHashes(); // sin lápidas: lo de antes no se marca como "borrado"
       change(); render(); toast("Aplicación reiniciada");
     }
   });
@@ -5114,7 +5666,7 @@ function openModal(html, wide, noFocus) {
   // si mientras tanto ya tocaste otro campo del modal, no robarle el foco (lo que escribías iba a parar al título)
   if (f) setTimeout(() => { if (!box.contains(document.activeElement)) f.focus(); }, 30);
 }
-function closeModal() { byId("modalbg").classList.remove("open"); }
+function closeModal() { byId("modalbg").classList.remove("open"); syncResume(); }
 /* B3 · En los selectores no aparecen parciales cerrados (rendido / aprobado /
    desaprobado) ni proyectos terminados o archivados, salvo el que ya está
    elegido: una tarea vinculada a algo cerrado sigue mostrando su vínculo. */
@@ -5188,7 +5740,7 @@ function openQuickTask(date, subjectId, projectId) {
     <label for="qt_title">Título</label><input id="qt_title" placeholder="Ej: resolver práctica de límites" onkeydown="if(event.key==='Enter')saveQuickTask()">
     <div class="mrow">
       <div><label for="qt_link">Materia / proyecto</label><select id="qt_link" onchange="refreshEvalSelect('qt_link','qt_eval')">${linkOptions(sel)}</select></div>
-      <div><label for="qt_eval">Parcial / final (opcional)</label><select id="qt_eval" onchange="evalPicked('qt_link','qt_eval')">${evalOptions(sel, null)}</select></div>
+      <div><label for="qt_eval">Parcial o final</label><select id="qt_eval" onchange="evalPicked('qt_link','qt_eval')">${evalOptions(sel, null)}</select></div>
     </div>
     <div class="mrow">
       <div><label for="qt_min">Tiempo estimado (min)</label><input id="qt_min" type="number" value="60" min="0" step="5" oninput="repPreview()"></div>
@@ -5824,16 +6376,18 @@ function openSearch(mode) {
       style="width:100%;background:var(--card2);border:1px solid var(--line);border-radius:9px;padding:11px 13px;font-size:.9rem"
       oninput="renderSearchResults()" onkeydown="searchKeydown(event)" aria-label="Buscar">
     <div id="sresults" style="margin-top:10px;max-height:56vh;overflow-y:auto"></div>
-    <p class="tiny" style="margin-top:10px">↑↓ navegar · Enter abrir · Esc cerrar${searchMode === "search" ? " · Ctrl+K acciones rápidas" : ""}</p>`;
+    <p class="tiny kbdhint" style="margin-top:10px">↑↓ navegar · Enter abrir · Esc cerrar${searchMode === "search" ? " · Ctrl+K acciones rápidas" : ""}</p>`;
   bg.classList.add("open");
   ui.searchSel = 0;
   setTimeout(() => { const i = byId("sinput"); if (i) { i.focus(); renderSearchResults(); } }, 20);
 }
-function closeSearch() { byId("searchbg").classList.remove("open"); }
+function closeSearch() { byId("searchbg").classList.remove("open");  syncResume(); }
+/* L1c · sin acentos ni mayúsculas: "economia" encuentra "Economía" (en el celu casi nadie pone tildes) */
+function searchNorm(x) { return String(x || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase(); }
 function searchItems(q) {
-  q = q.toLowerCase().trim();
+  q = searchNorm(q).trim();
   const out = [];
-  const match = s => !q || (s || "").toLowerCase().includes(q);
+  const match = s => !q || searchNorm(s).includes(q);
   if (searchMode === "cmd") {
     const cmds = [
       ["Nueva tarea", () => openQuickTask()], ["Nueva evaluación", () => openEvalEditor()], ["Nueva materia", () => openSubjectEditor()],
@@ -5841,8 +6395,8 @@ function searchItems(q) {
       ["Registrar tiempo estudiado", () => openManualSession()],
       ["Ir a Inicio", () => go("home")], ["Ir a Hoy", () => go("today")], ["Ir a Calendario", () => go("calendar")], ["Ir a Semana", () => go("week")],
       ["Ir a Materias", () => go("subjects")], ["Ir a Parciales y finales", () => go("evals")], ["Ir a Proyectos", () => go("projects")],
-      ["Ir a Planes de estudio", () => go("plans")], ["Ir a Notas", () => go("notes")], ["Ir a Hábitos", () => go("habits")],
-      ["Ir a Estadísticas", () => go("stats")], ["Ir a Historial", () => go("history")], ["Ir a Configuración", () => go("config")],
+      ["Ir a Series", () => go("series")], ["Ir a Planes de estudio", () => go("plans")], ["Ir a Notas", () => go("notes")], ["Ir a Hábitos", () => go("habits")],
+      ["Ir a Progreso", () => go("stats")], ["Ir a Historial", () => go("history")], ["Ir a Copias de seguridad", () => go("backups")], ["Ir a Configuración", () => go("config")],
       ["Descargar informe de estadísticas", () => { go("stats"); setTimeout(openPosterModal, 80); }],
       ["Crear copia de seguridad", () => manualBackup()], ["Exportar JSON", () => exportJSON()], ["Exportar estadísticas CSV", () => exportCSV()],
       ["Cambiar tema", () => cycleTheme()], ["Ver atajos de teclado", () => showShortcuts()], ["Forzar guardado", () => { persist(); toast("Guardado"); }]
@@ -5850,13 +6404,33 @@ function searchItems(q) {
     for (const [label, fn] of cmds) if (match(label)) out.push({ kind: "Acción", label, fn });
     return out.slice(0, 14);
   }
-  for (const t of state.tasks) if (!t.archived && (match(t.title) || match(t.desc) || (t.tags || []).some(x => match("#" + x)))) out.push({ kind: "Tarea", label: t.title, sub: (ownerOf(t) || {}).full, fn: () => openTaskEditor(t.id) });
+  if (!q) return out; // sin texto no se listan tareas al azar
   for (const s of state.subjects) if (match(s.name) || match(s.short)) out.push({ kind: "Materia", label: s.name, fn: () => go("subject", s.id) });
-  for (const p of state.projects) if (match(p.name) || match(p.desc)) out.push({ kind: "Proyecto", label: p.name, fn: () => go("project", p.id) });
   for (const e of state.evals) if (match(e.name)) out.push({ kind: EVAL_KINDS[e.kind] || "Evaluación", label: e.name, sub: fmtD(e.date), fn: () => go("eval", e.id) });
+  for (const p of state.projects) if (match(p.name) || match(p.desc)) out.push({ kind: "Proyecto", label: p.name, fn: () => go("project", p.id) });
+  /* Tareas: una serie aparece una sola vez (abre la próxima pendiente); lo pendiente
+     va antes que lo hecho o cancelado, y eso se marca. */
+  const today = todayISO(), seen = new Map(), tasks = [];
+  const closed = t => t.status === "done" || t.status === "canc";
+  for (const t of state.tasks) {
+    if (t.archived || !(match(t.title) || match(t.desc) || (t.tags || []).some(x => match("#" + x)))) continue;
+    if (!t.seriesId) { tasks.push({ t, n: 1 }); continue; }
+    const g = seen.get(t.seriesId);
+    if (!g) { const o = { t, n: 1, series: true }; seen.set(t.seriesId, o); tasks.push(o); continue; }
+    g.n++;
+    const rank = x => closed(x) ? 2 : (x.date || "") >= today ? 0 : 1; // próxima pendiente > atrasada > hecha
+    const a = rank(t), b = rank(g.t);
+    if (a < b || (a === b && (a === 0 ? (t.date || "") < (g.t.date || "") : (t.date || "") > (g.t.date || "")))) g.t = t;
+  }
+  tasks.sort((a, b) => (closed(a.t) ? 1 : 0) - (closed(b.t) ? 1 : 0));
+  for (const { t, n, series } of tasks) {
+    const own = (ownerOf(t) || {}).full;
+    const sub = [own, series ? "serie · " + pl(n, "vez", "veces") : t.date ? fmtD(t.date) : "", t.status === "done" ? "hecha" : t.status === "canc" ? "cancelada" : ""].filter(Boolean).join(" · ");
+    out.push({ kind: "Tarea", label: t.title, sub, done: closed(t), fn: () => openTaskEditor(t.id) });
+  }
   for (const n of state.notes) if (match(n.title) || match(n.body) || (n.tags || []).some(x => match("#" + x))) out.push({ kind: "Nota", label: n.title, fn: () => openNoteEditor(n.id) });
   for (const h of state.habits) if (match(h.name)) out.push({ kind: "Hábito", label: h.name, fn: () => go("habits") });
-  return out.slice(0, 14);
+  return out.slice(0, 20);
 }
 function renderSearchResults() {
   const q = (byId("sinput") || {}).value || "";
@@ -5865,8 +6439,8 @@ function renderSearchResults() {
   ui.searchSel = clamp(ui.searchSel, 0, Math.max(0, res.length - 1));
   const el = byId("sresults");
   el.innerHTML = res.length ? res.map((r, i) => `<div class="sres ${i === ui.searchSel ? "sel" : ""}" onclick="pickSearch(${i})">
-    <span class="k">${esc(r.kind)}</span><span style="flex:1">${esc(r.label)}</span>${r.sub ? `<span class="tiny">${esc(r.sub)}</span>` : ""}</div>`).join("")
-    : '<div class="empty">Sin resultados.</div>';
+    <span class="k">${esc(r.kind)}</span><span class="sl${r.done ? " sdone" : ""}"><span class="st">${esc(r.label)}</span>${r.sub ? `<span class="tiny">${esc(r.sub)}</span>` : ""}</span></div>`).join("")
+    : `<div class="empty">${q.trim() ? "Sin resultados." : "Buscá tareas, materias, parciales o notas. No hace falta poner tildes."}</div>`;
 }
 function pickSearch(i) {
   const r = (ui.searchRes || [])[i]; if (!r) return;
@@ -5936,6 +6510,7 @@ async function init() {
   await loadState();
   yearSplit();
   syncResetHashes();
+  trackMovesReset();
   applyTheme();
   try { localStorage.setItem("aula-theme", state.settings.theme); localStorage.setItem("aula-accent", state.settings.accent); } catch (e) {}
   document.documentElement.style.setProperty("--acc", state.settings.accent);
@@ -5944,6 +6519,8 @@ async function init() {
   byId("btnMenu").onclick = () => toggleSidebar();
   byId("btnTheme").onclick = cycleTheme;
   if (window.matchMedia) { try { window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyTheme); } catch (e) {} }
+  // Q1 · Inicio cambia de formato (resumen en el celu / completo) al cruzar el ancho: girar el teléfono o achicar la ventana
+  if (window.matchMedia) { try { window.matchMedia("(max-width:720px)").addEventListener("change", () => { if (/^#\/(home)?$/.test(location.hash || "#/") && !document.querySelector("#modalbg.open")) render(); }); } catch (e) {} }
   window.addEventListener("hashchange", () => { render(); if (window.innerWidth < 980) toggleSidebar(false); });
   document.addEventListener("keydown", onKeydown);
   document.addEventListener("keydown", trapFocus);
@@ -5960,13 +6537,14 @@ async function init() {
   setInterval(persist, 15000);
   setInterval(checkReminders, 5 * 60 * 1000);
   checkReminders();
+  setInterval(() => ntfyPlanSoon(0), 30 * 60 * 1000); // E1b2: lo que entra en la ventana de 48 h
+  ntfyPlanSoon(3000);
   ui.dismissedAsk = new Set();
   setTimeout(checkPastEvals, 600);
   setInterval(checkPastEvals, 5 * 60 * 1000);
   window.addEventListener("beforeunload", flushNow);
   window.addEventListener("pagehide", flushNow); // en iOS/Android beforeunload no siempre llega
-  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") { flushNow(); persist(); } else syncNow(); });
-  window.addEventListener("online", () => syncNow());
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") { flushNow(); persist(); } else syncWake(); });
   syncInit();
   if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
     navigator.serviceWorker.register("sw.js").catch(() => {});

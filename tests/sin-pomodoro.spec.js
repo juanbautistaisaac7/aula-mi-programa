@@ -1,6 +1,6 @@
 // A4 · Sin pomodoro: no aparece en ninguna parte, pero el tiempo estudiado se conserva.
 const { test, expect } = require("@playwright/test");
-const { openApp, setClock, fixture, seedState, expectNothingLost } = require("./helpers");
+const { abrirEstudio, openApp, setClock, fixture, seedState, expectNothingLost } = require("./helpers");
 
 test.beforeEach(async ({ page }) => { await setClock(page, "2026-11-04T11:00:00-03:00"); });
 
@@ -63,6 +63,7 @@ test("'Registrar tiempo' desde la tarea suma a la tarea y a la materia", async (
 test("'Estudio de hoy' reparte minutos (no pomodoros) y crea las tareas", async ({ page }) => {
   const errors = await openApp(page);
   await page.evaluate(() => go("home"));
+  await abrirEstudio(page); // Q1: en el celu viene plegado
   await page.fill("#sb_from", "14:00"); await page.fill("#sb_to", "16:00");
   await page.getByRole("button", { name: "Agregar bloque" }).click();
   await expect(page.locator("#view")).toContainText("2 h disponibles");

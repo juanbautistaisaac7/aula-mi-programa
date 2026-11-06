@@ -6,6 +6,206 @@ Cómo leerla: cada "corrida" es una sesión nueva de Claude que arrancó sola, s
 
 ---
 
+## Corrida 04:05–04:35 (hora ARG) — H1a (datos confiables) y cierre de la noche
+
+**Plan:** era la última corrida (cierre 04:00), así que un solo ítem bien hecho y después publicar. Siguiente en el orden: H1a, la base de todas las estadísticas nuevas. Sin datos confiables, ningún gráfico de H1b–H1f sirve.
+
+**Qué cambió (Aula 2.51.0):**
+- **Al completar una tarea ya no salta una ventana que tapa todo.** Se registra lo estimado en el momento y abajo aparece una barrita con chips: `−30 m · = 45 m · +30 m · +1 h · Otro`. Un toque corrige; si no tocás nada, se va sola a los 9 s y queda lo estimado. Sin estimado, los chips son 15 m / 30 m / 1 h / 2 h y, si no elegís, no se inventa nada.
+- **Configuración → Preferencias:** "Al completar una tarea, preguntar cuánto te llevó". Si lo apagás, usa el estimado sin preguntar.
+- **Cada cambio de día de una tarea queda anotado** en `t.moves` (`{from, to, at}`) y la primera vez en `t.origDate` (el día para el que estaba planificada). Con esto H1b va a poder medir "cumplido en su día" y "postergaciones".
+
+**Decisiones:**
+- *Default = lo estimado, acreditado enseguida.* Antes, saltear el diálogo dejaba la tarea sin tiempo y las estadísticas mentían (diagnóstico #1 de H1). Descarté acreditar recién al cerrar la barra: si cerrás la app con la barra abierta se perdía.
+- *Registrar los movimientos en un solo lugar* (`trackMoves()`, dentro de `change()`): compara el día de cada tarea con el que tenía la última vez. Hay como diez caminos que cambian la fecha (arrastrar, "Mover a…", editor, mover en bloque, planes, series, "Mover todas a hoy"…); tocarlos uno por uno era seguro que se escapaba alguno. Reglas: ponerle día a una tarea que no tenía no es mover; si vuelve al día del que venía (Deshacer o la devolviste) se borra ese movimiento; las que se repiten no cuentan.
+- *Sync:* lo que llega del otro dispositivo **no se anota acá** (`trackMovesReset()` después de aplicar lo remoto, de restaurar, importar y fusionar). Así no hay movimientos duplicados ni de ida y vuelta entre los dos dispositivos. Si el otro todavía tiene la 2.50, sus movimientos simplemente no quedan anotados hasta que se actualice.
+- *Sin migración ni cambio de esquema (sigue el 8).* Los campos son opcionales y solo se agregan: una tarea sin `moves` nunca se movió y su día original es `date`. Subir el esquema a 9 habría hecho que el otro dispositivo, con la 2.50, dejara de sincronizar ("versión más nueva") hasta actualizarse; no valía la pena por dos campos opcionales. Tampoco inventé `origDate` para las tareas viejas: no hay forma de saber si ya se habían movido.
+
+**Salió bien:** las capturas muestran la barra limpia en celu y compu, claro y oscuro; no tapa la lista.
+**Salió mal / intentos fallidos:** el test de Configuración fallaba porque usé `go("settings")` y la vista se llama `config`. Los 4 tests de `dia.spec.js` cerraban el diálogo viejo con "Guardar"; cambié el ayudante para que toque "Listo" en la barra (cambio de interfaz a propósito). No llegué a correr los tests nuevos contra el código viejo antes de implementar (lo hice en el orden inverso por tiempo); fallarían seguro porque `#donebar` no existía.
+**Tests:** +6 en `tests/h1a-datos.spec.js` × 2 (10 tareas con un toque suman todo; chips sin estimado, "Otro" y desmarcar; tiempo a mano y las que se repiten; la opción de Configuración; mover 2 veces + Deshacer + recargar; fixture viejo + sync sin duplicar). `npm test`: **400 pasaron, 0 fallaron** (54 saltados a propósito).
+**Capturas:** [barra, celu claro](capturas/H1a-barra-mobile-light.png) · [celu oscuro](capturas/H1a-barra-mobile-dark.png) · [compu oscuro](capturas/H1a-barra-desktop-dark.png)
+**Para Bauti:** completá un par de tareas en el celu y fijate si la barra te molesta o te sirve. Si preferís que ni aparezca, apagala en Configuración → Preferencias.
+
+---
+
+## Corrida 03:06–03:35 (hora ARG) — L1c1 (búsqueda y copias), L1c2 (configuración y sincronización) y L1c3 (años)
+
+**Resumen de la corrida:** L1c era un recorrido de varias pantallas, así que lo partí en L1c1, L1c2 y L1c3. Con esto **L1 queda cerrado**: no hay hallazgos "rompe" ni "confunde" abiertos; los "detalle" se repasan en F1. L1c3 (años: "Tus años" y "Nuevo año" en el celu) no encontró nada; Progreso a fondo lo dejé para H1, que lo rehace entero ([captura](capturas/L1c3-anio-nuevo-mobile-dark.png)). Dos commits, `npm test` en verde en cada uno. Versión 2.48.0 → 2.50.0. **No cambia la forma de los datos** (sigue esquema 8): no hizo falta migración.
+
+### L1c1 · Búsqueda y Copias de seguridad (Aula 2.49.0)
+
+**Plan:** usar la búsqueda y las copias en el celu con el fixture, anotar todo en `docs/AUDITORIA.md` y arreglar de a uno con test.
+**Lo que encontré (#21–#27):**
+- **En el celu no se podía buscar** (#21): el campo "Buscar" se esconde en pantallas chicas y el único otro acceso era la tecla `/`. Ahora hay una lupa en la barra de arriba. Para que entre sin cortar "todo guardado", en pantallas de 480 px o menos el logo queda solo con "Au" (sin la palabra "Aula").
+- **No encontraba sin tildes** (#22): "economia" no daba "Economía". Ahora compara sin tildes ni mayúsculas.
+- **Resultados desordenados** (#23): sin escribir nada mostraba 14 tareas al azar; "Repasar unidad 3" salía 5 veces (una por ocurrencia de la serie); lo hecho y lo cancelado se mezclaba con lo pendiente. Ahora: sin texto, una ayuda; una serie aparece **una vez** ("serie · 5 veces") y abre la próxima pendiente; materias y parciales primero, después lo pendiente, y lo hecho en gris con "hecha"; las tareas sueltas muestran su fecha (había dos "Repasar" imposibles de distinguir). El subtítulo pasó abajo del título, porque en el celu apretaba el nombre a una palabra por renglón (lo vi en la captura).
+- Acciones rápidas con los nombres del menú (#24: "Ir a Progreso", no "Estadísticas"; sumé Series y Copias), sin atajos de teclado en pantalla táctil y filas de 44 px (#25).
+- Copias: "Choose File / No file chosen" en inglés → botón "Elegir archivo…" (#26).
+- **Restaurar con la sincronización activa** (#27): revisé qué pasa. `syncTrack` compara lo restaurado con lo que había y lo marca como cambio nuevo, así que la restauración gana en los dos dispositivos (no "vuelve" lo de antes en la próxima sincronización). Es lo correcto, pero no se avisaba: ahora la confirmación lo dice.
+**Decisiones:** la búsqueda sigue mirando solo el año que estás viendo (igual que el resto de las vistas); me pareció coherente y no lo cambié.
+**Salió mal:** el primer test de tildes falló una vez de cada tres por apuro (leía los resultados antes de que se dibujen): lo cambié a `expect.poll`.
+**Tests:** +5 en `tests/l1c-busqueda.spec.js` × 2 (fallaban todos antes del arreglo). `npm test`: **386 pasaron, 0 fallaron** (52 saltados a propósito).
+**Capturas:** [búsqueda, celu oscuro](capturas/L1c1-busqueda-mobile-dark.png) · [búsqueda, compu](capturas/L1c1-busqueda-desktop-light.png) · [copias, celu](capturas/L1c1-copias-mobile-light.png)
+**Commits:** `7d729bd` fix(busqueda): L1c1.
+
+### L1c2 · Configuración y sincronización (Aula 2.50.0)
+
+**El hallazgo importante (#28, "rompe"):** "Reiniciar aplicación" decía "se borrarán todas las tareas… de este navegador", pero con la sincronización activa el borrado viajaba como lápidas y **borraba todo también en el otro dispositivo**. Con datos reales en dos dispositivos, era la forma más fácil de perder todo (la copia local previa existía solo en el que reiniciaste).
+**Decisión:** reiniciar ahora es **solo de este dispositivo**: primero lo desconecta de la sincronización y arranca sin marcas de sync (así no queda ninguna lápida que pueda borrar lo del otro). El otro conserva todo y, si volvés a conectar este con el código, recupera tus datos. Descarté "reiniciar los dos": es justo lo que el texto prometía que no pasaba, y para eso ya existe borrar a mano. El test lo prueba con dos dispositivos contra la función real de sync: A reinicia, B sincroniza y conserva todo, A se reconecta y vuelve a tener lo de B.
+**Otros (#29–#31):** en el celu, sin "Ver atajos de teclado", "Reiniciar aplicación" separado abajo (estaba pegado a "Exportar JSON"), botones de 44 px con el dedo, y "Historial y Progreso" en vez de "Estadísticas".
+**Quedan abiertos (detalle):** #32 al reiniciar con ntfy conectado no se cancelan los avisos ya programados (llegan como mucho 2 días); #33 la × de las etiquetas es chica; #34 en Progreso, "le estás dando poco" es una regla fija (parcial en ≤ 14 días y menos de 2 h) aunque sea la materia que más estudiás: corresponde a H1d.
+**Tests:** +2 en `tests/l1c-config.spec.js` (dos dispositivos, desktop; botones y atajos, celu). `npm test`: **388 pasaron, 0 fallaron** (54 saltados a propósito).
+**Capturas:** [config, celu oscuro](capturas/L1c2-config-mobile-dark.png) · [config, celu claro](capturas/L1c2-config-mobile-light.png) · [config, compu](capturas/L1c2-config-desktop-light.png)
+**Para Bauti:** probá la búsqueda en el celu (lupa arriba) escribiendo sin tildes. **No hace falta que pruebes "Reiniciar"**; si alguna vez lo usás con la sync activa, ahora te avisa que desconecta ese dispositivo.
+
+---
+
+## Corrida 02:06–02:35 (hora ARG) — E1b2 (programar los avisos en ntfy) y E1c (respaldo local)
+
+**Resumen de la corrida:** con esto **E1 (avisos al celu) queda completo**. Dos commits, `npm test` en verde en cada uno. Versión 2.46.0 → 2.48.0. **Cambia la forma de los datos: esquema 7 → 8** (agrega `state.ntfySched` vacío), con copia previa automática, migración idempotente y test con el fixture.
+
+### E1b2 · Programar los avisos en ntfy (Aula 2.47.0)
+
+**Plan:** resolver primero las dos dudas que dejó E1b1: ¿se puede cancelar un aviso programado en ntfy? ¿Cómo evitar que con dos dispositivos llegue cada aviso dos veces?
+**Lo que averigüé:** ntfy 2.16 sumó "actualizar y borrar notificaciones, también las programadas", con un *sequence id*: se publica en `/<tema>/<id>` y se cancela con `DELETE /<tema>/<id>`. ntfy.sh corre la última versión. (Lo saqué del changelog citado en el foro de Cloudron y de un listado de la API; la página de la doc de ntfy sigue siendo difícil de leer por partes. No lo pude probar contra ntfy.sh real: los tests nunca salen a internet.)
+**Decisiones:**
+- **Registro sincronizado `state.ntfySched`** (`clave → {seq, at, tema, servidor}`), una clave por aviso (`t:<id tarea>:<minutos antes>`, `e:<id parcial>:…`). Viaja por la sync **clave por clave**, así que se fusiona bien aunque los dos dispositivos programen cosas distintas. Descarté "solo programa un dispositivo": si ese es la compu y no la abrís, no llega nada.
+- **Con la sync activa no se programa nada hasta la primera sincronización de la sesión**: así el celu primero ve lo que ya programó la compu. Y el *sequence id* sale de la clave + hora + texto, igual en los dos: si alguna vez programan a la vez, ntfy lo toma como el mismo aviso.
+- **Ventana de 48 h** (ntfy deja hasta 3 días). Se revisa al abrir Aula, a los 5 s de cada cambio, cuando llega algo por la sync y cada 30 min. Un aviso de "7 días antes" se programa recién en las 48 h previas: si no abrís Aula en ningún dispositivo en esos dos días, no llega. Me pareció mejor que la ventana larga: menos avisos "colgados" si algo falla al cancelar.
+- **Cambiar hora, texto o "mensaje genérico"** → se cancela el viejo y se programa el nuevo. **Completar, borrar o archivar** → se cancela. Un 404 al cancelar cuenta como cancelado (ya llegó). Sin conexión, no se anota nada y la próxima pasada reintenta. Tope de 25 envíos por pasada (límite de 250/día de ntfy.sh).
+- **Desconectar** ahora cancela lo que ya estaba programado (antes decía "puede llegar igual").
+- Mira **todos los años** (`fullState()`): si estás mirando un año viejo, no se cancelan los avisos del actual. Esto lo encontré pensando el caso, no por un test que fallara; ahora tiene test.
+- Las lápidas de la sync de avisos viejos se limpian a la semana para que el documento no crezca para siempre.
+- La tarjeta de Configuración ahora explica cómo funciona y dice "2 avisos programados · el próximo: hoy 17:30". Corregí también el texto de "Avisos por defecto", que todavía decía "que lleguen con la app cerrada es el próximo paso".
+**Salió mal / intentos fallidos:** la frase nueva "quedan activos los avisos" rompió un test viejo que verificaba que la palabra "activo" no aparezca antes de la prueba: cambié la frase, no el test. Un 404 de ntfy al cancelar aparece en la consola del navegador como "Failed to load resource" (lo pone el navegador, no la app; no se puede evitar desde JS): en ese test lo filtro, como ya se hacía con los cortes de red.
+**Tests:** +7 en `tests/ntfy-programar.spec.js` × 2 dispositivos (migración 7 → 8 con el fixture y copia previa; solo 48 h, path con sequence id y sin repetir; mover/completar/borrar cancela, 404 y lápidas; mensaje genérico; dos dispositivos con `syncMerge`; sin red y desconectar; la tarjeta). Actualicé `tests/ntfy.spec.js` (esperaba esquema 7 fijo: ahora compara con `SCHEMA_VERSION`). `tests/tools/capturar.js` ahora intercepta ntfy.sh para que una captura nunca mande nada real. `npm test`: **370 pasaron, 0 fallaron** (52 saltados a propósito).
+**Capturas:** [celu claro](capturas/E1b2-ntfy-mobile-light.png) · [celu oscuro](capturas/E1b2-ntfy-mobile-dark.png) · [compu](capturas/E1b2-ntfy-desktop-light.png)
+**Commits:** `1a70b9c` feat(avisos): E1b2.
+
+### E1c · Respaldo local (Aula 2.48.0)
+
+**Plan:** el aviso local con la app abierta ya existía desde E1a2; lo que faltaba era que conviva con ntfy.
+**Decisiones:**
+- Si ntfy ya mandó (o tiene programado) ese mismo aviso a esa misma hora, el local **no suena**: si no, en el celu con Aula abierta te llegaba dos veces. Para eso lo programado queda anotado 13 h después de sonar (el aviso local mira hasta 12 h atrás) y la pasada de ntfy no toca lo que está por sonar en menos de 30 s.
+- Igual que ntfy, ahora mira **todos los años**: antes, con un año viejo a la vista, no avisaba nada del actual.
+- **¿Por qué no WhatsApp o mail?** Los dos necesitan un servidor propio que mande el mensaje a la hora justa (una cuenta de WhatsApp Business o un servicio de mail con clave secreta, que no puede vivir en la app porque cualquiera la vería). ntfy resuelve lo mismo gratis y sin cuentas: el "servidor que espera hasta la hora" es ntfy.sh.
+**Tests:** +3 en `tests/avisos-e1c.spec.js` × 2 (con ntfy no repite y lo demás suena; con ntfy apagado suena todo; año viejo a la vista). Fallaron 2 de 3 antes del arreglo. `npm test`: **376 pasaron, 0 fallaron**.
+**Commits:** `9ca610a` fix(avisos): E1c.
+**Para Bauti:** con ntfy conectado (Configuración → "Avisos con la app cerrada"), poné una tarea para dentro de una hora con "Avisarme 30 min antes", cerrá Aula del todo y esperá: tiene que llegar por ntfy. Después cambiale la hora y fijate que **no** llegue a la hora vieja. Si llega igual, avisame: quiere decir que ntfy.sh no está cancelando y hay que acortar la ventana.
+
+---
+
+## Corrida 01:07–01:50 (hora ARG) — Q1 (hallazgos de la revisión en el celu) y E1b1 (conectar ntfy)
+
+**Resumen de la corrida:** dos ítems, cada uno con su commit y `npm test` en verde. Versión 2.44.0 → 2.46.0. Q1 no toca los datos; **E1b1 sí: esquema 6 → 7** (agrega `settings.ntfy` apagado, con copia previa automática, idempotente y probado con el fixture). Lo siguiente es E1b2 (programar los avisos), que dejé planificado con dos problemas que encontré.
+
+### E1b1 · Conectar el celu con ntfy (Aula 2.46.0)
+
+**Plan:** E1b era grande (configuración + programar + cancelar + dos dispositivos), así que lo partí: E1b1 es conectar y probar; E1b2, programar. Primero leí la documentación de ntfy.
+**Lo que averigüé de ntfy.sh:** gratis y sin cuenta; un mensaje programado puede ir de **10 s a 3 días** adelante; límite de **250 mensajes por día**. La página de la doc es muy larga y no pude confirmar si un mensaje programado **se puede cancelar**; lo dejo como pregunta abierta para E1b2.
+**Decisiones:**
+- **Modelo:** `settings.ntfy = { on, server, topic, generic }`. Viaja por la sync como cualquier ajuste, así los dos dispositivos usan el mismo tema. La migración solo lo agrega si no estaba y nunca pisa uno existente (por si llega primero desde el otro dispositivo); conserva cualquier campo extra.
+- **Tema al azar:** `aula-` + 128 bits al azar (22 caracteres). Es la única llave: quien lo sepa puede leer tus avisos, por eso la pantalla dice que es secreto.
+- **Pantalla en Configuración**, tarjeta "Avisos con la app cerrada": "Empezar" → 3 pasos (instalar ntfy con links a App Store y Google Play, suscribirse con el nombre del tema y un botón Copiar, y "Mandar notificación de prueba"). Recién cuando la prueba sale bien queda **activo**. Opción **Mensaje genérico** ("Tenés un aviso de Aula", sin el nombre de la tarea) por privacidad. "Desconectar" pide confirmación.
+- **Cómo se manda:** con los datos en la **URL** (`?title=…&at=…`) y no en headers. Lo descubrí con el test: los headers HTTP no aceptan acentos (llegaba "gebra" en vez de "Álgebra"). Así además el navegador no tiene que hacer el pedido previo de CORS.
+- **Honestidad en la pantalla:** como todavía no programa los avisos, la tarjeta lo dice ("por ahora llega la prueba… no hace falta que vuelvas a configurar nada").
+**Problemas para E1b2 (anotados en el backlog):** (1) con la sync hay **dos dispositivos**: si los dos programan, cada aviso llega dos veces; hay que decidir quién programa. (2) Si ntfy no deja cancelar, una tarea que cambiás de hora avisaría igual a la hora vieja; una salida es programar solo lo de las próximas ~24 h.
+**Salió mal / intentos fallidos:** lo de los acentos en headers (arriba). Leer la doc de ntfy por partes con la herramienta web no encontró las secciones de cancelar y límites; los límites salieron de una copia de la doc.
+**Tests:** +3 en `tests/ntfy.spec.js` × 2 dispositivos (migración 6 → 7 con el fixture, copia previa, idempotente y sin marcas de sync en tareas; la pantalla completa con ntfy mockeado; sin red no queda activo; `at` y acentos). Nunca se llama a ntfy.sh real: hay un `page.route` de red de seguridad. `npm test`: **356 pasaron, 0 fallaron** (52 saltados a propósito).
+**Capturas:** [ntfy, celu claro](capturas/E1b1-ntfy-mobile-light.png) · [ntfy, celu oscuro](capturas/E1b1-ntfy-mobile-dark.png)
+**Commits:** `ea8318e` feat(avisos): E1b1.
+**Para Bauti:** si querés adelantarte: Configuración → "Avisos con la app cerrada" → Empezar, instalá ntfy, suscribite y tocá la prueba. Debería llegarte "¡Listo! Así te van a llegar los avisos." Si no llega, avisame (puede ser el iPhone: ntfy en iOS a veces tarda la primera vez).
+
+### Q1 · Hallazgos de la revisión en el celu (Aula 2.45.0)
+
+**Plan:** reproducir cada hallazgo con el fixture en el celu antes de tocar nada, escribir los tests (fallaron 4 de 5 al principio) y arreglar de a uno.
+
+**Lo que encontré:**
+- **Títulos cortados a la mitad:** con capturas normales del celu no pasaba; con capturas de **página completa** sí. La causa: esas capturas (y algunos teléfonos, como Android con mouse o ciertos Samsung) dicen "tengo hover", y entonces las acciones invisibles de la fila (↑ ↓ Hoy Mover… Editar ×, ~200 px) volvían a ocupar lugar. El arreglo de X2 dependía solo de `hover:none`. Ahora también se esconden en pantallas de **600 px o menos**. El test lo reproduce en desktop con la ventana a 412 px (no pude simular hover en el proyecto mobile: Chrome ignora esa emulación).
+
+**Decisiones:**
+- **"atrasada" repetido:** dentro de las secciones Atrasadas (Hoy e Inicio) ya no va la etiqueta; la fecha va en **rojo suave**. En la lista completa y en otras vistas la etiqueta sigue, porque ahí sí informa.
+- **Inicio en el celu (≤ 720 px) ahora es un resumen**, y la lista completa vive en Hoy:
+  - Los tres números en **una sola tarjeta de una fila** (restante · hechas · estudiado) con la barrita de progreso abajo. Esto lo dejé igual en la compu: queda más prolijo que tres tarjetas.
+  - Orden: números → próximas evaluaciones → qué conviene hacer → **Para hoy con las 3 primeras pendientes** + botón "Ver todo en Hoy · 5 para hoy · 3 atrasadas" → Estudio de hoy **plegado** (se abre tocando; si lo abrís y agregás un bloque, queda abierto) → hábitos → materias como lista compacta.
+  - Se fueron del Inicio del celu: Atrasadas, la lista entera de Para hoy y Flexibles (están tal cual en Hoy). Con el fixture, de ~2.700 px de alto a ~1.500.
+  - Si girás el celu o achicás la ventana, Inicio cambia de formato solo.
+- **"Mover todas a hoy"** quedaba solo en el Inicio, que en el celu ya no muestra Atrasadas: lo sumé al encabezado de **Atrasadas en Hoy**, y ahora tiene **Deshacer** (antes no tenía, y es una acción masiva).
+- **Flexibles:** la ayuda ya no va dentro del encabezado. En la compu queda abajo, chiquita ("pasá el mouse por una tarea y tocá 'Hoy'…"); con el dedo no se muestra, porque ese botón no existe en el celu.
+- **Botón de tema:** el ◐ pasó a **sol o luna** según cómo se ve la app en ese momento, con una "A" chiquita si sigue al sistema. En pantallas táctiles los botones de arriba miden **44 px**; a 320 px se esconde la palabra "Aula" (queda el logo) para que entre todo.
+- **Unificar "Programación" y "Repetir": lo evalué y no lo hice.** Después de M2 el formulario ya se ve bien (Programación a lo ancho, Fecha + Hora juntas, Repetir abajo y solo con "Día fijo"). Juntar los dos en un control daría un select de 5–6 opciones con subformularios distintos, y Recordatorios de Apple también los tiene separados (fecha por un lado, repetir por otro). Además cambiaría cómo creás tareas todos los días. Si igual lo querés, es un ítem chico para F1.
+
+**Salió mal / intentos fallidos:** primero intenté simular "teléfono con hover" en el test con CDP (`Emulation.setEmulatedMedia`) y no anduvo: Chrome ignora `hover` ahí. Lo resolví probando en desktop con ventana angosta, que es el mismo caso. A 320 px los botones de 44 px empujaban el "+" fuera de la pantalla; lo vi con una prueba y lo arreglé. La etiqueta "tareas de hoy" se cortaba a 320 px: pasó a "hechas".
+**Tests:** +9 en `tests/q1-celu.spec.js` (títulos en un renglón en Hoy e Inicio con y sin hover, sin "atrasada" repetido, Inicio corto y en una fila, Flexibles, botón de tema, cambio de formato al angostar, Mover todas a hoy con Deshacer). Actualicé 3 tests viejos que usaban "Estudio de hoy" en el Inicio del celu (`formularios-celu`, `logica-l1b` #7 y `sin-pomodoro`): ahora viene plegado a propósito, así que lo abren primero (helper `abrirEstudio`). `npm test`: **350 pasaron, 0 fallaron** (52 saltados a propósito).
+**Capturas:** [Inicio celu](capturas/Q1-home-mobile-light.png) · [Inicio celu oscuro](capturas/Q1-home-mobile-dark.png) · [Hoy celu oscuro](capturas/Q1-today-mobile-dark.png) · [Inicio compu](capturas/Q1-home-desktop-light.png) · [Hoy compu](capturas/Q1-today-desktop-dark.png)
+**Commits:** `be1ccad` feat(inicio): Q1.
+**Para Bauti:** abrí Inicio en el iPhone: tendría que entrar casi en una pantalla y media. Decime si extrañás algo que se fue de ahí (está todo en Hoy). Probá el botón de tema arriba: sol → luna → automático (con la "A").
+
+---
+
+## Corrida 00:06–00:54 (hora ARG) — S2 (los cambios llegan solos + actualizar a mano), M2 (formularios en el celu) y M1 (deslizar para borrar)
+
+**Resumen de la corrida:** tres ítems de la Noche 3, en orden: S2, M2 y M1, cada uno con su commit y `npm test` en verde. Versión 2.41.0 → 2.44.0. Tests: de 325 a 341 pasados, 0 fallados. **No cambió la forma de los datos** (sin migración; lo que viaja por la sync es igual). Lo siguiente es Q1.
+
+### M1 · Deslizar una tarea a la derecha para borrarla (Aula 2.44.0)
+
+**Plan:** gesto propio con eventos táctiles (sin librerías), que conviva con lo que ya hay: scroll, mantener apretado para arrastrar (C5), tocar para abrir y tirar para actualizar (S2).
+**Decisiones:**
+- **Cómo se siente:** la fila sigue al dedo y detrás aparece un fondo rojo con un tachito que crece; al pasar el **40 % del ancho** el tachito "salta" (y vibra en Android) para avisar que si soltás se borra. Un **movimiento rápido** también borra aunque sea corto (más de 70 px). Si soltás antes, vuelve a su lugar con una animación de 0,2 s. Al borrar, la fila sale por la derecha y aparece **Deshacer**. Sin confirmación doble: el gesto es intencional y Deshacer alcanza (como en Mail del iPhone).
+- **Cuándo es deslizar y cuándo no:** se decide en los primeros 10 px. Si va más para abajo que para el costado, es scroll; hacia la izquierda no hace nada. Si ya la levantaste con el mantener apretado, es arrastre, no borrado. Se puede empezar desde cualquier parte de la fila, incluido el círculo de completar (un toque sin mover sigue completando). La manija ⣿ sigue siendo solo para arrastrar.
+- **Series (C3):** pregunta "Solo esta / Esta y las siguientes / Todas", igual que al editar. **Tarea que se repite** (un solo objeto con regla): avisa que se van todas sus repeticiones y ofrece borrarla o cancelar; para saltear un día ya están completar o mover.
+- La fila no se sale de su tarjeta mientras la deslizás (la primera captura mostró que generaba scroll de costado y se cortaba la barra de arriba; lo arreglé y lo sumé al test). El rojo es fijo (#e0362b) en los dos temas: el rojo "suave" del tema oscuro dejaba el tachito blanco sin contraste.
+- **Propuesta (no la hice):** usar el otro lado, deslizar a la **izquierda**, para abrir "Mover a…". Es lo que más hacés con una tarea después de completarla, y hoy pide mantener apretado o abrir el menú. No la agregué porque no la pediste y dos gestos opuestos en la misma fila se pueden confundir; si te gusta, es chica.
+**Salió mal / intentos fallidos:** con la fecha fija de los tests, la tarea tenía la manija de arrastre a la izquierda y el toque caía justo en el círculo de completar, que yo había excluido: el gesto no arrancaba. Lo cambié para que también se pueda empezar ahí (en el celu, el círculo ocupa buena parte del borde izquierdo de la fila). También me faltaba cortar el deslizamiento si la tarea ya estaba levantada para arrastrar; lo vi revisando el diff.
+**Tests:** +5 en `tests/deslizar.spec.js` con toques reales (CDP): corto vuelve y largo borra con Deshacer (y sin scroll de costado), rápido borra, vertical e izquierda no borran y tocar sigue abriendo, serie (cancelar / todas con deshacer / solo esta), tarea que se repite. `npm test`: **341 pasaron, 0 fallaron** (47 saltados a propósito).
+**Capturas:** [deslizando](capturas/M1-deslizando-mobile-light.png) · [pasado el umbral, oscuro](capturas/M1-listo-mobile-dark.png) · [Deshacer](capturas/M1-deshacer-mobile-dark.png) · video: [M1-deslizar.webm](capturas/M1-deslizar.webm)
+**Commits:** `1de5808` feat(tareas): M1.
+**Para Bauti:** en el iPhone probá deslizar una tarea de Hoy despacio (tiene que volver si no llegás) y rápido (se borra). Ojo con scrollear la lista: no debería borrar nada.
+
+### M2 · Formularios en el celu sin campos encimados (Aula 2.43.0)
+
+**Plan:** encontrar la causa real antes de tocar CSS. El problema es de **Safari en iOS**: sus campos de fecha y hora traen un ancho mínimo propio que no se achica, y en una fila de dos o tres columnas se meten debajo del de al lado. En las capturas (Chrome) se ve bien, por eso nunca lo vimos.
+**Decisiones:**
+- **Test que imita a Safari:** como acá no hay WebKit, el test le agrega a la página ese ancho mínimo (con especificidad cero, así cualquier regla de la app le gana). Con el CSS viejo el test **reproduce exactamente tu reporte**: "Fecha se encima con Hora" en Nueva tarea (4 variantes) y en el parcial, y a 320 px la hora salida del modal. Recorre 22 modales + Configuración y Estudio de hoy, en 390, 375 y 320 px. No lo sumé dentro del revisor de L1a (que corre 9 estados × 2 dispositivos y ya tarda): es un test aparte con su propia lista, anotado en `docs/AUDITORIA.md`.
+- **Arreglo de raíz:** `min-width:0` en todos los campos; en iOS, fecha y hora sin apariencia nativa y alineadas a la izquierda; con el dedo, **letra de 16 px** (si es menor, iOS hace zoom al tocar el campo y no vuelve) y **44 px de alto**.
+- **Cómo se reparte el espacio en el celu:** filas de dos, de a dos; en las de tres, la primera va a lo ancho, **salvo que sea la fecha**: así queda "Programación" arriba y **Fecha + Hora juntas** en la tarea, y en el parcial **Fecha + Hora** con "Días de repaso" abajo. Los campos quedan parejos aunque un rótulo ocupe dos renglones, y el texto de ayuda del pie va arriba de los botones en vez de apretarlos.
+- "Parcial / final (opcional)" pasó a "Parcial o final": el "— Ninguno —" ya dice que es opcional y el rótulo ya no ocupa dos renglones.
+- De paso: a 320 px la tarjeta de Configuración era más ancha que la pantalla (las grillas de tarjetas pedían 330 px mínimo) y las fechas de "Año nuevo" se salían.
+- Lo de "unificar Programación y Repetir" (del Q1) **no** lo hice acá: cambia cómo se crea una tarea, va con Q1.
+**Salió mal / intentos fallidos:** el primer test pasaba en verde con el CSS viejo a 390 px (Chrome no tiene el problema); recién al imitar a Safari falló donde tenía que fallar. Después del arreglo, al revisar las capturas vi el rótulo de dos renglones que desalineaba los selects y el botón "Agregar" de subtareas más bajo que su campo; los corregí.
+**Tests:** +4 en `tests/formularios-celu.spec.js` (3 anchos + fecha/hora listos para Safari, 16 px, 44 px y Fecha + Hora en la misma fila). `npm test`: **336 pasaron, 0 fallaron**.
+**Capturas:** [nueva tarea, celu](capturas/M2-nueva-tarea-mobile-dark.png) · [con Repetir](capturas/M2-nueva-tarea-repetir-mobile-light.png) · [parcial](capturas/M2-parcial-mobile-light.png) · [editar tarea](capturas/M2-editar-tarea-mobile-light.png) · [año nuevo](capturas/M2-ano-nuevo-mobile-light.png)
+**Commits:** `b2806a0` feat(formularios): M2.
+**Para Bauti:** probá en el iPhone "Nueva tarea" y "Editar parcial": Fecha y Hora tienen que verse lado a lado, sin pisarse, y al tocar un campo la pantalla no tiene que hacer zoom. Si algún modal se ve mal en el iPhone, mandame captura: el test imita a Safari pero no es Safari.
+
+### S2 · Los cambios llegan solos y se puede actualizar a mano (Aula 2.42.0)
+
+**Plan:** S2 es lo primero de la Noche 3. Antes de tocar nada busqué por qué en el iPhone no ves los cambios de la compu hasta cerrar y abrir. Versión 2.41.0 → 2.42.0. **No cambia la forma de los datos** (ni el esquema ni lo que viaja por la sync), así que no hizo falta migración.
+
+**Lo que encontré (causa probable, sumando cosas):**
+- La app solo preguntaba **cada 60 s**, y cada vez **bajaba el documento entero** (con tus datos, cientos de KB): por eso no se podía preguntar más seguido sin gastar datos del celu.
+- Cloudflare KV, además, guarda cada lectura en caché ~60 s en el lugar de Cloudflare que te atiende. Sumado a los 60 s de la app, un cambio podía tardar **hasta 2 minutos**: en la práctica, "no llega nunca", y cerrar/abrir parecía lo que lo arreglaba.
+- Si iOS despertaba la app y el primer pedido fallaba (la red tarda un segundo en volver), quedaba "sin conexión" hasta la próxima vuelta, 60 s después.
+- El SW **no** cachea `/api/` (ya estaba bien) y `syncApply` sí redibuja: eso lo descarté.
+
+**Decisiones:**
+- **Preguntar cada 10 s con la app a la vista, pero barato:** la app manda la versión que ya tiene (`X-Aula-Have`) y, si no hay nada nuevo, la función contesta `{ version, same: true }` (~25 bytes) sin mandar ni parsear el documento (lee la versión del principio del texto). Usé un 200 con `same` en vez de un 304: con `cache: "no-store"` y Safari, un 304 "a mano" es terreno raro; así es lo mismo y más predecible. Si cambiaste algo acá y el otro lado no, sube directo sin bajar nada.
+- Para saber si cambió algo acá sin bajar el documento, la app recuerda en memoria lo último acordado con el servidor. Al abrir la app la primera pasada siempre es completa.
+- **Disparadores al volver a la app:** `visibilitychange`, `focus`, `pageshow` y `online`, con una pausa mínima de 2 s para que tres eventos juntos no hagan tres pasadas.
+- **Actualizar a mano:** tocar el indicador de arriba (ahora es un botón de 44 px) → "actualizando…" → "al día · recién". En el celu, **tirar hacia abajo** desde arriba de todo: aparece una flechita que gira cuando pasaste el umbral (con vibración corta en Android; el iPhone no deja vibrar desde la web) y un círculo girando mientras actualiza. Solo arranca si el gesto es claramente vertical, con la página arriba y sin estar arrastrando una tarea (C5). Desactivé el "tirar para recargar" propio de Chrome en Android (`overscroll-behavior`), que recargaba la página entera.
+- **"sincronizado" pasó a decir "al día"**, más humano y lo que pedía el backlog. Las pasadas automáticas no muestran "actualizando…" (si no, titilaría cada 10 s); solo la que pedís vos.
+- **Si estás escribiendo** (un modal, la hoja de Mover, la búsqueda o un campo con foco), las pasadas automáticas esperan; al cerrar o salir del campo se aplica todo en ~0,3 s. Lo que tocás a mano sí actualiza siempre.
+
+**Salió bien:** el test de "sin cambios" confirma que en 30 s de app abierta no se sube nada, no se baja el documento y no se redibuja la pantalla.
+**Salió mal / intentos fallidos:** el primer test de "sin cambios" fallaba 1 de cada 3 veces con una subida de más. Instrumenté los pedidos y vi la causa: con el reloj simulado avanzando 30 s de golpe, se cumplía el corte de 20 s de un pedido en vuelo y la respuesta llegaba "vacía"; la app la tomaba como "en el servidor no hay nada" y subía todo (que después se arreglaba con el 409). En la vida real eso puede pasar con una respuesta cortada a la mitad, así que **lo arreglé en la app** (una respuesta incompleta ahora cuenta como "sin conexión", nunca como "no hay nada") y en el test avanzo el reloj de a una vuelta. Los tests nuevos fallaron todos antes de implementar, salvo el del formulario abierto, que pasaba de casualidad porque antes no había ninguna pasada en 30 s.
+**Tests:** +7 en `tests/sync-vivo.spec.js` (función con `same`, llega en ≤ 15 s con reloj simulado, sin cambios no sube/baja/redibuja, sube lo local sin bajar, formulario abierto no se pisa, focus/pageshow/online, tocar el indicador, tirar para actualizar con toques reales por CDP incluyendo tirón corto y de costado). Actualicé 2 tests viejos (`sync-app` y `sync-ui`) que esperaban el texto "sincronizado": cambió a propósito a "al día". `npm test`: **332 pasaron, 0 fallaron** (38 saltados a propósito, como antes).
+**Capturas:** [tirando, celu](capturas/S2-tirar-mobile-light.png) · [actualizando, celu oscuro](capturas/S2-actualizando-mobile-dark.png) · [al día, compu](capturas/S2-aldia-desktop-light.png) (y las demás `S2-*`).
+**Commits:** `3ba8e3d` feat(sync): S2.
+**Para Bauti:** probalo con el celu y la compu abiertos a la vez: un cambio en uno tiene que aparecer en el otro en unos 10 s. **Si tarda cerca de un minuto**, es la caché de Cloudflare KV cuando los dos dispositivos entran por lugares distintos de su red (puede pasar con wifi vs datos): la app no lo puede saltear. Lo dejé anotado como X8 (pasar a D1, que no tiene esa demora); avisame si lo notás y lo hago. Gasto: cada pregunta "¿hay algo nuevo?" es una lectura de KV; con la app abierta 3 h por día y dos dispositivos son ~2.000 lecturas, muy lejos de las 100.000 gratis por día.
+
+---
+
 ## Corrida 04:07–04:34 (hora ARG) — E1a2 («Avisarme») y cierre de la noche
 
 **Resumen de la corrida:** era la última de la noche (la hora de cierre de hoy eran las 04:00). Hice un ítem (E1a2), con tiempo reservado para publicar en `main`, escribir `RESUMEN-NOCHE.md` y crear `TERMINADO`. Versión 2.40.0 → 2.41.0. Sin cambios en la forma de los datos (el esquema 6 ya lo había puesto E1a1).

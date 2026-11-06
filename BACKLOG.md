@@ -126,6 +126,42 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
   - Funciona con 0 datos (estado vacío lindo) y con muchos datos (usar el fixture de A1).
   - Tests de que los números son correctos para el fixture.
 
+## Noche 3 (pedidos del 5/11 a la mañana, después de probar en el celu) — HACER PRIMERO, en este orden: S2, M2, M1
+
+- [x] **S2 · Que los cambios lleguen solos y rápido al otro dispositivo, y poder actualizar a mano**
+  Pedido (5/11 11:43): *"no hay un actualizar en el celu, por lo tanto si hago un cambio en la compu no impacta en el celu hasta que cierre y vuelva a entrar"*.
+  Estado actual (`syncInit`, `syncNow`, `syncApply` en `app.js`): baja cambios al abrir, al volver a primer plano (`visibilitychange`) y cada 60 s con la app visible; `syncApply` ya redibuja. En la práctica, en el iPhone (app en la pantalla de inicio) Bauti no ve los cambios hasta cerrar y abrir. Investigar por qué (¿no llega `visibilitychange` en standalone?, ¿60 s es demasiado?, ¿el SW cachea `/api/`?, ¿`render()` no refresca un modal o una hoja abierta?) y arreglarlo de raíz.
+  Listo cuando:
+  - Con la app abierta, un cambio hecho en otro dispositivo aparece en **≤ 15 s** sin tocar nada. Para no gastar: el `GET` manda la versión que ya tiene y la función responde `304`/"sin cambios" barato si no hay nada nuevo (actualizar `functions/api/sync.js` y sus tests). Escuchar también `pageshow`, `focus` y `online`.
+  - **Actualizar a mano**: en el celu, **tirar hacia abajo** desde arriba de la lista (pull-to-refresh, con su indicador y feedback háptico si existe) y, en todos lados, tocar el indicador "sincronizado" de arriba fuerza una sincronización ("Actualizando…" → "Al día · hace 3 s").
+  - Si estás editando algo (modal abierto o escribiendo), los cambios remotos no te pisan lo que estás escribiendo: se aplican al cerrar.
+  - Tests con dos contextos de navegador y red mockeada: el cambio llega solo en ≤ 15 s (con reloj simulado), el pull-to-refresh sincroniza, el 304 no redibuja ni gasta, y un modal abierto no se pierde.
+
+- [x] **M2 · Formularios en el celu: nada encimado y el espacio bien usado**
+  Pedido (5/11 11:44): *"temas de interfaz en el celu, cuando hay que crear una tarea, proyecto, etc. la hora se superpone con otros campos, no me fijé en todos pero en algunos pasa, fijate que tampoco otros campos se superpongan y que a la vez se ocupe el espacio lo mejor posible"*.
+  Causa probable: los `<input type="time">` y `type="date"` de **Safari en iOS** tienen un ancho mínimo propio y se salen de las grillas de dos columnas (`.mrow`) aunque en Chrome se vean bien. Ojo: los tests corren en Chrome (WebKit no se puede descargar en este entorno), así que **no alcanza con que se vea bien en las capturas**: hay que hacer el CSS a prueba de Safari (`min-width:0`, `width:100%`, `box-sizing:border-box`, `-webkit-appearance:none` con estilo propio y alto fijo, `font-size:16px` para que iOS no haga zoom al tocar) y que las grillas tengan columnas `minmax(0,1fr)`.
+  Listo cuando:
+  - Inventario de **todos** los formularios y modales (nueva tarea con y sin Repetir y tramos, editar tarea, Mover a…, materia, parcial, proyecto, nota, hábito, año nuevo, avisos, sincronizar, configuración) en `docs/AUDITORIA.md`.
+  - En el celu (390 px y 375 px de ancho, y 320 px como caso extremo): ningún campo se encima con otro ni se sale del modal; lo corto va de a dos por fila (fecha + hora, minutos + materia) y lo largo ocupa el ancho; botones de pie de modal siempre visibles; nada de scroll horizontal.
+  - Test automático que abre cada modal en mobile y falla si dos campos (`input, select, textarea, button`) tienen sus rectángulos superpuestos o si alguno se sale del contenedor. Sumarlo al revisor de L1a.
+  - Capturas de cada modal en mobile (claro y oscuro).
+
+- [x] **M1 · Deslizar una tarea para borrarla (celu)**
+  Pedido (5/11 11:43): *"en el cel poder eliminar una tarea arrastrando hacia la derecha"*.
+  Listo cuando:
+  - En el celu, **deslizar una tarea hacia la derecha** muestra detrás un fondo rojo con un tachito que crece con el gesto; si pasás el umbral (~40 % del ancho) o soltás rápido, se borra con animación y aparece **Deshacer**. Si soltás antes, vuelve a su lugar.
+  - Tarea de una serie: pregunta "¿solo esta / esta y las siguientes / todas?" (como C3) antes de borrar.
+  - No choca con lo que ya existe: el scroll vertical (si el gesto empieza vertical, es scroll), el mantener apretado para arrastrar (C5), tocar para abrir y el pull-to-refresh (S2). Pista de iOS: en Apple deslizar a la izquierda es borrar; acá va a la **derecha porque lo pidió Bauti**. Evaluar y proponer en la bitácora usar el otro lado (izquierda) para "Mover a…" o completar, sin hacerlo si no aporta.
+  - Tests con touch emulado (borra, cancela, deshacer, serie, scroll vertical no borra) y video en `docs/capturas/M1-*.webm`.
+
+- [x] **Q1 · Hallazgos de la revisión del 5/11 por la tarde (celu, con el fixture)** — hacer después de M1. *(hecho, corrida 01:07, Aula 2.45.0, `tests/q1-celu.spec.js`; "unificar Programación y Repetir" evaluado y descartado, ver bitácora)* Capturas tomadas en mobile con datos de ejemplo:
+  - **Títulos de tareas que se cortan a la mitad del ancho** en Hoy y en Inicio ("Leer capítulo / 3", "Repasar / unidad 3", "Leer apunte de / límites") aunque sobra lugar a la derecha. Parece que volvió el problema de X2 en algunas filas (sobre todo las que tienen manija de arrastre o etiqueta de estado). Test: en mobile ningún título de 25 caracteres o menos ocupa más de una línea.
+  - **"atrasada" repetido en cada fila** dentro de la sección "Atrasadas": es ruido. Dentro de esa sección, sacar la etiqueta; la fecha (en rojo suave) alcanza.
+  - **Inicio en el celu es larguísimo y repite Hoy**: tres tarjetas grandes de un solo número (restante, 0/4, estudiado) ocupan una pantalla entera; "Estudio de hoy" con los bloques horarios; y Atrasadas + Para hoy repetidas tal cual están en la vista Hoy. Proponer un Inicio corto y útil en el celu: los tres números en **una sola fila compacta**, lo próximo (parciales y la siguiente tarea sugerida) y accesos; la lista completa vive en Hoy. Documentar la decisión.
+  - **"Flexibles próximas a vencer"**: el texto de ayuda ("botón 'Hoy' para asignarlas") está metido en el encabezado y lo rompe en dos columnas. Pasarlo abajo como texto chico, o reemplazarlo por un botón claro.
+  - **Nueva tarea en el celu**: Programación, Fecha y Hora van en **tres columnas** y la fecha se corta ("11/05/202…"). Encaja con M2: en el celu, Fecha + Hora en una fila y Programación arriba ocupando el ancho. Además, revisar si "Programación" (día fijo / fecha límite / sin fecha) y "Repetir" se pueden unificar en un solo control más simple.
+  - **El ícono de tema de arriba** (◖) es casi invisible y no se entiende: usar un ícono claro de sol/luna con área táctil de 44 px, o moverlo a Configuración.
+
 ## Noche 2 (pedidos del 4/11 al mediodía) — HACER PRIMERO, en este orden: C4, C5, S1, G1, G2; después E1, F1, F2
 
 - [x] **C4 · Tiempos de una serie por tramos, en segundos**
@@ -187,7 +223,7 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
   - Disponible para el año en curso ("hasta ahora") y para los años cerrados. Con el fixture y con 0 datos (no se rompe).
   - Tests de los números con el fixture y de que se navega entera sin errores; capturas de varias pantallas en mobile.
 
-- [ ] **L1 · Cazar errores de lógica y de experiencia en toda la app** *(trabajo continuo: arrancar con L1a esta noche si sobra tiempo después de G1; el resto en las noches siguientes, intercalado)*
+- [x] **L1 · Cazar errores de lógica y de experiencia en toda la app** *(trabajo continuo: arrancar con L1a esta noche si sobra tiempo después de G1; el resto en las noches siguientes, intercalado)*
   Pedido (4/11 21:49): *"temas de lógica en general, por ejemplo una que vi recién: caen dos parciales el mismo día pero arriba dice 'próximo parcial Economía en 2 días'... que diga Economía y tal en 2 días. Esas cosas que por ahí son pequeñas pero son de lógica o de experiencia de usuario, que debe haber varias... fijate si podés sumar eso también e investigar bien profundo e ir resolviéndolas"*.
   Método (no al azar, sistemático):
   1. **Inventario:** abrir `docs/AUDITORIA.md` con una tabla: dónde, qué pasa, qué debería pasar, gravedad (rompe / confunde / detalle), estado. Todo lo que se encuentre va ahí primero.
@@ -198,7 +234,10 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
   - [x] **L1a2** · El revisor automático de textos (punto 2) y sus primeros hallazgos. *(hecho, corrida 02:06: `tests/revisor.spec.js`, hallazgos 8–13 en `docs/AUDITORIA.md`)*
   - [x] **L1a** *(partido en L1a1 + L1a2)* · El caso de Bauti: arriba ("próximo parcial", `renderTop` → `nextEv`, que hoy toma `evs[0]`) y en todo lugar que muestre "el próximo parcial" (Inicio, detalle de materia, Progreso, recordatorios): si hay varios el mismo día, mostrarlos juntos ("Economía y AN · en 2 días", o "2 parciales · en 2 días" si no entran). Test con dos y tres parciales el mismo día. Después, el revisor automático de textos (punto 2) y los primeros hallazgos.
   - [x] **L1b** · Recorrido pensado (punto 3) de Hoy, Semana, Calendario, Materias, Parciales y Series. *(hecho, corrida 03:05: hallazgos #7 y #14–#20 en `docs/AUDITORIA.md`; #19 y #20 quedan para F1)*
-  - [ ] **L1c** · Recorrido pensado de Progreso/estadísticas, Configuración, Copias, búsqueda, y de las cosas nuevas (sincronización, años). Repetir después de F1.
+  - [x] **L1c** *(partido en L1c1 + L1c2 + L1c3 por el agente, corrida 03:06; "repetir después de F1" quedó anotado en F1)* · Recorrido pensado de Progreso/estadísticas, Configuración, Copias, búsqueda, y de las cosas nuevas (sincronización, años). Repetir después de F1.
+    - [x] **L1c1** · Búsqueda y Copias de seguridad. *(hecho, corrida 03:06, Aula 2.49.0: hallazgos #21–#27, `tests/l1c-busqueda.spec.js`)*
+    - [x] **L1c2** · Configuración y sincronización. *(hecho, corrida 03:06, Aula 2.50.0: hallazgos #28–#34, `tests/l1c-config.spec.js`; #28 era grave: reiniciar con la sync activa borraba también el otro dispositivo)*
+    - [x] **L1c3** · Progreso/estadísticas (mirado por arriba en L1c2, ver #34) y años de cursado. *(corrida 03:06: años sin hallazgos; Progreso a fondo se deja para H1, que lo rehace entero)*
   Listo cuando: `docs/AUDITORIA.md` existe y está al día, el revisor automático corre en `npm test`, y no quedan hallazgos "rompe" ni "confunde" abiertos (los "detalle" pueden quedar listados con su porqué).
 
 ## Noche 3 o siguientes — NO hacer la noche del 5/11 (Bauti lo pidió "para los próximos días")
@@ -214,7 +253,7 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
 
   **Principio:** cada pantalla responde una pregunta y, si se puede, termina en una acción ("mové 2 tareas del jueves", "empezá a preparar AN"). Modelo Apple Salud: **Resumen** con tarjetas → tocás una → **detalle con historial** y selector `S · M · Cuatri · Año · Todo` + flechas para ir al período anterior. Un solo estilo de gráfico para toda la app.
 
-  - [ ] **H1a · Datos confiables (sin fricción)**
+  - [x] **H1a · Datos confiables (sin fricción)** *(hecho 6/11 04:05, Aula 2.51.0: barrita de un toque al completar, opción "no preguntar", `moves`/`origDate` sin cambiar el esquema; ver bitácora)*
     - Al completar una tarea: un toque. Por defecto "lo estimado" con chips rápidos (`-30 m · = · +30 m · +1 h · otro`) en una hoja que no bloquea. Opción en Configuración: "no preguntar, usar el estimado".
     - Registrar **cuándo** se movió una tarea (`moves: [{from, to, at}]`) y su fecha original (`origDate`), para medir "cumplido en el día" y "postergaciones". Migración con copia y test con el fixture.
     - Test: completar 10 tareas con un toque cada una y que todas sumen tiempo; mover una tarea 2 veces y que quede registrado.
@@ -246,12 +285,14 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
 
 ## E. Notificaciones al celular
 
-- [ ] **E1 · Recordatorios que llegan al celu** *(partido en E1a–E1c por el agente, corrida 07:05: es grande y toca el modelo)*
+- [x] **E1 · Recordatorios que llegan al celu** *(partido en E1a–E1c por el agente, corrida 07:05: es grande y toca el modelo)*
   - [x] **E1a1** · Modelo + migración (esquema 6, Aula 2.40): `reminders` opcional, `settings.reminderDefaults`, `reminderTimes()`. *(hecho, corrida 03:05; `tests/recordatorios.spec.js`)*
   - [x] **E1a2** · La interfaz: "Avisarme" en el editor de tarea (solo con hora) y de parcial, y los valores por defecto en Configuración. *(hecho, corrida 04:07, Aula 2.41.0; además los avisos ya suenan como notificación local con la app abierta: `tests/recordatorios-ui.spec.js`)*
   - [x] **E1a** *(partido en E1a1 + E1a2 por el agente)* · Modelo + migración: `reminders: [{amount, unit: "min"|"h"|"d"}]` en tareas con fecha y hora y en parciales; defaults en `settings.reminderDefaults` (parciales: 7 d y 1 d). Paso de migración con copia previa (A1) y test de que el fixture sobrevive. UI en el editor de tarea y de parcial ("Avisarme: 30 min antes · + agregar").
-  - [ ] **E1b** · ntfy: Configuración paso a paso (instalar ntfy, tema al azar, "mandar notificación de prueba", "mensaje genérico" por privacidad). Programar con header `At` lo que entra en la ventana de antelación; reprogramar al abrir la app; si se edita/borra la tarea, ignorar al disparar (documentar). Tests con `page.route` (nunca ntfy.sh real).
-  - [ ] **E1c** · Respaldo local (`checkReminders` con la app abierta) usando los mismos `reminders`, y bitácora con por qué WhatsApp/mail necesitan servidor.
+  - [x] **E1b1** *(partido por el agente, corrida 01:07; hecho en esa misma corrida: esquema 7, Aula 2.46.0, `tests/ntfy.spec.js`)* · Configuración de ntfy: `settings.ntfy` (servidor, tema al azar de 128 bits, mensaje genérico sí/no, activo) con paso de migración al esquema 7 (copia previa + test con el fixture), pantalla paso a paso (instalar ntfy, suscribirse al tema con QR/link, "mandar notificación de prueba"), tests con `page.route` (nunca ntfy.sh real). Antes de empezar: leer en docs.ntfy.sh las secciones "Scheduled delivery", "Updating + deleting notifications", "Limitations" y CORS (la página es larga: buscarlas puntualmente) y anotar límites en la bitácora.
+  - [x] **E1b2** *(hecho, corrida 02:06, Aula 2.47.0, esquema 8, `tests/ntfy-programar.spec.js`: registro sincronizado `state.ntfySched`, ventana de 48 h, cancelar con DELETE por sequence id)* · Programar los avisos en ntfy (header `At`/`Delay`) para lo que entra en la ventana de antelación; reprogramar al abrir la app; editar/borrar → cancelar si la API lo permite, si no ignorar (documentar). **Ojo, hallado al planificar:** con la sync activa hay **dos dispositivos** con los mismos datos; si los dos programan, llega cada aviso **dos veces**. Decidir y documentar: por ejemplo, un registro sincronizado de lo ya programado (`id de aviso → hora`) para que el segundo dispositivo no repita, o que solo programe uno ("este dispositivo manda los avisos"). **Otro hallazgo:** no está claro que ntfy.sh deje cancelar un mensaje programado (la doc consultada no lo dice); si no se puede, una tarea que movés de hora igual avisa a la hora vieja. Mitigación posible: programar solo lo de las próximas ~24 h (no los 3 días que permite) y avisar en la bitácora. Mandar con parámetros en la URL (`?title=&at=`), no headers: ver `ntfySend`.
+  - [x] **E1b** *(partido en E1b1 + E1b2)* · ntfy: Configuración paso a paso (instalar ntfy, tema al azar, "mandar notificación de prueba", "mensaje genérico" por privacidad). Programar con header `At` lo que entra en la ventana de antelación; reprogramar al abrir la app; si se edita/borra la tarea, ignorar al disparar (documentar). Tests con `page.route` (nunca ntfy.sh real).
+  - [x] **E1c** *(hecho, corrida 02:06, Aula 2.48.0, `tests/avisos-e1c.spec.js`: el aviso local mira todos los años y no repite lo que ya mandó ntfy)* · Respaldo local (`checkReminders` con la app abierta) usando los mismos `reminders`, y bitácora con por qué WhatsApp/mail necesitan servidor. **Hallado en E1b2:** (1) con ntfy activo y la app abierta en el celu con notificaciones locales, el mismo aviso puede sonar dos veces (local + ntfy): si la clave está en `state.ntfySched`, que la local no suene; (2) `checkReminders` mira `state.tasks`, que con un año viejo a la vista solo tiene ese año: usar `fullState()` como `ntfyWanted`.
   Pedido: *"alguna forma de ver desde el celu o mandar una notificación"* y *"a las tareas/eventos que se les pueda poner hora, que permita mandar una notificación a mi celular lo más simple que se pueda, si es por wsp mejor, sino bueno mail está bien, y que se pueda acomodar para que diga tantos minutos o días antes de esa hora y también que se pueda hacer lo mismo para eventos o tareas o parciales más que nada con fecha"*.
   Contexto técnico: la app no tiene servidor y los datos viven en el celular. WhatsApp o mail necesitan un servidor que mande el mensaje a la hora indicada.
   Propuesta a investigar y decidir (documentar todo):
@@ -266,7 +307,7 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
 
 ## F. Pulido final
 
-- [ ] **F1 · Nivel Apple en toda la app**
+- [ ] **F1 · Nivel Apple en toda la app** *(al terminar: repetir el recorrido de L1 y revisar los "detalle" abiertos de `docs/AUDITORIA.md`: #6, #19, #20, #32, #33)*
   **Dirección de diseño de Bauti (4/11 21:40):** *"colores diferentes, no me gustaría que pierda la esencia completa porque sino se vuelve muy monocromático y aburrido como Notion por ejemplo, Notion no me gusta, no tengo una que quiero que se copie o sea igual, simplemente mejorar la estética y UX/UI manteniendo un poco la esencia de Aula original"*.
   Traducido a reglas:
   - **Evolución, no reemplazo.** Aula tiene que seguir reconociéndose como Aula: el índigo de acento (`--acc`, editable), los colores por materia, el tono de los textos. Antes de tocar, sacar capturas "antes" y escribir en la bitácora qué es la esencia que se conserva.
@@ -306,3 +347,11 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
 
 - [x] **X7 · Al abrir un modal, el foco se robaba lo que estabas escribiendo** *(agregado por el agente)*
   Por qué: el test de series "cambiar minutos de una…" fallaba ~1 de cada 3 veces (también en el commit anterior, no era nuevo). Causa: `openModal` enfoca el primer campo 30 ms después de abrir; si ya habías tocado otro campo (minutos), le sacaba el foco y lo que escribías caía en el título. Ahora solo enfoca si el foco no está ya dentro del modal.
+
+
+- [ ] **X8 · Sync más inmediata que KV (opcional)** *(agregado por el agente en S2)*
+  Por qué: Cloudflare KV guarda en caché cada lectura en el lugar de Cloudflare que la atiende (≥ 30–60 s). Si la compu y el celu entran por lugares distintos de la red de Cloudflare (por ejemplo, wifi de casa vs datos), un cambio puede tardar hasta ~1 min aunque la app pregunte cada 10 s. Si pasa, la solución de raíz es guardar en **D1** (base de Cloudflare, también gratis; Bauti tendría que crearla y vincularla como hizo con KV). No hacerlo hasta que Bauti confirme que lo nota.
+
+## Ideas del agente
+
+(Funcionalidades nuevas que el agente propone por su cuenta, con el permiso permanente de Bauti del 5/11. Cada una con: qué problema resuelve, cómo la usaría Bauti y por qué vale la pena. Se hacen después de lo pedido.)

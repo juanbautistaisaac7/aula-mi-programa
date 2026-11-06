@@ -2,12 +2,13 @@
 const { test, expect } = require("@playwright/test");
 const { openApp, setClock, reload, fixture, seedState } = require("./helpers");
 
-/** Marca hecha la tarea tocando su casilla en la vista Hoy y cierra el diálogo de tiempo. */
+/** Marca hecha la tarea tocando su casilla en la vista Hoy y confirma el tiempo.
+ *  H1a: el diálogo que bloqueaba pasó a ser la barrita de abajo (el estimado ya queda registrado; "Listo" la cierra). */
 async function completeInToday(page, title) {
   await page.evaluate(() => go("today"));
   const row = page.locator("#view .task", { hasText: title }).first();
   await row.locator(".cb").click();
-  await page.locator("#confirmbox").getByRole("button", { name: "Guardar" }).click();
+  await page.locator("#donebar").getByRole("button", { name: "Listo" }).click();
 }
 
 test("tarea del martes marcada el miércoles 00:10 cuenta el martes", async ({ page }) => {

@@ -1,7 +1,7 @@
 // L1b · Recorrido pensado de Hoy, Semana, Calendario, Materias, Parciales y Series.
 // Cada test corresponde a un hallazgo de docs/AUDITORIA.md (#14 en adelante).
 const { test, expect } = require("@playwright/test");
-const { openApp, setClock, fixture, seedState } = require("./helpers");
+const { abrirEstudio, openApp, setClock, fixture, seedState } = require("./helpers");
 
 test.beforeEach(async ({ page }) => { await setClock(page, "2026-11-04T23:40:00-03:00"); });
 
@@ -91,6 +91,7 @@ test("#7 · Estudio de hoy: el bloque siguiente arranca donde terminó el anteri
   await setClock(page, "2026-11-04T11:00:00-03:00");
   const errors = await abrirFixture(page, s => { s.dayPlan = {}; });
   await page.evaluate(() => go("home"));
+  await abrirEstudio(page); // Q1: en el celu viene plegado (y tiene que seguir abierto al agregar bloques)
   await expect(page.locator("#sb_from")).toHaveValue("14:00");
   await expect(page.locator("#sb_to")).toHaveValue("17:00");
   await page.click("text=Agregar bloque");

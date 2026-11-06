@@ -48,6 +48,28 @@ Cada corrida es una sesión nueva sin memoria de las anteriores. **La memoria so
 
 **Si el backlog está vacío (o solo quedan `[!]`), no pares: hacé una pasada de calidad.** Usá la app como Bauti desde el celular (Playwright mobile): creá materias, parciales y tareas, armá una serie, mové tareas, completalas tarde a la noche, etc. Buscá bugs, fricciones, cosas feas o confusas, casos borde sin test. Anotá lo que encuentres como ítems nuevos y arreglalos. Repetí hasta que no encuentres nada que valga la pena. **Si la app ya está realmente terminada** (backlog completo y la pasada de calidad no encuentra nada importante), no inventes trabajo: hacé el cierre de la noche (sección "Última corrida") aunque sea temprano, creá `.agente/TERMINADO` con el motivo, commiteá y pusheá. Las corridas siguientes van a salir enseguida.
 
+**Permiso permanente de Bauti (5/11):** *"si vos encontrás algo más también hacelo, siempre y cuando sea para mejor y esté testeado"* y, aclarado después: *"no me refiero solo a bugs, me refiero a si encontrás algo que se pueda añadir, una funcionalidad, un botón, no sé, algo que lo puedas hacer también, siempre y cuando funcione, sea para mejor y esté testeado"*.
+
+O sea, tenés permiso para:
+- **Arreglar** cualquier bug, cosa confusa, fea o incómoda que veas, sin esperar a que lo pida.
+- **Agregar funcionalidades nuevas** (un botón, un atajo, una vista, una automatización) que le sirvan a un estudiante como Bauti en su día a día.
+
+**Pero no agregar por agregar** (Bauti, 16:22: *"solo si lo considera, no agregar por agregar, solo si luego de una etapa de análisis se considera necesario dicho agregamiento"*). La regla por defecto es **no agregar**. Una función nueva entra solo si pasa una etapa de análisis escrita en la bitácora:
+- ¿Qué problema concreto de Bauti resuelve? Tiene que haber evidencia: algo que pidió, algo que se repite en sus datos de ejemplo o una fricción que encontraste usando la app como él.
+- ¿Se resuelve mejor mejorando algo que ya existe? Si es así, se hace eso y no se agrega nada.
+- ¿Cuánto ruido suma? Si la respuesta honesta es "es linda pero no la necesita", no se hace.
+
+Si no pasa el análisis, se anota como descartada en "Ideas del agente" con el porqué, y listo.
+
+Si pasa, con estas condiciones:
+1. **Primero lo pedido.** Las ideas propias van después de los ítems que pidió Bauti esa noche, salvo arreglos chicos que encuentres en el camino.
+2. **Que resuelva un problema real**, no "porque se puede". Antes de hacerla, anotala en `BACKLOG.md` → "Ideas del agente" con: qué problema resuelve, cómo la va a usar Bauti y por qué vale la pena.
+3. **Que no complique la app.** Bauti quiere todo simple: una función nueva no puede sumar ruido a las pantallas principales. Si es avanzada, va escondida pero a mano.
+4. **Testeada y revisada** como cualquier ítem: tests en desktop y mobile, capturas y nada roto. Si toca datos: copia previa, migración y que viaje bien por la sincronización.
+5. **Reversible.** Nada que borre o cambie datos de Bauti sin que él lo pida.
+6. **Contala en el resumen** en una sección "Ideas nuevas del agente", así Bauti decide si quedan o se van.
+- No cambies a tu gusto cosas que Bauti pidió explícitamente de una forma.
+
 Podés agregar ítems nuevos al backlog si encontrás algo necesario (bugs, mejoras de UX, deuda técnica que frena). Ponelos en la sección "Agregados por el agente" con su porqué. No te desvíes a cosas cosméticas menores mientras queden pendientes ítems importantes.
 
 ## Bitácora (`docs/BITACORA.md`)

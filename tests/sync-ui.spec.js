@@ -20,8 +20,8 @@ test("activar muestra el estado, el QR y el código; desconectar pide confirmaci
   await expect(card).toContainText("Sincronizar compu y celu");
   await expect(card.locator("details.syncsetup")).toContainText("AULA_KV");
   await card.getByRole("button", { name: "Activar en este dispositivo" }).click();
-  await expect(card.locator(".syncstat")).toContainText("Sincronizado");
-  await expect(page.locator("#saveTxt")).toHaveText("sincronizado");
+  await expect(card.locator(".syncstat")).toContainText("Al día");
+  await expect(page.locator("#saveTxt")).toHaveText("al día");
   await expect(card.locator(".syncqr svg")).toBeVisible();
   const key = await page.evaluate(() => syncCfg.key);
   expect(key).toMatch(/^[A-Za-z0-9_-]{22}$/); // 128 bits
