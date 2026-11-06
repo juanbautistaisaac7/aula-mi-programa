@@ -31,7 +31,7 @@ Buen día, Bauti. Esto es lo que hizo el agente mientras dormías (5 corridas, d
 
 - Todo se publicó en **`main`** con los tests en verde (detalle abajo).
 - Si algo no te gusta: la versión de antes de esta noche está en la rama **`antes-del-agente-2026-11-06`**.
-- Tus datos: esta noche **no cambió la forma de los datos de ninguna manera que necesite migrar** salvo E1b (esquema 7 y 8, con copia automática previa). Si algo se ve raro, en **Copias de seguridad** está la copia "Antes de actualizar a Aula …".
+- Tus datos: esta noche hubo dos migraciones chicas (esquema 7 y 8, para ntfy), las dos con **copia automática previa**; H1a no migra nada. Si algo se ve raro, en **Copias de seguridad** está la copia "Antes de actualizar a Aula …".
 
 ## Estadísticas de la noche
 
