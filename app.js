@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.46.0";
+const APP_VERSION = "2.47.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -70,6 +70,7 @@ function baseState() {
     v: 2, settings: defaultSettings(),
     subjects: [], projects: [], evals: [], tasks: [], notes: [], habits: [], sessions: [],
     dayLog: {}, dayPlan: {}, years: [defaultFirstYear()],
+    ntfySched: {}, // E1b2: avisos ya programados en ntfy (viaja por la sync: así el otro dispositivo no los repite)
     timer: { phase: "focus", left: 25 * 60, total: 25 * 60, run: false, ends: null, taskId: null, subjectId: null, projectId: null, cycle: 0 },
     meta: { created: todayISO(), migratedV1: false, notified: {}, lastBackup: null },
     sync: syncBlank()
@@ -165,7 +166,7 @@ async function persist() {
   saving = false;
   if (savePending) { savePending = false; persist(); }
 }
-function change() { markDirty(); syncSoon(); }
+function change() { markDirty(); syncSoon(); ntfyPlanSoon(); }
 /* Guardado sincrónico de último momento (al cerrar, recargar o mandar la app al fondo).
    IndexedDB es asíncrono y el navegador puede cortar la transacción cuando mata la
    página; localStorage es sincrónico y siempre llega. loadState usa la copia de
@@ -474,6 +475,8 @@ async function syncNow(manual) {
       syncCfg.version = version; syncCfg.merged = true; syncCfg.lastSync = Date.now(); syncSaveCfg();
       if (syncStat.kind !== "ok" || manual || syncManual) { syncSetStatus("ok"); if (syncManual) syncStat.manualAt = Date.now(); syncManual = false; syncPaint(); }
       else syncStat.at = Date.now();
+      // E1b2: con lo que llegó del otro dispositivo (o en la primera pasada), revisar los avisos de ntfy
+      if (remote || !syncDoneOnce) { syncDoneOnce = true; ntfyPlanSoon(1500); }
       return;
     }
     syncSetStatus("error");
@@ -770,7 +773,7 @@ function syncAskChange() {
    - Antes de correr pasos, loadState guarda una copia del estado viejo en
      "Copias de seguridad" (clave premig-…) para poder volver atrás.
    - Cada paso agrega un test que carga tests/fixtures/estado-v2.6.json. */
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 8;
 const MIGRATIONS = [
   { to: 2, desc: "Esquema versionado (Aula 2.7)", run: () => {} },
   { to: 3, desc: "Series explícitas con seriesId (Aula 2.10)", run: s => inferSeriesIds(s.tasks) },
@@ -796,6 +799,11 @@ const MIGRATIONS = [
   { to: 7, desc: "Avisos al celu con ntfy (Aula 2.46)", run: s => {
     s.settings = s.settings || {};
     s.settings.ntfy = normNtfy(s.settings.ntfy);
+  } },
+  // E1b2: registro de los avisos ya programados en ntfy. Solo agrega state.ntfySched vacío
+  // si no estaba (si ya llegó por la sync con cosas, lo deja tal cual).
+  { to: 8, desc: "Avisos programados en ntfy (Aula 2.47)", run: s => {
+    if (!s.ntfySched || typeof s.ntfySched !== "object" || Array.isArray(s.ntfySched)) s.ntfySched = {};
   } }
 ];
 /* A3 · Antes, cualquier par de tareas con el mismo título y materia se mostraba como
@@ -2453,13 +2461,14 @@ function ntfyUrl(n) { n = n || ntfyCfg(); return n.server + "/" + n.topic; }
    Los parámetros van en la URL y no como headers: así los acentos llegan bien (los headers
    HTTP no aceptan UTF-8) y el pedido es "simple" para el navegador (sin preflight de CORS).
    Devuelve true si ntfy lo aceptó. Nunca tira error: sin red, devuelve false. */
+/* opts.seq: sequence id (E1b2), para poder cancelarlo después con DELETE /<tema>/<seq>. */
 async function ntfySend(title, body, opts = {}) {
   const n = ntfyCfg();
   if (!n.topic) return false;
   const q = new URLSearchParams({ title: String(title || "Aula").slice(0, 120), tags: "books" });
   if (opts.at) q.set("at", String(Math.round(opts.at / 1000)));
   try {
-    const r = await fetch(ntfyUrl(n) + "?" + q.toString(), { method: "POST", body: String(body || ""), cache: "no-store" });
+    const r = await fetch(ntfyUrl(n) + (opts.seq ? "/" + opts.seq : "") + "?" + q.toString(), { method: "POST", body: String(body || ""), cache: "no-store" });
     return r.ok;
   } catch (e) { return false; }
 }
@@ -2473,7 +2482,7 @@ async function ntfyTest() {
   const b = byId("ntfyTestBtn"); if (b) { b.disabled = true; b.textContent = "Mandando…"; }
   const ok = await ntfySend("Aula", "¡Listo! Así te van a llegar los avisos.");
   if (ok) {
-    if (!n.on) { n.on = true; state.settings.ntfy = n; change(); }
+    if (!n.on) { n.on = true; state.settings.ntfy = n; change(); ntfyPlanSoon(1000); }
     toast("Notificación de prueba enviada: fijate en el celu");
   } else toast("No se pudo mandar. ¿Tenés conexión?");
   render();
@@ -2484,8 +2493,8 @@ function ntfyCopy() {
   try { navigator.clipboard.writeText(t).then(() => toast("Copiado: pegalo en ntfy"), () => toast(t)); } catch (e) { toast(t); }
 }
 function ntfyOff() {
-  askConfirm({ title: "Dejar de mandar avisos al celu", body: "Aula deja de mandar avisos a ntfy. Lo que ya estaba programado puede llegar igual. En la app ntfy podés borrar la suscripción.", okLabel: "Desconectar", danger: true,
-    onOk: () => { const n = ntfyCfg(); n.on = false; n.topic = ""; state.settings.ntfy = n; change(); render(); toast("Avisos al celu desconectados"); } });
+  askConfirm({ title: "Dejar de mandar avisos al celu", body: "Aula deja de mandar avisos a ntfy y cancela los que ya estaban programados. En la app ntfy podés borrar la suscripción.", okLabel: "Desconectar", danger: true,
+    onOk: () => { const n = ntfyCfg(); n.on = false; n.topic = ""; state.settings.ntfy = n; change(); render(); toast("Avisos al celu desconectados"); ntfyPlanSoon(0); } });
 }
 function ntfyCardHTML() {
   const n = ntfyCfg();
@@ -2501,9 +2510,99 @@ function ntfyCardHTML() {
         <span class="tiny">O abrí <a href="${escA(url)}" target="_blank" rel="noopener">este link</a> desde el celu.</span></li>
       <li><b>Probá:</b> <button class="btn sm primary" id="ntfyTestBtn" onclick="ntfyTest()">Mandar notificación de prueba</button></li>
     </ol>
-    <p class="tiny ntfysoon">Por ahora llega la prueba. Que los avisos de tareas y parciales lleguen por acá con Aula cerrada es lo próximo que se suma; no hace falta que vuelvas a configurar nada.</p>
+    ${n.on ? `<p class="tiny ntfysoon">Te avisa de las tareas con hora y de los parciales según su “Avisarme”. Se programan en las 48 h anteriores, cada vez que abrís Aula en cualquier dispositivo; si cambiás o completás algo, el aviso viejo se cancela.<b class="ntfysum">${esc(ntfyPendingSummary())}</b></p>` : `<p class="tiny ntfysoon">Cuando te llegue la prueba, Aula empieza a mandarte los avisos de tareas y parciales.</p>`}
     <label class="ntfygen"><input type="checkbox" ${n.generic ? "checked" : ""} onchange="ntfySetGeneric(this.checked)"><span><b>Mensaje genérico</b><span class="tiny" style="display:block">Dice “Tenés un aviso de Aula” sin el nombre de la tarea. Útil porque los mensajes pasan por los servidores de ntfy.</span></span></label>
     <button class="btn sm ghost" style="margin-top:8px;color:var(--bad)" onclick="ntfyOff()">Desconectar</button>`;
+}
+
+/* ---------- E1b2 · Programar los avisos en ntfy ----------
+   ntfy acepta mensajes programados ("at", hasta 3 días adelante) y, desde la versión
+   2.16, borrarlos por "sequence id" (DELETE /<tema>/<id>), también los programados.
+   - Qué se programa: los avisos ("Avisarme") de tareas con hora y de parciales que
+     suenan en las próximas NTFY_WIN (48 h). Lo más lejano se programa en una pasada
+     posterior: cada vez que abrís Aula, cambiás algo, llega algo por la sync, o cada 30 min.
+   - Registro: state.ntfySched[clave] = { seq, at, topic, server }. Viaja por la sync
+     (clave por clave), así el otro dispositivo ve lo que ya se programó y no lo repite.
+     Con la sync activa no se programa nada hasta la primera sincronización de la sesión.
+   - El sequence id sale de la clave + hora + texto: los dos dispositivos calculan el mismo,
+     así que si llegaran a programarlo a la vez ntfy lo trata como un solo aviso.
+   - Si cambia la hora, el texto o se completa/borra: se cancela el viejo (DELETE) y se
+     programa el nuevo. Un 404 al cancelar cuenta como cancelado (ya llegó). */
+const NTFY_WIN = 48 * 3600e3, NTFY_MIN_AHEAD = 30e3, NTFY_MAX_PASS = 25;
+let ntfyBusy = false, ntfyAgain = false, ntfyT = null, syncDoneOnce = false;
+function ntfySeq(key, at, title, body) { return "aula" + syncHash(key + "|" + at + "|" + title + "|" + body).replace(":", "x"); }
+/* Lo que debería estar programado ahora: Map clave → { at, title, body, seq }. */
+function ntfyWanted(now) {
+  const out = new Map(), n = ntfyCfg();
+  if (!n.on || !state) return out;
+  const fs = fullState(); // todos los años: mirar un año viejo no puede cancelar los avisos del actual
+  const add = (x, kind, pre, text) => {
+    for (const { at, r } of reminderTimes(x, kind)) {
+      if (at < now + NTFY_MIN_AHEAD || at > now + NTFY_WIN) continue;
+      const key = pre + ":" + x.id + ":" + reminderOffsetMin(r);
+      const title = n.generic ? "Aula" : kind === "eval" ? "Aula · parcial" : "Aula";
+      const body = n.generic ? "Tenés un aviso de Aula" : text + " · en " + remShort(r);
+      out.set(key, { at, title, body, seq: ntfySeq(key, at, title, body) });
+    }
+  };
+  for (const e of fs.evals || []) if (!EV_CLOSED.includes(e.status)) add(e, "eval", "e", e.name);
+  for (const t of fs.tasks || []) if (!t.archived && !t.recur && t.status !== "done" && t.status !== "canc") add(t, "task", "t", String(t.title || "").slice(0, 80));
+  return out;
+}
+async function ntfyDelete(e) {
+  try {
+    const r = await fetch(e.server + "/" + e.topic + "/" + e.seq, { method: "DELETE", cache: "no-store" });
+    return r.ok || r.status === 404 || r.status === 410;
+  } catch (err) { return false; }
+}
+function ntfyPlanSoon(ms) { clearTimeout(ntfyT); ntfyT = setTimeout(ntfyPlan, ms == null ? 5000 : ms); }
+async function ntfyPlan() {
+  if (!state) return;
+  if (ntfyBusy) { ntfyAgain = true; return; }
+  if (syncOn() && !syncDoneOnce) return; // primero ver qué programó el otro dispositivo
+  ntfyBusy = true;
+  let changed = false;
+  try {
+    if (!state.ntfySched || typeof state.ntfySched !== "object" || Array.isArray(state.ntfySched)) state.ntfySched = {};
+    const sched = state.ntfySched, now = Date.now(), n = ntfyCfg(), want = ntfyWanted(now);
+    // 1) lo que ya no va (o cambió): cancelar. Lo que ya sonó: sacarlo del registro.
+    for (const k of Object.keys(sched)) {
+      const e = sched[k];
+      if (!e || typeof e !== "object" || !e.seq || !e.topic || !e.server) { delete sched[k]; changed = true; continue; }
+      if (e.at < now - 60e3) { delete sched[k]; changed = true; continue; }
+      const w = want.get(k);
+      if (w && w.seq === e.seq && e.topic === n.topic && e.server === n.server) continue;
+      if (await ntfyDelete(e)) { delete sched[k]; changed = true; }
+      else return; // sin conexión: la próxima pasada sigue
+    }
+    // las lápidas de avisos viejos no hacen falta para siempre: si una "reviviera" desde el
+    // otro dispositivo, su hora ya pasó y la pasada siguiente la saca sola
+    const tb = state.sync && state.sync.tombs;
+    if (tb) for (const k of Object.keys(tb)) if (k.startsWith("ntfySched.") && tb[k] < now - 7 * 864e5) delete tb[k];
+    // 2) lo que falta: programar (con tope por pasada, por los límites de ntfy.sh)
+    let sent = 0;
+    for (const [k, w] of want) {
+      if (sched[k]) continue;
+      if (sent >= NTFY_MAX_PASS) { ntfyPlanSoon(60e3); break; }
+      if (!(await ntfySend(w.title, w.body, { at: w.at, seq: w.seq }))) break;
+      sched[k] = { seq: w.seq, at: w.at, topic: n.topic, server: n.server };
+      sent++; changed = true;
+    }
+  } finally {
+    ntfyBusy = false;
+    if (changed) {
+      markDirty(); syncSoon(); // sin ntfyPlanSoon: no volver a empezar por un cambio propio
+      const c = document.querySelector(".ntfycard"); if (c && !c.contains(document.activeElement)) c.innerHTML = ntfyCardHTML();
+    }
+    if (ntfyAgain) { ntfyAgain = false; ntfyPlanSoon(500); }
+  }
+}
+function ntfyPendingSummary() {
+  const now = Date.now(), list = Object.values(state.ntfySched || {}).filter(e => e && e.at > now).sort((a, b) => a.at - b.at);
+  if (!list.length) return "Ahora no hay avisos en las próximas 48 h.";
+  const d = new Date(list[0].at), iso = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+  const hm = String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+  return pl(list.length, "aviso programado", "avisos programados") + " · el próximo: " + (iso === todayISO() ? "hoy" : fmtD(iso)) + " " + fmtTime(hm) + ".";
 }
 
 /* ======================== NOTIFICACIONES ======================== */
@@ -5364,7 +5463,7 @@ function viewConfig() {
     ${remFieldHTML("cfg_rem_eval", "eval", null, { cfg: true, list: (st.reminderDefaults || {}).eval })}
     <label class="tiny" style="font-weight:700;display:block;margin-top:12px">Tareas con hora</label>
     ${remFieldHTML("cfg_rem_task", "task", null, { cfg: true, list: (st.reminderDefaults || {}).task })}
-    <p class="tiny" style="margin-top:10px">Cada parcial o tarea puede tener los suyos desde su editor, en “Avisarme”. Por ahora suenan con Aula abierta y las notificaciones activadas; que lleguen con la app cerrada es el próximo paso.</p>
+    <p class="tiny" style="margin-top:10px">Cada parcial o tarea puede tener los suyos desde su editor, en “Avisarme”. Suenan con Aula abierta si activaste las notificaciones, y con la app cerrada si conectaste ntfy (“Avisos con la app cerrada”).</p>
   </div>
   <div class="card" style="margin:0"><h3>Preferencias</h3>
     <label class="tiny" style="font-weight:700;display:block">Primer día de la semana</label>
@@ -6325,6 +6424,8 @@ async function init() {
   setInterval(persist, 15000);
   setInterval(checkReminders, 5 * 60 * 1000);
   checkReminders();
+  setInterval(() => ntfyPlanSoon(0), 30 * 60 * 1000); // E1b2: lo que entra en la ventana de 48 h
+  ntfyPlanSoon(3000);
   ui.dismissedAsk = new Set();
   setTimeout(checkPastEvals, 600);
   setInterval(checkPastEvals, 5 * 60 * 1000);

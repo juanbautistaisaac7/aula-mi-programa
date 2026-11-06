@@ -15,7 +15,7 @@ test("migración a ntfy: el estado de Bauti (esquema 6) sobrevive entero, con co
   await seedState(page, old);
   const errors = await openApp(page);
   const r = await page.evaluate(() => ({ schema: state.meta.schema, n: state.settings.ntfy }));
-  expect(r.schema).toBe(7);
+  expect(r.schema).toBe(await page.evaluate(() => SCHEMA_VERSION)); // 7 cuando se escribió; E1b2 agregó el 8
   expect(r.n).toEqual({ on: false, server: "https://ntfy.sh", topic: "", generic: false });
   for (const c of ["tasks", "evals", "subjects", "projects", "notes", "habits", "sessions"]) {
     expect(await page.evaluate(c => state[c], c)).toEqual(old[c]);
