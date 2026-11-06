@@ -234,7 +234,9 @@ Hoy hay dos modelos mezclados: "períodos" (una tarea por día, ver `saveQuickTa
   - [x] **L1a2** · El revisor automático de textos (punto 2) y sus primeros hallazgos. *(hecho, corrida 02:06: `tests/revisor.spec.js`, hallazgos 8–13 en `docs/AUDITORIA.md`)*
   - [x] **L1a** *(partido en L1a1 + L1a2)* · El caso de Bauti: arriba ("próximo parcial", `renderTop` → `nextEv`, que hoy toma `evs[0]`) y en todo lugar que muestre "el próximo parcial" (Inicio, detalle de materia, Progreso, recordatorios): si hay varios el mismo día, mostrarlos juntos ("Economía y AN · en 2 días", o "2 parciales · en 2 días" si no entran). Test con dos y tres parciales el mismo día. Después, el revisor automático de textos (punto 2) y los primeros hallazgos.
   - [x] **L1b** · Recorrido pensado (punto 3) de Hoy, Semana, Calendario, Materias, Parciales y Series. *(hecho, corrida 03:05: hallazgos #7 y #14–#20 en `docs/AUDITORIA.md`; #19 y #20 quedan para F1)*
-  - [ ] **L1c** · Recorrido pensado de Progreso/estadísticas, Configuración, Copias, búsqueda, y de las cosas nuevas (sincronización, años). Repetir después de F1.
+  - [ ] **L1c** *(partido en L1c1 + L1c2 por el agente, corrida 03:06)* · Recorrido pensado de Progreso/estadísticas, Configuración, Copias, búsqueda, y de las cosas nuevas (sincronización, años). Repetir después de F1.
+    - [x] **L1c1** · Búsqueda y Copias de seguridad. *(hecho, corrida 03:06, Aula 2.49.0: hallazgos #21–#27, `tests/l1c-busqueda.spec.js`)*
+    - [ ] **L1c2** · Progreso/estadísticas, Configuración, sincronización y años.
   Listo cuando: `docs/AUDITORIA.md` existe y está al día, el revisor automático corre en `npm test`, y no quedan hallazgos "rompe" ni "confunde" abiertos (los "detalle" pueden quedar listados con su porqué).
 
 ## Noche 3 o siguientes — NO hacer la noche del 5/11 (Bauti lo pidió "para los próximos días")

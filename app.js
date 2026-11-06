@@ -3,7 +3,7 @@
    AULA — Organizador académico personal
    Vanilla JS · IndexedDB · PWA · sin dependencias externas
    ===================================================================== */
-const APP_VERSION = "2.48.0";
+const APP_VERSION = "2.49.0";
 const DB_NAME = "aula-db", DB_VER = 1, OLD_LS_KEY = "bauti-operacion-julio-v1";
 const EMERGENCY_KEY = "aula-emergency";
 
@@ -5156,7 +5156,7 @@ function viewBackups() {
     <button class="btn primary" onclick="exportJSON()">Exportar JSON</button></div>
   <div class="card"><h3>Importar datos</h3>
     <p class="muted" style="margin-bottom:10px">Elegí un archivo JSON exportado desde Aula (o desde la versión anterior). Antes de aplicar se valida el contenido y podés elegir fusionar o reemplazar.</p>
-    <input type="file" id="impfile" accept=".json,application/json" onchange="importJSON(event)" style="font-size:.8rem" aria-label="Importar archivo JSON"></div>
+    <label class="btn filebtn">Elegir archivo…<input type="file" id="impfile" accept=".json,application/json" onchange="importJSON(event)" aria-label="Importar archivo JSON"></label></div>
   <div class="card"><h3>Copias locales automáticas</h3>
     <p class="tiny" style="margin-bottom:8px">Se crea una por día al abrir la aplicación (se conservan las últimas 10, más 10 manuales) y otra antes de cada actualización que cambia la forma de tus datos. Se guardan en este navegador.</p>
     <div id="bklist"><div class="empty">Cargando…</div></div></div>
@@ -5181,7 +5181,7 @@ async function fillBackupsList() {
 }
 async function restoreBackup(key) {
   askConfirm({
-    title: "Restaurar copia", body: "Se reemplazará el estado actual por el de esta copia. Antes se creará una copia de seguridad del estado actual.", okLabel: "Restaurar", danger: true,
+    title: "Restaurar copia", body: "Se reemplazará el estado actual por el de esta copia. Antes se creará una copia de seguridad del estado actual." + (syncOn() ? " Como la sincronización está activa, el otro dispositivo también va a volver a esta copia." : ""), okLabel: "Restaurar", danger: true,
     onOk: async () => {
       try {
         await idbPut("backups", "pre-restore-" + Date.now(), { ts: Date.now(), label: "Antes de restaurar", data: JSON.stringify(fullState()) });
@@ -6293,16 +6293,18 @@ function openSearch(mode) {
       style="width:100%;background:var(--card2);border:1px solid var(--line);border-radius:9px;padding:11px 13px;font-size:.9rem"
       oninput="renderSearchResults()" onkeydown="searchKeydown(event)" aria-label="Buscar">
     <div id="sresults" style="margin-top:10px;max-height:56vh;overflow-y:auto"></div>
-    <p class="tiny" style="margin-top:10px">↑↓ navegar · Enter abrir · Esc cerrar${searchMode === "search" ? " · Ctrl+K acciones rápidas" : ""}</p>`;
+    <p class="tiny kbdhint" style="margin-top:10px">↑↓ navegar · Enter abrir · Esc cerrar${searchMode === "search" ? " · Ctrl+K acciones rápidas" : ""}</p>`;
   bg.classList.add("open");
   ui.searchSel = 0;
   setTimeout(() => { const i = byId("sinput"); if (i) { i.focus(); renderSearchResults(); } }, 20);
 }
 function closeSearch() { byId("searchbg").classList.remove("open");  syncResume(); }
+/* L1c · sin acentos ni mayúsculas: "economia" encuentra "Economía" (en el celu casi nadie pone tildes) */
+function searchNorm(x) { return String(x || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase(); }
 function searchItems(q) {
-  q = q.toLowerCase().trim();
+  q = searchNorm(q).trim();
   const out = [];
-  const match = s => !q || (s || "").toLowerCase().includes(q);
+  const match = s => !q || searchNorm(s).includes(q);
   if (searchMode === "cmd") {
     const cmds = [
       ["Nueva tarea", () => openQuickTask()], ["Nueva evaluación", () => openEvalEditor()], ["Nueva materia", () => openSubjectEditor()],
@@ -6310,8 +6312,8 @@ function searchItems(q) {
       ["Registrar tiempo estudiado", () => openManualSession()],
       ["Ir a Inicio", () => go("home")], ["Ir a Hoy", () => go("today")], ["Ir a Calendario", () => go("calendar")], ["Ir a Semana", () => go("week")],
       ["Ir a Materias", () => go("subjects")], ["Ir a Parciales y finales", () => go("evals")], ["Ir a Proyectos", () => go("projects")],
-      ["Ir a Planes de estudio", () => go("plans")], ["Ir a Notas", () => go("notes")], ["Ir a Hábitos", () => go("habits")],
-      ["Ir a Estadísticas", () => go("stats")], ["Ir a Historial", () => go("history")], ["Ir a Configuración", () => go("config")],
+      ["Ir a Series", () => go("series")], ["Ir a Planes de estudio", () => go("plans")], ["Ir a Notas", () => go("notes")], ["Ir a Hábitos", () => go("habits")],
+      ["Ir a Progreso", () => go("stats")], ["Ir a Historial", () => go("history")], ["Ir a Copias de seguridad", () => go("backups")], ["Ir a Configuración", () => go("config")],
       ["Descargar informe de estadísticas", () => { go("stats"); setTimeout(openPosterModal, 80); }],
       ["Crear copia de seguridad", () => manualBackup()], ["Exportar JSON", () => exportJSON()], ["Exportar estadísticas CSV", () => exportCSV()],
       ["Cambiar tema", () => cycleTheme()], ["Ver atajos de teclado", () => showShortcuts()], ["Forzar guardado", () => { persist(); toast("Guardado"); }]
@@ -6319,13 +6321,33 @@ function searchItems(q) {
     for (const [label, fn] of cmds) if (match(label)) out.push({ kind: "Acción", label, fn });
     return out.slice(0, 14);
   }
-  for (const t of state.tasks) if (!t.archived && (match(t.title) || match(t.desc) || (t.tags || []).some(x => match("#" + x)))) out.push({ kind: "Tarea", label: t.title, sub: (ownerOf(t) || {}).full, fn: () => openTaskEditor(t.id) });
+  if (!q) return out; // sin texto no se listan tareas al azar
   for (const s of state.subjects) if (match(s.name) || match(s.short)) out.push({ kind: "Materia", label: s.name, fn: () => go("subject", s.id) });
-  for (const p of state.projects) if (match(p.name) || match(p.desc)) out.push({ kind: "Proyecto", label: p.name, fn: () => go("project", p.id) });
   for (const e of state.evals) if (match(e.name)) out.push({ kind: EVAL_KINDS[e.kind] || "Evaluación", label: e.name, sub: fmtD(e.date), fn: () => go("eval", e.id) });
+  for (const p of state.projects) if (match(p.name) || match(p.desc)) out.push({ kind: "Proyecto", label: p.name, fn: () => go("project", p.id) });
+  /* Tareas: una serie aparece una sola vez (abre la próxima pendiente); lo pendiente
+     va antes que lo hecho o cancelado, y eso se marca. */
+  const today = todayISO(), seen = new Map(), tasks = [];
+  const closed = t => t.status === "done" || t.status === "canc";
+  for (const t of state.tasks) {
+    if (t.archived || !(match(t.title) || match(t.desc) || (t.tags || []).some(x => match("#" + x)))) continue;
+    if (!t.seriesId) { tasks.push({ t, n: 1 }); continue; }
+    const g = seen.get(t.seriesId);
+    if (!g) { const o = { t, n: 1, series: true }; seen.set(t.seriesId, o); tasks.push(o); continue; }
+    g.n++;
+    const rank = x => closed(x) ? 2 : (x.date || "") >= today ? 0 : 1; // próxima pendiente > atrasada > hecha
+    const a = rank(t), b = rank(g.t);
+    if (a < b || (a === b && (a === 0 ? (t.date || "") < (g.t.date || "") : (t.date || "") > (g.t.date || "")))) g.t = t;
+  }
+  tasks.sort((a, b) => (closed(a.t) ? 1 : 0) - (closed(b.t) ? 1 : 0));
+  for (const { t, n, series } of tasks) {
+    const own = (ownerOf(t) || {}).full;
+    const sub = [own, series ? "serie · " + pl(n, "vez", "veces") : t.date ? fmtD(t.date) : "", t.status === "done" ? "hecha" : t.status === "canc" ? "cancelada" : ""].filter(Boolean).join(" · ");
+    out.push({ kind: "Tarea", label: t.title, sub, done: closed(t), fn: () => openTaskEditor(t.id) });
+  }
   for (const n of state.notes) if (match(n.title) || match(n.body) || (n.tags || []).some(x => match("#" + x))) out.push({ kind: "Nota", label: n.title, fn: () => openNoteEditor(n.id) });
   for (const h of state.habits) if (match(h.name)) out.push({ kind: "Hábito", label: h.name, fn: () => go("habits") });
-  return out.slice(0, 14);
+  return out.slice(0, 20);
 }
 function renderSearchResults() {
   const q = (byId("sinput") || {}).value || "";
@@ -6334,8 +6356,8 @@ function renderSearchResults() {
   ui.searchSel = clamp(ui.searchSel, 0, Math.max(0, res.length - 1));
   const el = byId("sresults");
   el.innerHTML = res.length ? res.map((r, i) => `<div class="sres ${i === ui.searchSel ? "sel" : ""}" onclick="pickSearch(${i})">
-    <span class="k">${esc(r.kind)}</span><span style="flex:1">${esc(r.label)}</span>${r.sub ? `<span class="tiny">${esc(r.sub)}</span>` : ""}</div>`).join("")
-    : '<div class="empty">Sin resultados.</div>';
+    <span class="k">${esc(r.kind)}</span><span class="sl${r.done ? " sdone" : ""}"><span class="st">${esc(r.label)}</span>${r.sub ? `<span class="tiny">${esc(r.sub)}</span>` : ""}</span></div>`).join("")
+    : `<div class="empty">${q.trim() ? "Sin resultados." : "Buscá tareas, materias, parciales o notas. No hace falta poner tildes."}</div>`;
 }
 function pickSearch(i) {
   const r = (ui.searchRes || [])[i]; if (!r) return;

@@ -663,7 +663,15 @@ kbd{background:var(--card2);border:1px solid var(--line);border-bottom-width:2px
 @media(max-width:600px){.subrow{flex-wrap:wrap;row-gap:8px}.subacts{width:100%;padding-left:40px}.subacts .btn{min-height:40px;min-width:44px}.subacts .btn:not(.ghost){flex:1}}
 .iconchip{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:.72rem;color:#fff;flex-shrink:0}
 footer{text-align:center;margin-top:30px;color:var(--tx3);font-size:.7rem}
+/* L1c · búsqueda: en el celu se abre con la lupa de arriba; filas de 44 px y sin atajos de teclado con el dedo */
+#btnSearch{display:none}
+.sres .sl{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}.sres .st{overflow-wrap:anywhere}.sres .sdone .st{color:var(--tx3)}
+@media (pointer:coarse){.sres{min-height:44px}.kbdhint{display:none}}
+#saveInd{min-width:0;flex-shrink:1}#saveTxt{overflow:hidden;text-overflow:ellipsis}
+@media (max-width:480px){#topbar .logo>span:not(.mark){display:none}}
+.filebtn input[type=file]{display:none}
 @media(max-width:700px){
+  #btnSearch{display:flex;order:0}
   #searchbox{display:none}
   #nextEv{display:none}
   #topbar .date{display:none}
@@ -720,6 +728,7 @@ body:has(#wrapped.open) #toast{z-index:310}
   <div class="spacer"></div>
   <button id="nextEv" title="Próximo evento importante" onclick="go('evals')"></button>
   <div id="searchbox"><input id="topSearch" placeholder="Buscar…  ( / )" readonly onclick="openSearch()" aria-label="Buscar"></div>
+  <button class="iconbtn" id="btnSearch" title="Buscar" aria-label="Buscar" onclick="openSearch()"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/></svg></button>
   <button type="button" id="saveInd" title="Tocá para actualizar" aria-live="polite" onclick="if(syncOn())syncNow(true)"><span class="dot"></span><span id="saveTxt">guardado</span></button>
   <button class="iconbtn" id="btnTheme" title="Cambiar tema" aria-label="Cambiar tema"></button>
   <button class="iconbtn" title="Agregado rápido (N)" aria-label="Agregado rápido" onclick="openQuick()" style="font-size:1.25rem;font-weight:600">+</button>
